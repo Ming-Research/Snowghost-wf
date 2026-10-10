@@ -1,0 +1,117 @@
+alias Document = pkg::dom::Document;
+alias FontPicks = pkg::layout::text::FontPicks;
+alias FontSet = pkg::layout::text::FontSet;
+alias Styles = pkg::style::Styles;
+alias sizing_value = pkg::css::values::sizing_value;
+alias sizing_auto = pkg::css::values::sizing_auto;
+
+fn splice_grid_ready(context: &Context, styles: &Styles) -> ready: Bool reads(context), reads(styles) {
+  doc "Requires the settled grid's content-independent column certificate, layout-equivalent incoming Space and an inline size independent of changed content. The ordinary layout equivalence ignores only an unused containing height basis; the caller separately checks height provenance. Membership and placement remain unchanged because the seam is strictly inside an existing item and retained grid/item restyles are excluded before publication.";
+  if context^.kind != ctx_grid {
+    return False();
+  }
+  if context^.retired {
+    return False();
+  }
+  if context^.local_geometry {
+  } else {
+    return False();
+  }
+  if context^.grid_columns_invariant {
+  } else {
+    return False();
+  }
+  let changed = bor(context^.dirty, context^.restyled);
+  if changed {
+    return False();
+  }
+  if context^.marked_paragraphs != 0_u32 {
+    return False();
+  }
+  if context^.marked_children != 0_u32 {
+    return False();
+  }
+  let same = equivalent_space(styles: styles, style: context^.style, first: context^.laid, second: context^.space);
+  let width = splice_width_stable(context: context, styles: styles);
+  return band(same, width);
+}
+
+fn splice_grid_flex_width(context: &Context, child: &Context, styles: &Styles) -> ready: Bool reads(context), reads(child), reads(styles) {
+  doc "Proves the changed row-flex item's main inputs unchanged from current style and settled parent geometry; splice_inputs separately proves active item membership. A text update may discard preparation while retaining the same layout, so a preparation cache is not the source of these style facts. A definite base does not remove the automatic minimum's content dependency. Unknown intrinsic content, column flex and changing setup dimensions refuse; an earlier failed edge remains failed in splice_inputs.";
+  let parent = container_of(styles: styles, style: context^.style);
+  let row = parent.flex_direction < 2_u8;
+  if row {
+  } else {
+    return False();
+  }
+  let own_width = splice_width_stable(context: context, styles: styles);
+  if own_width {
+  } else {
+    return False();
+  }
+  let frame = computed_frame(context: context, styles: styles, basis: context^.space.basis_width);
+  let inner = context^.width -sat frame;
+  let content_width = imax(inner, 0_i32);
+  if context^.space.forced_height >= 0_i32 {
+    return False();
+  }
+  let container = size_of(styles: styles, style: context^.style);
+  let height = grid_independent_limit(size: container.height);
+  let min_height = grid_independent_limit(size: container.min_height);
+  let max_height = grid_independent_limit(size: container.max_height);
+  let height_limits = band(min_height, max_height);
+  let height_stable = band(height, height_limits);
+  if height_stable {
+  } else {
+    return False();
+  }
+  if child^.ratio_width > 0_i32 {
+    return False();
+  }
+  let sizes = size_of(styles: styles, style: child^.style);
+  let min_width = grid_independent_limit(size: sizes.min_width);
+  let max_width = grid_independent_limit(size: sizes.max_width);
+  let limits = band(min_width, max_width);
+  if limits {
+  } else {
+    return False();
+  }
+  let group = item_of(styles: styles, style: child^.style);
+  let basis = size_value(value: group.basis, basis: content_width);
+  let declared = group.basis.kind == sizing_value;
+  let basis_known = basis >= 0_i32;
+  let given = band(declared, basis_known);
+  let child_frame = computed_frame(context: child, styles: styles, basis: content_width);
+  let specified = specified_width(styles: styles, style: child^.style, basis: content_width, frame: child_frame);
+  let auto_basis = group.basis.kind == sizing_auto;
+  let spec_known = specified >= 0_i32;
+  let uses_spec = band(auto_basis, spec_known);
+  let fixed_base = bor(given, uses_spec);
+  let automatic = sizes.min_width.kind == sizing_auto;
+  let scrolls = flex_scrolls(styles: styles, style: child^.style, row: row);
+  let non_scrolling = bnot(scrolls);
+  let content_minimum = band(automatic, non_scrolling);
+  let content_base = bnot(fixed_base);
+  let needs_content = bor(content_base, content_minimum);
+  if needs_content {
+    let grid = child^.kind == ctx_grid;
+    return band(grid, child^.grid_intrinsic_invariant);
+  }
+  return True();
+}
+
+fn splice_recompute_grid(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> counts: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "Reruns the common complete grid algorithm after the changed item settles. Unchanged items reuse only current natural measurements in the same measuring Space; final Space changes use normal child layout. Actual grid outputs continue through the existing outer flow certificates and explicit post-publication refusal.";
+  grid_forget(context: context);
+  set context^.intrinsic_known = False();
+  set context^.intrinsic_held = False();
+  set context^.dirty = True();
+  lay_out_context(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  set context^.dirty = False();
+  set context^.restyled = False();
+  set context^.restyled_blocks = 0_u32;
+  set context^.marked_paragraphs = 0_u32;
+  set context^.marked_children = 0_u32;
+  resolve_margins(child: context, styles: styles);
+  return context^.grid_counts;
+}

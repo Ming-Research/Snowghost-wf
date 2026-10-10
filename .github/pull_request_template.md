@@ -4,7 +4,7 @@
 Name every design-tree node the PR adds, changes or retires and, when the
 tree changed, the lint's node count, depth and net change against the base.
 For a change that moves whitefoot.pin or a submodule, name the revisions it
-adopts and why. Owner questions belong in the conversation. -->
+adopts and why. Owner questions belong on the shared status board. -->
 
 ## Found along the way
 
@@ -15,8 +15,8 @@ Write "none" when nothing was found. -->
 
 ## Review
 
-<!-- Filled in at completion from the completion review every task gets; a
-draft needs none. Summarize; do not copy the checklist or full logs. -->
+<!-- Filled in at completion from the completion review, including a PR
+that remains Draft. Summarize; do not copy the checklist or full logs. -->
 
 - Scope: _reviewer model and depth; base..head; groups checked and skipped_.
 - Checks: _actual commands and results; full-gate status and tested revision_.

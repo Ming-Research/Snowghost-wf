@@ -80,7 +80,7 @@ struct StyleRef {
 }
 
 enum Flow {
-  doc "One entry of a flow context's content in tree order. Open and Close bracket a block-level box of the context's blocks; Text is a paragraph; Child is an in-flow block-level child context; Float is a floated child context, anchored where it occurs; Out is an absolutely or fixed positioned child context, whose static position is where it occurs.";
+  doc "One entry of a flow context's content in tree order. This is a virtual event from the nested owner-local sequences; Close is synthesized when leaving a block. No context retains a flat event array; block, paragraph and context numbers identify payload slots and carry no order or ancestry. Passes share transient event slices and isolated queries read virtual ranks, while entry_slot is the stable owner-local identity and flow_at remains a temporary compatibility rank. Open and Close bracket a block-level box of the context's blocks; Text is a paragraph; Child is an in-flow block-level child context; Float is a floated child context, anchored where it occurs; Out is an absolutely or fixed positioned child context, whose static position is where it occurs.";
   Open(block: u32);
   Close(block: u32);
   Text(paragraph: u32);
@@ -89,11 +89,271 @@ enum Flow {
   Out(context: u32);
 }
 
-struct Block {
-  doc "A block-level box inside a flow context that establishes no context of its own, with its laid-out border box relative to the context's border box; marker holds for a list item with an outside marker, whose marker makes a line when its content has none; parent is the block it sits in (no_index when it sits directly in the context), flow_at its Open entry and inner_x its border box's left offset in the context's content box, which the pre-pass records (the stacking pass turns x into the offset in the border box, and starts again from inner_x); held_y is where an update's re-stack found the block before it stacked it again; avail_left and avail_width are the content box it sits in and content_left and content_width its own content box, as the pre-pass last computed them, which a style change of the block alone compares against (block_restyle).";
+enum SlotPages<T> {
+  doc "A lazy binary directory over the owner-local 30-bit slot space. Bulk construction uses one power-of-two leaf sized to its owner; later growth adds directory paths and small leaves without copying an existing page.";
+  Vacant();
+  Fork(left: Box<SlotPages<T>>, right: Box<SlotPages<T>>);
+  Page(values: Box<Array<T>>);
+}
+
+struct RouteTable<T> {
+  doc "A paged stable directory. Growth wraps the old root and allocates only new paths; a missing slot reads the table's default. len is the published high-water mark, not a live count.";
+  pages: SlotPages<T>;
+  len: u64;
+  span: u32;
+  missing: T;
+}
+
+struct EntryHandle {
+  doc "A stable entry slot in one block sequence, or no_index. Slots are never reused, so deletion cannot make an old handle name a new entry.";
+  owner: u32;
+  slot: u32;
+}
+
+struct HeightInput {
+  doc "An incoming edge written by the parent, separate from the input certified by the child's retained summary. Equal dimensions do not erase an identity or definiteness change.";
+  context: u32;
+  owner: u32;
+  element: u32;
+  kind: u8;
+  state: u8;
+}
+
+struct HeightProof {
+  doc "One actual vertical content-box resolution. source_context/source_owner name the immediate basis (no_index owner means the context content box); source_kind is 1 viewport, 2 ordinary containing box, 3 layout-supplied, or 4 private external input. basis_state and state are 0 missing, 1 indefinite, 2 content-independent definite, or 3 unsupported. Consumer and interned style keys retain resolution inputs; read_mask names percentage height/minimum/maximum as bits 1/2/4. Parent records share provenance edges rather than copying ancestor paths.";
+  consumer: StyleRef;
+  source_context: u32;
+  source_owner: u32;
+  source_element: u32;
+  source_kind: u8;
+  basis_state: u8;
+  basis_height: i32;
+  basis_width: i32;
+  content_height: i32;
+  forced_height: i32;
+  state: u8;
+  read_mask: u8;
+  size_key: u32;
+  box_key: u32;
+  spacing_key: u32;
+  border_key: u32;
+  font_key: u32;
+  valid: Bool;
+}
+
+struct HeightSummary {
+  doc "Saturating 32-bit counts over live direct consumers only. Reduction never subtracts, so saturation preserves the nonzero unproved predicate. unproved includes a missing record even when its old numeric height happens to equal a new one. Empty ranges are the identity; removal therefore removes retired dependencies through ordinary index repair.";
+  consumers: u32;
+  unproved: u32;
+}
+
+struct SequenceOutput {
+  doc "An ordered Through(leading) or Solid(leading, advance, trailing) transfer, with baseline offsets from its first resolved edge. Struts retain their positive maximum and negative minimum separately. travel bounds the absolute arithmetic along the run; ordinary never licenses reassociation outside the bounded exact range. Float handles identify exports in the enclosing BFC, never a block-contained float list. fragment_sources counts split heads and empty-inline sources in this owned flow; fragment_first/last classify the nearest non-transparent direct entries as 1 ordinary solid or 2 split head, with 0 absent. placed counts direct entries whose owner-relative anchor follows a range geometry action (Open, lined Text, in-flow and floating children; positioned children are settled explicitly), opens counts direct Open entries and positioned counts positioned children reachable through this run, including inside its Opens.";
+  count: u64;
+  events: u64;
+  fragment_sources: u64;
+  heights: HeightSummary;
+  fragment_first: u8;
+  fragment_last: u8;
+  first_line: EntryHandle;
+  last_line: EntryHandle;
+  ordinary: Bool;
+  free_transfer: Bool;
+  through: Bool;
+  leading_positive: i32;
+  leading_negative: i32;
+  advance: i64;
+  trailing_positive: i32;
+  trailing_negative: i32;
+  first_baseline: i64;
+  last_baseline: i64;
+  travel: i64;
+  min_content: i32;
+  max_content: i32;
+  floats: u64;
+  first_float: EntryHandle;
+  last_float: EntryHandle;
+  barriers: u32;
+  natural_floor: i64;
+  float_reach: i64;
+  motion_known: Bool;
+  placed: u64;
+  opens: u64;
+  positioned: u64;
+}
+
+struct BlockOutput {
+  doc "Translation-independent resolved block output and its width inputs. The block's boundary holds struts, through state, baseline handles and offsets, intrinsic contributions and exported float handles. The reference walk records reads_floats at Close, including any earlier BFC float even after its lexical owner closes; semantic fields are published after the walk's payload geometry is complete. fragment_source retains whether this block is a stable split head, so lifting an edited interior preserves its source count and direct-edge kind.";
+  heights: HeightSummary;
+  fixed_height: Bool;
+  constrained_height: Bool;
+  bottom_separates: Bool;
+  valid: Bool;
+  width: i32;
+  height: i32;
+  available: i32;
+  content_width: i32;
+  basis_height: i32;
+  top_frame: i32;
+  bottom_frame: i32;
+  margin_top: i32;
+  margin_bottom: i32;
+  reads_floats: Bool;
+  fragment_source: Bool;
+  own_barriers: u32;
+  own_free: Bool;
+  extra_travel: i64;
+  offset: i64;
+  natural: i64;
+  motion_known: Bool;
+}
+
+struct BoundaryVisits {
+  doc "Payload-opening operations on direct entries, block payloads and AVL metadata in the boundary path; repeated opens count again, scalar accesses within one snapshot do not. fallbacks counts departures to the reference path and reason is the greatest refusal code across updated contexts. Reference work, text preparation and metadata page-directory steps are outside these counters, so any fallback disqualifies a locality claim. frontier_refusals counts dirty-frontier leaves that refused before or after breaking, and frontier_reasons unions the reason bits documented by frontier_counts; these survive full replay and do not change admission.";
+  entries: u64;
+  blocks: u64;
+  indexes: u64;
+  fallbacks: u64;
+  reason: u32;
+  frontier_refusals: u64;
+  frontier_reasons: u32;
+}
+
+struct SequenceNode {
+  doc "A paged index cell. Field-narrow access keeps topology and weights separate from own and total transfers and from retained range actions; neither traversal nor link mutation copies a transfer. Removed cells remain tombstones.";
+  links: SequenceCursor;
+  own: SequenceOutput;
+  total: SequenceOutput;
+  actions: RangeActions;
+}
+
+struct RangeActions {
+  doc "Retained exact displacement of one owner AVL node (range.wf). own_geometry applies to this node's placed payload and child_geometry to every placed payload below it, both as owner-local (x, y, dx, dy) differences; own_semantic is the published displacement that this node's Open payload's duplicated offset and boundary fields still lack, and child_semantic what every stored own/total transfer below this node lacks. A basis assignment, when set, is the latest basis height of the Open payloads it covers and replaces rather than adds. The stored own and total transfers of this node already include every semantic displacement installed on it. Channels are identity unless a covered member witnesses them.";
+  own_geometry: Origin;
+  child_geometry: Origin;
+  own_semantic: i64;
+  child_semantic: i64;
+  own_basis: i32;
+  child_basis: i32;
+  own_basis_set: Bool;
+  child_basis_set: Bool;
+}
+
+struct RangeAction {
+  doc "One exact action installed on a direct-entry suffix: a local geometry difference, a semantic bound displacement, and an optional basis assignment.";
+  geometry: Origin;
+  semantic: i64;
+  basis: i32;
+  basis_set: Bool;
+}
+
+struct RangeDescriptor {
+  doc "A transient settled-frame range of one owner on the cut chain: its owner, first covered direct rank and exact local action, retained between geometry installation and semantic publication of one reference transaction.";
+  owner: u32;
+  first: u64;
+  action: Origin;
+}
+
+struct SequenceCursor {
+  doc "The copyable topology and structural weights of one AVL node. Semantic transfers are read separately only when combining outputs. Weights remain valid while a reference walk changes payload geometry.";
+  left: u32;
+  right: u32;
+  parent: u32;
+  height: u32;
+  live: Bool;
+  own_events: u64;
+  total_events: u64;
+  total_count: u64;
+}
+
+struct BoundaryReduction {
+  doc "One transient event's reduction result. Open owns its block output and its owner's AVL own/total values; synthesized Close positions are unused. Disjoint event slices expose independent subtree reductions.";
+  own: SequenceOutput;
+  total: SequenceOutput;
+  block: BlockOutput;
+}
+
+struct BoundaryRanks {
+  doc "Temporary payload-slot to event-rank projections used only to scatter a completed reference reduction by independent pages, without aliasing the block entries being written.";
+  blocks: Box<Array<u64>>;
+  paragraphs: Box<Array<u64>>;
+  children: Box<Array<u64>>;
+}
+
+struct PendingEntry {
+  doc "One construction-only direct entry and its completed virtual event span; its list index becomes its stable payload slot.";
+  item: Flow;
+  events: u64;
+}
+
+struct EntrySequence {
+  doc "One block's direct entries, with independently paged stable payload slots and an AVL order/summary index. allocated is local to this owner, never a context-wide order counter. A block occurs once as Open; Close exists only in the virtual iterator. During construction pending lazily holds plain direct entries and pending_events their virtual span; sealing releases that list and bulk-builds the pages and AVL. Empty and sealed owners hold no pending allocation. range_actions conservatively records that this owner sequence may retain an action; only construction or completed full normalization clears it, so immutable readers can skip an untouched owner without inspecting its index.";
+  payloads: SlotPages<Flow>;
+  nodes: SlotPages<SequenceNode>;
+  root: u32;
+  allocated: u32;
+  span: u32;
+  pending: Option<Box<Slots<PendingEntry>>>;
+  pending_events: u64;
+  range_actions: Bool;
+}
+
+struct Origin {
+  doc "A normal origin and a separate visual displacement. Stored origins are owner-relative exact i64 differences of the reference walker's resolved i32 positions; accumulated origins are in the context border box. Effective displacement preserves the reference arithmetic even when a relative-position sum saturated.";
+  x: i64;
+  y: i64;
+  dx: i64;
+  dy: i64;
+}
+
+struct BlockSnapshot {
+  doc "Copyable geometry and style inputs for the reference walker; excludes owned entry pages and indexes.";
   style: StyleRef;
-  x: i32;
-  y: i32;
+  x: i64;
+  y: i64;
+  dx: i64;
+  dy: i64;
+  normal_x: i32;
+  normal_y: i32;
+  resolved_x: i32;
+  resolved_y: i32;
+  width: i32;
+  height: i32;
+  marker: Bool;
+  parent: u32;
+  flow_at: u32;
+  inner_x: i32;
+  held_y: i32;
+  avail_left: i32;
+  avail_width: i32;
+  content_left: i32;
+  content_width: i32;
+}
+
+struct Block {
+  doc "A block-level box inside a flow context that establishes no context of its own, with its normal border origin x/y stored as exact i64 differences from its owning block's normal origin (the context for no_index), and its effective CSS relative displacement dx/dy stored separately. normal_x/normal_y and resolved_x/resolved_y are the context-coordinate scratch outputs of the compatibility walker, authoritative during a dense reference pass or for a fresh payload in a scoped reference pass; reference_old captures the preceding origin before an Open is replayed, and geometry.wf owns the phase-aware conversions. marker holds for a list item with an outside marker, whose marker makes a line when its content has none; parent is the block it sits in (no_index when it sits directly in the context), entry_slot its stable slot in the parent sequence and flow_at its compatibility Open rank and inner_x its border box's left offset in the context's content box, which the pre-pass records (the stacking pass writes resolved_x in the border box, and starts again from inner_x); split_head means a context-owned Split names this block, and survives interior edits; held_y is where an update's re-stack found the block before it stacked it again; avail_left and avail_width are the content box it sits in and content_left and content_width its own content box, as the pre-pass last computed them, which a style change of the block alone compares against (block_restyle).";
+  height_proof: Option<Box<HeightProof>>;
+  neutral: Bool;
+  split_head: Bool;
+  entries: EntrySequence;
+  entry_slot: u32;
+  boundary: SequenceOutput;
+  output: BlockOutput;
+  style: StyleRef;
+  x: i64;
+  y: i64;
+  dx: i64;
+  dy: i64;
+  reference_old: Origin;
+  reference_captured: Bool;
+  reference_fresh: Bool;
+  natural: i32;
+  natural_offset: i64;
+  natural_known: Bool;
+  normal_x: i32;
+  normal_y: i32;
+  resolved_x: i32;
+  resolved_y: i32;
   width: i32;
   height: i32;
   marker: Bool;
@@ -139,10 +399,12 @@ struct Line {
 }
 
 struct Atomic {
-  doc "Where a paragraph's line layout put an atomic inline: the child context's index and its border box's offset from the paragraph's origin.";
+  doc "Where a paragraph's line layout put an atomic inline: the child context's index, its visual border-box offset x/y from the paragraph's origin and its normal offset before CSS relative displacement normal_x/normal_y.";
   context: u32;
   x: i32;
   y: i32;
+  normal_x: i32;
+  normal_y: i32;
 }
 
 struct Exclusion {
@@ -163,13 +425,64 @@ struct ColumnPiece {
 }
 
 struct Split {
-  doc "A block-level box inside an open inline box, the block-in-inline of CSS 2.2 9.2.1.1: the inline box's element owner, the flow entries open and close of the block (one entry for a child context), the left offset and width of the content box it sits in, which the reference reports as one of owner's rectangles, and the top of the line the inline box would continue on before the block, after the margins before it collapse.";
+  doc "A block-level box inside an open inline box, the block-in-inline of CSS 2.2 9.2.1.1: the inline box's element owner, the flow entries open and close of the block (one entry for a child context), the left offset and width of the content box it sits in, which the reference reports as one of owner's rectangles, and the top of the line the inline box would continue on before the block, after the margins before it collapse. opening is the stable Open or Child identity; open/close and line are reference scratch, restored at replay entry. line_offset is the exact difference from the head normal origin; line_dirty marks freshly stacked raw line scratch until targeted publication, while exact suffix motion retains the offset without writing scratch; no_line remains a sentinel.";
   owner: u32;
+  opening: Flow;
+  line_offset: i64;
+  line_dirty: Bool;
   open: u32;
   close: u32;
   left: i32;
   width: i32;
   line: i32;
+}
+
+struct FragmentAnchor {
+  doc "A context fragment's dependency: mode 0 keeps raw scratch, 1 uses the first head visual top, 2 its Split.line normal offset, 3 spans first visual top through last visual bottom, and 4 uses last visual bottom plus margin. Stable Flow identities survive rank changes; split and last_split identify a run independently of owner/rectangle coincidence. leading_line records the topology-dependent sibling selector separately from the changing line sentinel. Geometry-role mappings are cleared by clear_fragment_anchors; certified source-domain split keys, links and dependencies survive geometry-only replay. Roles remain in first-split source order.";
+  active: Bool;
+  mode: u8;
+  first: Flow;
+  last: Flow;
+  split: u32;
+  margin: i32;
+  last_split: u32;
+  leading_line: Bool;
+}
+
+struct FragmentRoles {
+  doc "Three independently active role cells at one stable split slot. A live run owns its first split's leading, spanning and trailing records; unused roles do not consume source identities or publish rectangles. The array has one cell per split, avoiding a three-times source-count limit.";
+  leading: Fragment;
+  spanning: Fragment;
+  trailing: Fragment;
+  leading_anchor: FragmentAnchor;
+  spanning_anchor: FragmentAnchor;
+  trailing_anchor: FragmentAnchor;
+}
+
+struct SplitLink {
+  doc "Stable same-owner predecessor and successor split slots and this split's position in the immutable owner-sorted key array; no_index denotes absence.";
+  previous: u32;
+  next: u32;
+  order: u32;
+  gap_possible: Bool;
+}
+
+struct SplitJoin {
+  doc "The first and last broken incoming-edge positions in one balanced owner-order subtree, or no_index when every edge joins. Independent edge changes repair only their index ancestors.";
+  first: u32;
+  last: u32;
+}
+
+struct EmptyFragment {
+  doc "One paragraph-mark-owned context rectangle, active only for an eligible Open mark in a lineless paragraph. The mark slot remains stable while its source pieces survive; inactive capacity is never published.";
+  active: Bool;
+  value: Fragment;
+}
+
+struct FragmentRange {
+  doc "A retained fragment dependency interval in a balanced postorder tree: first and last name split slots supplying the minimum opening and maximum closing rank. In fragment_ranges, absent slots denote a subtree without split fragments. In split_dependencies, an absent first with a present last denotes the context start; an absent last denotes an empty subtree. Stable source topology preserves these extrema across rank changes.";
+  first: u32;
+  last: u32;
 }
 
 struct Fragment {
@@ -183,10 +496,12 @@ struct Fragment {
 }
 
 struct Paragraph {
-  doc "An inline formatting context's content inside a flow context, its anonymous block: the pieces from first, count of them, in its context's pieces, recorded by the walk, become text, runs, run_styles and marks in the preparation loop, which also shapes the text; layout fills lines, its fragments relative to its origin, and its height. The pre-pass gives it width and left, the content-box offset its lines break at, and records its flow entry (flow_at) and the block it sits in (block, no_index for none); the stacking pass gives it its origin x and top in the context's border box when it has lines, and beside, whether a float placed before it reaches below its top. broken_width and broken_left hold the width and left supplied to its last line break, so a new pre-pass can compare its actual inputs before keeping the lines.";
+  doc "An inline formatting context's content inside a flow context, its anonymous block: its owned pieces in inline source order, recorded by the walk, become text, runs, run_styles and marks in the preparation loop, which also shapes the text; layout fills lines, its fragments relative to its origin, and its height. The pre-pass gives it width and left, the content-box offset its lines break at, and records its flow entry (flow_at) and the block it sits in (block, no_index for none); x and top store its normal origin relative to block as exact i64 differences, dx/dy its separate effective relative displacement; normal_x/normal_top and resolved_x/resolved_top are the compatibility walker's context-coordinate scratch. empty_fragment marks a paragraph that generated a context-level empty-inline rectangle, preventing retirement without fragment ownership publication. A lineless paragraph has no placed origin: untouched readers preserve its resolved scratch position; a freshly stacked paragraph with no lines resets its unplaced origins to zero, matching a fresh full build. The stacking pass also gives it beside, whether a float placed before it reaches below its top. broken_width and broken_left hold the width and left supplied to its last line break, so a new pre-pass can compare its actual inputs before keeping the lines.";
+  retired: Bool;
+  empty_fragment: Bool;
+  empty_fragments: Box<Array<EmptyFragment>>;
   style: StyleRef;
-  first: u64;
-  count: u64;
+  pieces: Box<Slots<Piece>>;
   text: Box<Slots<u32>>;
   runs: Box<Slots<TextRun>>;
   run_styles: Box<Slots<StyleRef>>;
@@ -197,12 +512,23 @@ struct Paragraph {
   atomics: Box<Slots<Atomic>>;
   width: i32;
   left: i32;
-  top: i32;
+  top: i64;
+  dx: i64;
+  dy: i64;
+  reference_fresh: Bool;
+  natural: i32;
+  natural_offset: i64;
+  natural_known: Bool;
+  normal_x: i32;
+  normal_top: i32;
+  resolved_top: i32;
   height: i32;
   min_content: i32;
   max_content: i32;
   dirty: Bool;
-  x: i32;
+  x: i64;
+  resolved_x: i32;
+  entry_slot: u32;
   flow_at: u32;
   block: u32;
   beside: Bool;
@@ -247,13 +573,147 @@ struct Space {
   shrink: Bool;
 }
 
+struct FlexBox {
+  doc "What the flex container tells its items and the passes over them: its direction as the booleans row (the main axis is horizontal), reverse (the main axis runs against the writing direction) and wrapping and wrap_reverse (flex-wrap), its content width, the height its content box is known to have (unknown when indefinite), the gaps along the main and the cross axis, the alignment properties, and whether pkg::layout's update is updating the container (lay_out_child).";
+  row: Bool;
+  reverse: Bool;
+  wrapping: Bool;
+  wrap_reverse: Bool;
+  content_width: i32;
+  inner_height: i32;
+  main_gap: i32;
+  cross_gap: i32;
+  align_items: u8;
+  justify_content: u8;
+  align_content: u8;
+  updating: Bool;
+}
+
+struct FlexItem {
+  doc "One child context of a flex container as the flex algorithm sees it, in the container's main and cross axes: whether it is a flex item (an absolutely positioned child is not), its order, its margins (auto as zero, with which are auto), its paddings and borders, its flex factors, its border-box sizes (flex base, automatic or given minimum, maximum or unknown, hypothetical, target after flexing, and the main size of its natural layout), its cross-size limits, its alignment as a flex_at constant, the cross size it is stretched to or unknown, its baseline from its border-box top, and its border box's offsets along the main and the cross axis from the content box's start edges.";
+  child: u64;
+  active: Bool;
+  order: i32;
+  main_start: i32;
+  main_end: i32;
+  cross_start: i32;
+  cross_end: i32;
+  auto_main_start: Bool;
+  auto_main_end: Bool;
+  auto_cross_start: Bool;
+  auto_cross_end: Bool;
+  frame_main: i32;
+  frame_cross: i32;
+  grow: f64;
+  shrink: f64;
+  base: i32;
+  minimum: i32;
+  maximum: i32;
+  hypothetical: i32;
+  target: i32;
+  frozen: Bool;
+  cross_minimum: i32;
+  cross_maximum: i32;
+  cross_auto: Bool;
+  natural_main: i32;
+  natural_width: i32;
+  place: u8;
+  stretch_to: i32;
+  cross_size: i32;
+  baseline: i32;
+  main_position: i32;
+  cross_position: i32;
+}
+
+struct FlexCache {
+  doc "Child-owned flex preparation and pre-stretch measurements. Changed content or style invalidates both before dirty marks are cleared; setup and requested Space guard reuse across container updates.";
+  valid: Bool;
+  setup: FlexBox;
+  prepared: FlexItem;
+  final_space: Space;
+  final_cross: i32;
+  final_baseline: i32;
+  final_valid: Bool;
+}
+
+struct GridRowResult {
+  doc "A grid item's natural row measurement before stretch, owned by that item and valid only for unchanged content/style in the recorded complete measuring Space. Allocated only for measured grid items; final materialized geometry remains separate.";
+  valid: Bool;
+  space: Space;
+  height: i32;
+  margin_top: i32;
+  margin_bottom: i32;
+  first_baseline: i32;
+  has_first_baseline: Bool;
+}
+
+enum ParagraphFrontier {
+  doc "The pending paragraph set over stable slots in a context's 30-bit source domain. Vacant intervals are pruned by preparation, breaking and retirement; a Mark leaf belongs to its single source slot and stores a speculative new transfer only until that transaction completes. Fork intervals partition disjoint paragraph slices, so sparse independent work does not scan the gaps or scatter writes through an index array.";
+  Vacant();
+  Mark(output: SequenceOutput);
+  Fork(left: Box<ParagraphFrontier>, right: Box<ParagraphFrontier>);
+}
+
+struct FlowFrame {
+  doc "The geometry a flow context's passes take from its border-box width and its space: the content box's left and top in the border box, the width its flow is laid out in (a column's for a multi-column context, else the content box's), the definite content height children resolve percentages against (unknown when indefinite), and the column shape of a multi-column context.";
+  content_left: i32;
+  content_top: i32;
+  flow_width: i32;
+  definite: i32;
+  columned: Bool;
+  column_count: i32;
+  column_width: i32;
+  column_gap: i32;
+}
+
+struct FlowInputs {
+  doc "Effective inputs of the last completely published flow. Preparation and temporary parent spaces preserve this certificate; reconstruction, reset and structural splice invalidate it. Reuse compares actual call inputs, never old geometry recomputed under current styles.";
+  valid: Bool;
+  space: Space;
+  width: i32;
+  frame: FlowFrame;
+}
+
 struct Context {
-  doc "A box that establishes an independent formatting context, owning the boxes inside it and its child contexts. kind is ctx_flow for a block container, ctx_flex, ctx_grid, ctx_table for a table wrapper (its captions are children listed in captions, its cells children listed in cells), or ctx_replaced. natural says what an image the stage does not load shows, as the reference draws an image whose fetch failed: natural_object is any other context (a replaced one 300 by 150 px); natural_icon the 16 px broken-image icon of an img without alt; natural_empty the nothing of an img with an empty alt or no source; natural_alt_icon the icon before an img's alt text; natural_alt_box an inline img showing its alt text, a flow context that ignores its width and height; natural_marker the bullet of an inside disc, circle or square list marker; natural_text_input a single-line text input, as wide as twenty characters of its font and as tall as its line; and natural_toggle a checkbox or radio button, 13 px square. splits lists the blocks inside open inline boxes in its flow, in the order they open; column_map, for a multi-column context, moves its content from the one column it is laid out in to its columns. Layout writes its border box size, its position relative to its parent context's border box, its fragments and, when a parent asked, its intrinsic sizes. ratio_width and ratio_height are the width and height attributes of an img, video or svg the stage does not load (HTML Standard, 15.5.4: they give its aspect ratio), in layout units, or 0 when it lacks either. For pkg::layout's update: laid is the space of its last finished layout (laid_never before the first), flow_at and block the flow entry its parent's pre-pass gives it (its paragraph's for an atomic inline) and the parent's block it sits in, beside whether a float placed before it in its parent's flow reaches below its top; a flow context's stacking pass records the content height it returned before used_height (content_raw), the flow entry whose baseline is the context's (no_index for none) and whether its flow holds an out-of-flow child (has_out); intrinsic_basis is the percentage basis its intrinsic sizes were computed against when they became known; definite_free, which a flow context's pre-pass records, holds when no block or child context of its flow takes a percentage height, min-height or max-height, so that its content height being definite or not changes nothing but its own height. text_changed counts the paragraphs and the child contexts it marks in it (marked_paragraphs, marked_children) and records the last of each it marked (marked_paragraph, marked_child), so that an update with one of each finds it without a search; when an update prepares a marked context again it records whether its intrinsic sizes were known from the previous layout (intrinsic_held) and what they were (held_min, held_max), which a flex or grid container's update compares; the stacking pass records the end of the flow before the floats (flow_end) and, per flow entry, the position it starts from before floats and clearance move it (naturals; the largest i32 for an entry that a float cannot move), which the update's re-stack from an entry reads. restyled marks a change to styles this context reads locally; unlike an ancestor dirty mark alone, it forbids the text-only geometry cutoffs until the context has been laid out again. entered and left hold the builder's walk state as build_box began and ended the context (empty for the initial containing block), so that structure_changed can build an element's context again from where the walk entered it and check that the walk leaves it as before.";
+  doc "A box that establishes an independent formatting context, owning the boxes inside it and its child contexts; each paragraph owns its pieces. slot is assigned once when published in Layout.paths and is never a preorder rank. kind is ctx_flow for a block container, ctx_flex, ctx_grid, ctx_table for a table wrapper (its captions are children listed in captions, its cells children listed in cells), or ctx_replaced. natural says what an image the stage does not load shows, as the reference draws an image whose fetch failed: natural_object is any other context (a replaced one 300 by 150 px); natural_icon the 16 px broken-image icon of an img without alt; natural_empty the nothing of an img with an empty alt or no source; natural_alt_icon the icon before an img's alt text; natural_alt_box an inline img showing its alt text, a flow context that ignores its width and height; natural_marker the bullet of an inside disc, circle or square list marker; natural_text_input a single-line text input, as wide as twenty characters of its font and as tall as its line; and natural_toggle a checkbox or radio button, 13 px square. splits lists the blocks inside open inline boxes in its flow, in the order they open; fragment_anchors holds dependencies aligned with raw own/table fragments; split_roles holds three independently active roles per stable split slot, fragment_ranges indexes their repair intervals, and split_links, split_keys, split_joins and split_dependencies retain same-owner adjacency and negative topology dependencies; split_topology_known certifies those source-domain indexes independently of geometry, is invalidated by source construction, and survives only source-preserving replay or a certified splice; fragments_valid carries exact raw-versus-anchor certificates across unchanged inputs, and fragment_repaired records scoped certification for the current reference pass; fragments_anchored makes retained endpoint expressions authoritative even during reference scratch replay; raw split ranks are restored only at the reference bridge. split_head belongs to a Split in the parent context and is preserved when this context is rebuilt; column_map, for a multi-column context, moves its content from the one column it is laid out in to its columns. Layout writes its border box size, fragments and, when a parent asked, intrinsic sizes. first_baseline and has_first_baseline publish the first alignment baseline independently of baseline and has_baseline, whose existing last-baseline consumers keep their meaning. anchor stores its normal origin and effective visual displacement relative to block in its parent context (the viewport for viewport_origin); x/y and normal_x/normal_y are the parent's reference-walker scratch. local_geometry selects published owner-relative storage for its contents; reference_phase distinguishes dense raw scratch (0), old-frame replay (1) and settled-frame publication (2), reference_dense certifies complete raw validity, and the three reference slot lists identify touched payloads for bounded retirement; range_actions records that some owner sequence may retain a nonidentity range action (range.wf), so full bridges normalize them and point readers resolve them, and range_descriptors holds one transaction's cut-chain ranges between geometry installation and semantic publication; content_dx/content_dy are the table's content-origin adjustment, applied once after accumulating block origins and before paragraph-local fragments. The reference bridge materializes that adjustment before a compatibility replay. ratio_width and ratio_height are the width and height attributes of an img, video or svg the stage does not load (HTML Standard, 15.5.4: they give its aspect ratio), in layout units, or 0 when it lacks either. For pkg::layout's update: flow_inputs retains the actual completed ordinary-flow inputs for the explicitly admitted dirty-frontier transaction; paragraph_frontier is the sparse pending source set over the power-of-two slot interval frontier_span, which doubles by wrapping the existing root when a larger slot is marked. laid is the space of its last finished layout (laid_never before the first), entry_slot the stable parent-sequence slot, and flow_at and block the compatibility flow rank its parent's pre-pass gives it (its paragraph's for an atomic inline) and the parent's block it sits in, placement_paragraph the paragraph whose effective origin an atomic inline's anchor is relative to (no_index for every other child), beside whether a float placed before it in its parent's flow reaches below its top; a flow context's stacking pass records the content height it returned before used_height (content_raw), the flow entry whose baseline is the context's (no_index for none) and whether its flow holds an out-of-flow child (has_out); intrinsic_basis is the percentage basis its intrinsic sizes were computed against when they became known; definite_free, which a flow context's pre-pass records, holds when no block or child context of its flow takes a percentage height, min-height or max-height, so that its content height being definite or not changes nothing but its own height. text_changed counts the paragraphs and the child contexts it marks in it (marked_paragraphs, marked_children) and records the last of each it marked (marked_paragraph, marked_child), so that an update with one of each finds it without a search; when an update prepares a marked context again it records whether its intrinsic sizes were known from the previous layout (intrinsic_held) and what they were (held_min, held_max), which a flex or grid container's update compares; the stacking pass records the end of the flow before the floats (flow_end) and stores each movable payload's natural position before floats and clearance as an exact offset from its normal origin; the known bit distinguishes a finite offset from the largest-i32 absent sentinel, and the update reads the old-frame value without translating a dense rank vector. restyled marks a change to styles this context reads locally; unlike an ancestor dirty mark alone, it forbids the text-only geometry cutoffs until the context has been laid out again; the retained-input frontier separately proves its own-restyle admission. walk_exact distinguishes real construction checkpoints from neutral splice contexts; a later reconstruction ascends past those contexts to a genuine enclosing checkpoint. retired marks a vacant stable context slot and neutral records whether its built subtree used counter or quote state. entered and left hold the builder's walk state as build_box began and ended the context (empty for the initial containing block), so that structure_changed can build an element's context again from where the walk entered it and check that the walk leaves it as before.";
+  height_input: HeightInput;
+  height_proof: Option<Box<HeightProof>>;
+  height_summary: HeightSummary;
+  split_head: Bool;
+  flex_cache: FlexCache;
+  flex_counts: UpdateCounts;
+  grid_row: Option<Box<GridRowResult>>;
+  grid_counts: UpdateCounts;
+  grid_columns_invariant: Bool;
+  grid_intrinsic_invariant: Bool;
+  retired: Bool;
+  walk_exact: Bool;
+  neutral: Bool;
+  local_geometry: Bool;
+  reference_phase: u8;
+  reference_dense: Bool;
+  reference_blocks: Box<Slots<u32>>;
+  reference_paragraphs: Box<Slots<u32>>;
+  reference_children: Box<Slots<u32>>;
+  range_actions: Bool;
+  range_descriptors: Box<Slots<RangeDescriptor>>;
+  placement_fresh: Bool;
+  placement_natural: i32;
+  placement_natural_offset: i64;
+  placement_natural_known: Bool;
+  boundary_visits: BoundaryVisits;
+  boundary_dirty: Bool;
+  content_dx: i32;
+  content_dy: i32;
+  anchor: Origin;
+  normal_x: i32;
+  normal_y: i32;
+  slot: u32;
   kind: u8;
   natural: u8;
   style: StyleRef;
-  flow: Box<Slots<Flow>>;
-  pieces: Box<Slots<Piece>>;
+  entries: EntrySequence;
+  build_owner: u32;
   blocks: Box<Slots<Block>>;
   paragraphs: Box<Slots<Paragraph>>;
   children: Box<Slots<Context>>;
@@ -263,6 +723,18 @@ struct Context {
   captions: Box<Slots<u32>>;
   fragments: Box<Slots<Fragment>>;
   splits: Box<Slots<Split>>;
+  fragment_anchors: Box<Slots<FragmentAnchor>>;
+  fragments_valid: Bool;
+  fragment_repaired: Bool;
+  fragments_anchored: Bool;
+  fragment_ranges: Box<Array<FragmentRange>>;
+  split_roles: Box<Array<FragmentRoles>>;
+  split_links: Box<Array<SplitLink>>;
+  split_keys: Box<Array<u64>>;
+  split_joins: Box<Array<SplitJoin>>;
+  split_dependencies: Box<Array<FragmentRange>>;
+  split_topology_known: Bool;
+  empty_fragment_sources: u64;
   column_map: Box<Slots<ColumnPiece>>;
   space: Space;
   margin_top: i32;
@@ -275,6 +747,8 @@ struct Context {
   height: i32;
   baseline: i32;
   has_baseline: Bool;
+  first_baseline: i32;
+  has_first_baseline: Bool;
   viewport_origin: Bool;
   min_content: i32;
   max_content: i32;
@@ -283,14 +757,19 @@ struct Context {
   ratio_height: i32;
   dirty: Bool;
   laid: Space;
+  entry_slot: u32;
   flow_at: u32;
   block: u32;
+  placement_paragraph: u32;
   beside: Bool;
   content_raw: i32;
   baseline_entry: u32;
   has_out: Bool;
   intrinsic_basis: i32;
   definite_free: Bool;
+  flow_inputs: FlowInputs;
+  paragraph_frontier: ParagraphFrontier;
+  frontier_span: u64;
   marked_paragraphs: u32;
   marked_paragraph: u32;
   marked_children: u32;
@@ -299,7 +778,6 @@ struct Context {
   held_min: i32;
   held_max: i32;
   flow_end: i32;
-  naturals: Box<Slots<i32>>;
   restyled: Bool;
   restyled_block: u32;
   restyled_blocks: u32;
@@ -322,7 +800,7 @@ struct WalkPoint {
 }
 
 struct TextUnit {
-  doc "Where a text node's data enters the layout: the serial of the context whose pieces hold it, the first of its pieces there and how many, and the paragraph those pieces belong to; serial is no_index for a node that feeds no paragraph, and skipped_text (pkg::layout's build.wf) for one the walk met where its data made no piece, so that data which would make one is a box-tree change.";
+  doc "Where a text node's data enters the layout: the stable directory slot of the context holding its paragraph (the serial field), the paragraph-local offset of its first piece and how many pieces, and the paragraph's index in that context; serial is no_index for a node that feeds no paragraph, and skipped_text (pkg::layout's build.wf) for one the walk met where its data made no piece, so that data which would make one is a box-tree change.";
   serial: u32;
   piece: u32;
   count: u32;
@@ -330,25 +808,38 @@ struct TextUnit {
 }
 
 struct StyleUse {
-  doc "Where the laid-out tree reads one element's computed style, recorded with the paths: serial is the context whose own boxes read it (a block, table row, column or group, or a paragraph's strut or pieces, including its pseudo-elements'), with structural when that context's geometry reads it other than through a block, block the one block of it whose style it is (no_index for none, or for two), and the paragraphs first..end that do; owner is the serial of the context the element establishes, whose parent places it by its style; shared when a second context's boxes read it, so the uses do not fit one record.";
+  doc "The head of an element's explicit style routes, or no_index. Routes may name different contexts and discontiguous paragraph slots.";
+  head: u32;
+}
+
+struct StyleRoute {
+  doc "One explicit use: serial is a stable context slot; paragraph or block names a local payload slot, no_index for none. structural marks local geometry; owner also marks the placing parent when its algorithm reads child style. next links uses of the same element across any contexts.";
   serial: u32;
   structural: Bool;
-  first: u32;
-  end: u32;
-  owner: u32;
   block: u32;
-  shared: Bool;
+  paragraph: u32;
+  owner: Bool;
+  next: u32;
 }
 
 struct ContextPath {
-  doc "Where a context sits in the owned tree, by its serial (its position in a preorder walk of the tree, the initial containing block 0): its parent's serial (no_index for the initial containing block) and its index among its parent's children.";
+  doc "An append-only context directory slot: live is false after removal; parent is its parent's slot (no_index for the initial containing block), and child its local child slot. Context.slot and each descent step check the directory identity. Removed slots are never reused.";
+  live: Bool;
   parent: u32;
   child: u32;
+}
+
+struct ContextStep {
+  doc "A transient descent step whose parent and target context slots must match the owned tree at child. It stores identities, never references.";
+  parent: u32;
+  child: u32;
+  slot: u32;
 }
 
 struct UpdateCounts {
   doc "What one update did: the paragraphs it prepared again, the contexts it laid out again (a context laid out in full counting with every context below it), the paragraphs it broke into lines again, the flow entries the stacking pass walked in the contexts holding a paragraph it prepared again, and the flow entries every stacking pass it ran walked.";
   prepared: u64;
+  work: BoundaryVisits;
   contexts: u64;
   paragraphs: u64;
   held_entries: u64;
@@ -356,7 +847,7 @@ struct UpdateCounts {
 }
 
 struct StructureCounts {
-  doc "What one structure_changed did: the contexts and paragraphs it built again, and how many of those paragraphs took their preparation from the old context.";
+  doc "What the last structural operation did: the contexts and paragraphs it built again, and how many of those paragraphs took their preparation from the old context.";
   contexts: u64;
   paragraphs: u64;
   reused: u64;
@@ -367,11 +858,14 @@ public struct Layout {
   viewport: Viewport;
   paragraphs: u64;
   contexts: u64;
-  text_units: Box<Array<TextUnit>>;
-  uses: Box<Array<StyleUse>>;
-  paths: Box<Slots<ContextPath>>;
+  text_units: RouteTable<TextUnit>;
+  uses: RouteTable<StyleUse>;
+  routes: RouteTable<StyleRoute>;
+  context_of: RouteTable<u32>;
+  paths: RouteTable<ContextPath>;
   dirty: Bool;
   last_update: UpdateCounts;
+  pending_structure: UpdateCounts;
   last_structure: StructureCounts;
 }
 
@@ -384,13 +878,13 @@ public struct PlacedRect {
   public height: f32;
 }
 
-public fn build_boxes(document: &Document, traversal: &Traversal, styles: &Styles, atoms: &AtomTable, viewport: Viewport) -> result: Result<Layout, LayoutError> reads(document), reads(traversal), reads(styles), reads(atoms) doc "Builds the owned tree of formatting contexts of document (design/pipeline/layout.md) from its computed styles, which pkg::style::compute_styles returns for traversal's elements and their ::before and ::after boxes, in the viewport: one walk in tree order generates the boxes, with CSS Display 3's and CSS 2.2's anonymous boxes, generated content whose counters and quotes the walk resolves as it visits each element in tree order (Q63), and each paragraph's text as pieces. It also records, for text_changed and update, where each text node enters the layout (text_units, indexed by NodeId index) and where each context sits (paths, by serial), with no mark set. No paragraph is prepared: pkg::layout::prepare_text does that, and lay_out needs a prepared layout. TooLarge past the storage limits; Inconsistent when the document, traversal and styles disagree.";
+public fn build_boxes(document: &Document, traversal: &Traversal, styles: &Styles, atoms: &AtomTable, viewport: Viewport) -> result: Result<Layout, LayoutError> reads(document), reads(traversal), reads(styles), reads(atoms) doc "Builds the owned tree of formatting contexts of document (design/pipeline/layout.md) from its computed styles, which pkg::style::compute_styles returns for traversal's elements and their ::before and ::after boxes, in the viewport: one walk in tree order generates the boxes, with CSS Display 3's and CSS 2.2's anonymous boxes, generated content whose counters and quotes the walk resolves as it visits each element in tree order (Q63), and each paragraph's text as pieces. It also records, for text_changed and update, where each text node enters the layout (text_units, indexed by NodeId index) and where each context sits (paths, by stable context slot), with no mark set. No paragraph is prepared: pkg::layout::prepare_text does that, and lay_out needs a prepared layout. TooLarge past the storage limits; Inconsistent when the document, traversal and styles disagree.";
 
 public fn prepare_text(layout: &Layout, document: &Document, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> result: Result<unit, LayoutError> reads(document), reads(styles), reads(fonts), reads(picks), writes(layout) doc "Prepares every paragraph of layout, which build_boxes returned: in each context, one counted loop turns each paragraph's pieces into its text, after CSS Text 3's white-space processing and text-transform, and shapes it with pkg::layout::text::shape_paragraph (Q53). picks is pkg::layout::text::pick_fonts for the font groups of the styles layout was built from. Text when shaping refuses a paragraph.";
 
 public fn build_layout(document: &Document, traversal: &Traversal, styles: &Styles, atoms: &AtomTable, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: Result<Layout, LayoutError> reads(document), reads(traversal), reads(styles), reads(atoms), reads(fonts), reads(picks) doc "Builds the layout of document with build_boxes and prepares its text with prepare_text, so that lay_out can run on it. picks is pkg::layout::text::pick_fonts for styles' font groups. TooLarge, Inconsistent and Text as those two functions return them.";
 
-public fn lay_out(layout: &Layout, document: &Document, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> result: unit reads(document), reads(styles), reads(fonts), reads(picks), writes(layout) doc "Lays out every context of the prepared layout in the viewport given to build_boxes: CSS 2.2's block and inline formatting with floats and positioning, CSS Flexbox 1, CSS Grid 1 without subgrid and CSS Tables 3's table layout, each context writing its boxes and fragments with offsets from its own border box (Q55) and computing intrinsic sizes when a parent's algorithm needs them (Q56); computed lengths become LayoutUnit when read by the reference's conversion for their use (a line height given as a length rounds to the nearest unit, one given as a number is the font size rounded to the nearest unit times the number, truncated, every other length truncates) and a text fragment's width is its advances' sum rounded up (Q54).";
+public fn lay_out(layout: &Layout, document: &Document, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> result: unit reads(document), reads(styles), reads(fonts), reads(picks), writes(layout) doc "Lays out every context of the prepared layout in the viewport given to build_boxes: CSS 2.2's block and inline formatting with floats and positioning, CSS Flexbox 1, CSS Grid 1 without subgrid and CSS Tables 3's table layout, each context storing normal block and paragraph origins relative to their owning block with visual displacement separate, its reference walker resolving context coordinates before encoding them (Q109), and paragraph fragments remaining paragraph-local, and computing intrinsic sizes when a parent's algorithm needs them (Q56); computed lengths become LayoutUnit when read by the reference's conversion for their use (a line height given as a length rounds to the nearest unit, one given as a number is the font size rounded to the nearest unit times the number, truncated, every other length truncates) and a text fragment's width is its advances' sum rounded up (Q54).";
 
 public fn place_boxes(layout: &Layout) -> placed: Box<Slots<PlacedRect>> reads(layout) doc "Returns every box of the laid-out layout in viewport coordinates: for each element, the border box of each of its fragments, the rectangles getClientRects reports, and for each text node, each of its line fragments, as a Range's getClientRects reports them, with kind placed_element and owner the element's NodeId index, or kind placed_text and owner the text node's NodeId index. Rectangles of one owner appear in fragment order; owners appear in no particular order.";
 
@@ -400,12 +894,24 @@ public fn text_changed(layout: &Layout, document: &Document, node: NodeId) -> re
 
 public fn styles_changed(layout: &Layout, old: &Styles, new: &Styles, traversal: &Traversal, changed: &[Bool], attributes: &[AttributeChange]) -> result: Result<unit, LayoutError> reads(old), reads(new), reads(traversal), reads(changed), reads(attributes), writes(layout) doc "Records a style delta for a laid-out layout built with old, with the same document nodes and text, traversal and font set: changed is layout_changes(old, new), and attributes lists every attribute change, currently class edits only. Marks every paragraph and context that reads a changed element or its pseudo-element, and the ancestors needed to propagate their outputs. Before marking, checks that old and new list the same elements in the same preorder (a structural edit is refused), and that the retained box topology, generated-content references and pseudo-element positions remain valid and no changed attribute is read by generated content; returns Inconsistent without changing layout when they cannot be retained, so the caller must build_boxes again. Font-size and colour changes that preserve these dependencies are supported. A delta with no layout consumer changed adds no marks. After success the caller supplies new and its matching FontPicks to update and subsequent operations; group identifiers from old and new are never compared as values.";
 
-public fn styles_restyled(layout: &Layout, traversal: &Traversal, changed: &[u32]) -> result: Result<unit, LayoutError> reads(traversal), reads(changed), writes(layout) doc "Records, for a laid-out layout, that the elements at the preorder indices in changed (each entry as pkg::style::Restyled.changed holds it, changed_boxes_only marking an element whose own text and inline boxes read nothing that changed) have new computed styles in the styles it was built with, which kept their tables, and that nothing box construction reads changed (pkg::style::restyle's structural is False): through each element's recorded uses it marks the paragraphs that read its style, except a block's when changed_boxes_only is set, the contexts whose geometry reads it and, for an element that establishes a context, that context and its parent, with the contexts on their paths, as text_changed marks a paragraph; an element read by more than one context marks the whole tree as styles_changed does. Its cost follows the changed elements and the depth of their contexts.";
+public fn styles_restyled(layout: &Layout, traversal: &Traversal, changed: &[u32]) -> result: Result<unit, LayoutError> reads(traversal), reads(changed), writes(layout) doc "Records, for a laid-out layout, that the elements at the preorder indices in changed (each entry as pkg::style::Restyled.changed holds it, changed_boxes_only marking an element whose own text and inline boxes read nothing that changed) have new computed styles in the styles it was built with, which kept their tables, and that nothing box construction reads changed (pkg::style::restyle's structural is False): through each element's recorded uses it marks the paragraphs that read its style, except a block's when changed_boxes_only is set, the contexts whose geometry reads it and, for an element that establishes a context, that context and its parent, with the contexts on their paths, as text_changed marks a paragraph; uses in several contexts have separate routes, without a whole-tree marking fallback. Its marking cost follows explicit uses and their checked context paths.";
 
-public fn structure_changed(layout: &Layout, document: &Document, old: &Styles, new: &Styles, traversal: &Traversal, atoms: &AtomTable, changed: &[Bool], parent: NodeId) -> result: Result<unit, LayoutError> reads(document), reads(old), reads(new), reads(traversal), reads(atoms), reads(changed), writes(layout) doc "Records an edit that inserted or removed children of the element parent (pkg::dom's insert_before, append_child or detach) in a laid-out layout built with old: new and traversal are the style stage's result and traversal on the edited document, and changed is layout_changes(old, new). It builds again the context of the nearest element at or above parent that establishes one, starting the box tree builder's walk from the state it entered that context in, and keeps every other context; each paragraph of the new context whose pieces and styles equal an old paragraph's takes that paragraph's preparation, and the others are marked for it; the new context and its ancestors are marked for update, which lays the new context out in full. Inconsistent, without changing layout, when no element at or above parent establishes a context, when the walk would leave the context in another state (counters or quotes that later contexts read), when the delta flags an element present before and after the edit outside that context or flags the context's own element, or when the style stage's generated text or the pseudo-element list outside it changed, which retained pieces index; the caller must then build_boxes again.";
+public fn structure_changed(layout: &Layout, document: &Document, old: &Styles, new: &Styles, traversal: &Traversal, atoms: &AtomTable, changed: &[Bool], parent: NodeId) -> result: Result<unit, LayoutError> reads(document), reads(old), reads(new), reads(traversal), reads(atoms), reads(changed), writes(layout) doc "Records an edit that inserted or removed children of the element parent (pkg::dom's insert_before, append_child or detach) in a laid-out layout built with old: new and traversal are the style stage's result and traversal on the edited document, and changed is layout_changes(old, new). It builds again the context of the nearest element at or above parent that establishes one, starting the box tree builder's walk from the state it entered that context in, and keeps every other context and its directory slot; removed context slots become vacant, replacement contexts get fresh slots, and only their text and style contributions are replaced; each paragraph of the new context whose pieces and styles equal an old paragraph's takes that paragraph's preparation, and the others are marked for it; the new context and its ancestors are marked for update, which lays the new context out in full. Inconsistent, without changing layout, when no element at or above parent establishes a context, when the walk would leave the context in another state (counters or quotes that later contexts read), when the delta flags an element present before and after the edit outside that context or flags the context's own element, or when the style stage's generated text or the pseudo-element list outside it changed, which retained pieces index; the caller must then build_boxes again.";
 
-public fn structure_counts(layout: &Layout) -> (contexts: u64, paragraphs: u64, reused: u64) reads(layout) doc "Returns what the last structure_changed did: the contexts and paragraphs it built again and the paragraphs among those that kept their preparation; all zero before the first and after a refusal.";
+public fn structure_counts(layout: &Layout) -> (contexts: u64, paragraphs: u64, reused: u64) reads(layout) doc "Returns what the last structural operation did: the contexts and paragraphs it built again and the paragraphs among those that kept their preparation; all zero before the first and after a refusal.";
 
 public fn update(layout: &Layout, document: &Document, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> result: Result<unit, LayoutError> reads(document), reads(styles), reads(fonts), reads(picks), writes(layout) doc "Brings the laid-out layout up to date with the changes marked since it was last laid out or updated: prepares again each marked paragraph, and lays out again each marked context, keeping every unmarked child context whose space comes out unchanged and every unmarked paragraph whose width and left edge come out unchanged, and stopping at a context whose border-box size, baseline and margins come out unchanged; then clears the marks. The layout it leaves places the same boxes as lay_out on the layout build_layout makes from the same document, styles and fonts (place_boxes returns the same rectangles). A layout with no mark costs one test. Text when shaping refuses a paragraph.";
 
 public fn update_counts(layout: &Layout) -> (prepared: u64, contexts: u64, paragraphs: u64, held_entries: u64, entries: u64) reads(layout) doc "Returns what the last update did, as pkg::layout's UpdateCounts records it: the paragraphs it prepared again, the contexts it laid out again, the paragraphs it broke into lines again, the flow entries the stacking pass walked in the contexts holding a paragraph it prepared again, and those every stacking pass it ran walked; all zero before the first update and for an update with no mark.";
+
+public fn boundary_counts(layout: &Layout) -> (entries: u64, blocks: u64, indexes: u64, fallbacks: u64, reason: u32) reads(layout) doc "Returns boundary-path physical visits across the updated contexts and fallback count/reason. Reference replay is outside these counters; any fallback disqualifies a locality assertion.";
+
+public fn frontier_counts(layout: &Layout) -> (refusals: u64, reasons: u32) reads(layout) doc "Returns refused dirty-frontier leaf count and the union of actual reasons in the last update: 1 clean leaf, 2 historical no-retained-lines refusal, 4 nonpositive lined height, 8 float dependence, 16 atomic dependence, 32 changed width, 64 changed left edge, 128 missing slot, 256 historical new-through-output refusal, 512 changed height, 1024 changed last baseline, 2048 line-presence transition, 4096 unsupported lineless Open topology. Admission records its first failed guard; completed breaks can record both changed extent components. Context-input refusal is outside these leaf counters.";
+
+public fn height_read_counts(layout: &Layout) -> (consumers: u64, unproved: u64) reads(layout) doc "Sums every live context's cached direct percentage-read inventory for the checking oracle, plus the root's own record. Child records are counted where their parent includes them; nested interiors are visited only by this checking traversal. Comparing retained and fresh layouts detects lost publication and retired dependencies even when rectangles happen to agree.";
+
+public fn boundary_transfer_check() -> passed: Bool pure doc "Checks ordinary transfer composition against sequential reference margin operations; used by the incremental layout oracle before applying edits.";
+
+public fn reference_publication_check(styles: &Styles) -> passed: Bool reads(styles) doc "Checks retained suffix transfer publication against independently specified owner displacement and natural-floor values; used by the incremental layout oracle after obtaining styles.";
+
+public fn structure_splice(layout: &Layout, document: &Document, styles: &Styles, traversal: &Traversal, atoms: &AtomTable, changed: &[u32], parent: NodeId, before: Option<NodeId>, inserted: Option<NodeId>, removed: Option<NodeId>, references_stable: Bool, fonts: &FontSet, picks: &FontPicks) -> result: Result<u32, LayoutError> reads(document), reads(styles), reads(traversal), reads(atoms), reads(changed), reads(fonts), reads(picks), writes(layout) doc "Attempts Q115 A before structure_changed using the stable structural style frontier and matching font picks. references_stable must mean the style stage retained every existing generated-text and pseudo identity. Zero publishes a neutral complete-block seam, prepares only inserted content and settles the ancestor boundary path; the private plan includes an admitted following sibling top-margin change and update consumes its counters. Reasons 1-9 refuse before retained geometry or routing changes: 1 ambiguous owner/route, 2 unsupported container or multicol owner, 3 mixed inline seam, 4 unstable generated references, 5 counter/quote dependency, 6 unsupported retained style frontier, 7 unsupported boundary state, 8 storage limit, 9 float suffix dependency. Reason 10 follows a completed local publication plus explicit reference completion when an actual flex output fails its outward certificate; the caller reconstructs from that complete current state. Construction errors leave retained state unchanged. The caller falls back to structure_changed and keeps its Q86 outgoing-state refusal.";

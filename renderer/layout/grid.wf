@@ -64,8 +64,9 @@ const grid_select_intrinsic_max: u8 = 4_u8;
 const grid_select_max_content_max: u8 = 5_u8;
 
 struct GridItem {
-  doc "What the grid keeps of one child of its context, indexed by the child's index: whether it is a grid item, its order, its placement (a row or column start and span, definite or not; starts count from the first implicit track once placed), and while sizing tracks its size contributions in the axis being sized, whether its height was measured at its column width, and its grid area relative to the context's content box.";
+  doc "What the grid keeps of one child of its context, indexed by the child's index: whether it is a grid item, its order, its placement (a row or column start and span, definite or not; starts count from the first implicit track once placed), and while sizing tracks its size contributions in the axis being sized, its grid area relative to the context's content box.";
   active: Bool;
+  work: UpdateCounts;
   order: i32;
   row_definite: Bool;
   row: i32;
@@ -78,12 +79,12 @@ struct GridItem {
   least: i32;
   most: i32;
   minimum: i32;
-  measured: Bool;
   x: i32;
   y: i32;
   width: i32;
   height: i32;
   shared: Bool;
+  ascent: i32;
   shim: i32;
 }
 
@@ -146,7 +147,8 @@ struct GridSize {
 fn grid_new_item() -> made: GridItem pure {
   doc "An item entry for a child that is no grid item.";
   let no = False();
-  return GridItem(active: no, order: 0_i32, row_definite: no, row: 0_i32, rows: 1_i32, column_definite: no, column: 0_i32, columns: 1_i32, placed: no, needs: no, least: 0_i32, most: 0_i32, minimum: 0_i32, measured: no, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32, shared: no, shim: 0_i32);
+  let work = no_updates();
+  return GridItem(active: no, work: work, order: 0_i32, row_definite: no, row: 0_i32, rows: 1_i32, column_definite: no, column: 0_i32, columns: 1_i32, placed: no, needs: no, least: 0_i32, most: 0_i32, minimum: 0_i32, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32, shared: no, ascent: 0_i32, shim: 0_i32);
 }
 
 fn grid_mod(value: u64, modulus: u64) -> remainder: u64 pure {
@@ -848,7 +850,7 @@ fn grid_put(items: &Box<Slots<GridItem>>, at: u64, item: GridItem) -> result: un
   return unit;
 }
 
-fn grid_collect(context: &Context, styles: &Styles, model: &GridModel, column_def: GridDef, row_def: GridDef, areas: u32) -> result: unit reads(context), reads(styles), writes(model) {
+fn grid_collect(context: &Context, events: &[Flow], styles: &Styles, model: &GridModel, column_def: GridDef, row_def: GridDef, areas: u32) -> result: unit reads(context), reads(events), reads(styles), writes(model) {
   doc "Makes an item entry for each child of context and lists the in-flow children in document order, each with its order and its placement along both axes; an absolutely positioned child is no item.";
   let count = context^.children.inner.len;
   for (c in 0_u64..count) {
@@ -856,12 +858,13 @@ fn grid_collect(context: &Context, styles: &Styles, model: &GridModel, column_de
     let pushed = push_item::<GridItem>(cell: &model^.items, value: blank, ceiling: item_ceiling);
   }
   let ordered = False();
-  let flow_count = context^.flow.inner.len;
+  let flow_count = events^.len;
   for (k in 0_u64..flow_count) {
-    if k >= context^.flow.inner.len {
+    let flow_bound_861 = events^.len;
+    if k >= flow_bound_861 {
       break;
     }
-    let piece = context^.flow.inner[k];
+    let piece = events^[k];
     match piece {
       Child(context: child) => {
         let at = cvt::<u32, u64>(child);
@@ -872,7 +875,8 @@ fn grid_collect(context: &Context, styles: &Styles, model: &GridModel, column_de
           let no = False();
           let row = grid_spot(styles: styles, def: row_def, areas: areas, rows: yes, first: group.row_start, last: group.row_end);
           let column = grid_spot(styles: styles, def: column_def, areas: areas, rows: no, first: group.column_start, last: group.column_end);
-          let made = GridItem(active: yes, order: group.order, row_definite: row.definite, row: row.start, rows: row.span, column_definite: column.definite, column: column.start, columns: column.span, placed: no, needs: no, least: 0_i32, most: 0_i32, minimum: 0_i32, measured: no, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32, shared: no, shim: 0_i32);
+          let work = no_updates();
+          let made = GridItem(active: yes, work: work, order: group.order, row_definite: row.definite, row: row.start, rows: row.span, column_definite: column.definite, column: column.start, columns: column.span, placed: no, needs: no, least: 0_i32, most: 0_i32, minimum: 0_i32, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32, shared: no, ascent: 0_i32, shim: 0_i32);
           grid_put(items: &model^.items, at: at, item: made);
           let pushed = push_item::<u32>(cell: &model^.sequence, value: child, ceiling: item_ceiling);
           if group.order != 0_i32 {
@@ -943,7 +947,7 @@ fn grid_swap_axes(model: &GridModel) -> result: unit writes(model) {
   let count = model^.items.inner.len;
   for (c in 0_u64..count) {
     let item = grid_get(items: &model^.items, at: c);
-    let swapped = GridItem(active: item.active, order: item.order, row_definite: item.column_definite, row: item.column, rows: item.columns, column_definite: item.row_definite, column: item.row, columns: item.rows, placed: item.placed, needs: item.needs, least: item.least, most: item.most, minimum: item.minimum, measured: item.measured, x: item.x, y: item.y, width: item.width, height: item.height, shared: item.shared, shim: item.shim);
+    let swapped = GridItem(active: item.active, work: item.work, order: item.order, row_definite: item.column_definite, row: item.column, rows: item.columns, column_definite: item.row_definite, column: item.row, columns: item.rows, placed: item.placed, needs: item.needs, least: item.least, most: item.most, minimum: item.minimum, x: item.x, y: item.y, width: item.width, height: item.height, shared: item.shared, ascent: item.ascent, shim: item.shim);
     grid_put(items: &model^.items, at: c, item: swapped);
   }
   return unit;
@@ -1415,12 +1419,12 @@ fn grid_room(track: GridTrack, to_limit: Bool, caps: Bool) -> room: i32 pure {
   return grid_infinite;
 }
 
-fn grid_spread(tracks: &Box<Slots<GridTrack>>, first: u64, end: u64, space: i32, select: u8, to_limit: Bool, caps: Bool, beyond: Bool) -> result: unit writes(tracks) {
+fn grid_spread(tracks: &[GridTrack], first: u64, end: u64, space: i32, select: u8, to_limit: Bool, caps: Bool, beyond: Bool) -> result: unit writes(tracks) {
   doc "Distributes space equally among the affected tracks from first to end into their share (CSS Grid 11.5.1): each track takes its part up to its growth limit when caps holds and the distribution is to base sizes; when space is left and beyond holds, it is spread over the affected tracks that have an intrinsic maximum, or all affected tracks, without limits.";
-  let length = tracks^.inner.len;
+  let length = tracks^.len;
   for (k in first..end) {
     if k < length {
-      set tracks^.inner[k].share = 0_i32;
+      set tracks^[k].share = 0_i32;
     }
   }
   let remaining = space;
@@ -1430,7 +1434,7 @@ fn grid_spread(tracks: &Box<Slots<GridTrack>>, first: u64, end: u64, space: i32,
     let open = 0_i32;
     for (k in first..end) {
       if k < length {
-        let track = tracks^.inner[k];
+        let track = tracks^[k];
         let hit = grid_affected(track: track, select: select);
         let room = grid_room(track: track, to_limit: to_limit, caps: caps);
         let has_room = room > 0_i32;
@@ -1452,7 +1456,7 @@ fn grid_spread(tracks: &Box<Slots<GridTrack>>, first: u64, end: u64, space: i32,
     let extra = rest;
     for (k in first..end) {
       if k < length {
-        let track = tracks^.inner[k];
+        let track = tracks^[k];
         let hit = grid_affected(track: track, select: select);
         let room = grid_room(track: track, to_limit: to_limit, caps: caps);
         let has_room = room > 0_i32;
@@ -1466,7 +1470,7 @@ fn grid_spread(tracks: &Box<Slots<GridTrack>>, first: u64, end: u64, space: i32,
           set extra = extra -sat bonus;
           let want = each +sat bonus;
           let given = imin(want, room);
-          set tracks^.inner[k].share = tracks^.inner[k].share +sat given;
+          set tracks^[k].share = tracks^[k].share +sat given;
           set remaining = remaining -sat given;
         }
       }
@@ -1478,7 +1482,7 @@ fn grid_spread(tracks: &Box<Slots<GridTrack>>, first: u64, end: u64, space: i32,
       let all = 0_i32;
       for (k in first..end) {
         if k < length {
-          let track = tracks^.inner[k];
+          let track = tracks^[k];
           let hit = grid_affected(track: track, select: select);
           let intrinsic = grid_intrinsic_max(track: track);
           let both = band(hit, intrinsic);
@@ -1503,7 +1507,7 @@ fn grid_spread(tracks: &Box<Slots<GridTrack>>, first: u64, end: u64, space: i32,
         let extra = rest;
         for (k in first..end) {
           if k < length {
-            let track = tracks^.inner[k];
+            let track = tracks^[k];
             let hit = grid_affected(track: track, select: select);
             let intrinsic = grid_intrinsic_max(track: track);
             let both = band(hit, intrinsic);
@@ -1520,7 +1524,7 @@ fn grid_spread(tracks: &Box<Slots<GridTrack>>, first: u64, end: u64, space: i32,
               }
               set extra = extra -sat bonus;
               let want = each +sat bonus;
-              set tracks^.inner[k].share = tracks^.inner[k].share +sat want;
+              set tracks^[k].share = tracks^[k].share +sat want;
             }
           }
         }
@@ -1530,14 +1534,14 @@ fn grid_spread(tracks: &Box<Slots<GridTrack>>, first: u64, end: u64, space: i32,
   return unit;
 }
 
-fn grid_spread_flex(tracks: &Box<Slots<GridTrack>>, first: u64, end: u64, space: i32, select: u8) -> result: unit writes(tracks) {
+fn grid_spread_flex(tracks: &[GridTrack], first: u64, end: u64, space: i32, select: u8) -> result: unit writes(tracks) {
   doc "Distributes space over the flexible tracks from first to end that have an intrinsic minimum, in proportion to their flex factors (CSS Grid 11.5, step 4), into their share.";
-  let length = tracks^.inner.len;
+  let length = tracks^.len;
   let total = 0.0_f32;
   for (k in first..end) {
     if k < length {
-      set tracks^.inner[k].share = 0_i32;
-      let track = tracks^.inner[k];
+      set tracks^[k].share = 0_i32;
+      let track = tracks^[k];
       let flexible = track.max_kind == track_flex;
       let intrinsic = grid_affected(track: track, select: select);
       let both = band(flexible, intrinsic);
@@ -1553,7 +1557,7 @@ fn grid_spread_flex(tracks: &Box<Slots<GridTrack>>, first: u64, end: u64, space:
     let leader = length;
     for (k in first..end) {
       if k < length {
-        let track = tracks^.inner[k];
+        let track = tracks^[k];
         let flexible = track.max_kind == track_flex;
         let intrinsic = grid_affected(track: track, select: select);
         let both = band(flexible, intrinsic);
@@ -1561,7 +1565,7 @@ fn grid_spread_flex(tracks: &Box<Slots<GridTrack>>, first: u64, end: u64, space:
           let ratio = fdiv.strict(track.flex, total);
           let part = fmul.strict(wide, ratio);
           let whole = grid_floor(value: part);
-          set tracks^.inner[k].share = whole;
+          set tracks^[k].share = whole;
           set given = given +sat whole;
           if leader == length {
             set leader = k;
@@ -1572,20 +1576,8 @@ fn grid_spread_flex(tracks: &Box<Slots<GridTrack>>, first: u64, end: u64, space:
     let left = space -sat given;
     if leader < length {
       if left > 0_i32 {
-        set tracks^.inner[leader].share = tracks^.inner[leader].share +sat left;
+        set tracks^[leader].share = tracks^[leader].share +sat left;
       }
-    }
-  }
-  return unit;
-}
-
-fn grid_merge(tracks: &Box<Slots<GridTrack>>, first: u64, end: u64) -> result: unit writes(tracks) {
-  doc "Keeps, for each track from first to end, the larger of its planned increase and the share one item gave it.";
-  let length = tracks^.inner.len;
-  for (k in first..end) {
-    if k < length {
-      let larger = imax(tracks^.inner[k].planned, tracks^.inner[k].share);
-      set tracks^.inner[k].planned = larger;
     }
   }
   return unit;
@@ -1617,66 +1609,142 @@ fn grid_apply(tracks: &Box<Slots<GridTrack>>, to_limit: Bool) -> result: unit wr
   return unit;
 }
 
-fn grid_touch(tracks: &Box<Slots<GridTrack>>, first: u64, end: u64, select: u8) -> result: unit writes(tracks) {
-  doc "Marks the tracks from first to end that a growth limit step affects, so that an infinite growth limit among them becomes its base size even when no item adds to it.";
-  let length = tracks^.inner.len;
-  for (k in first..end) {
-    if k < length {
-      let hit = grid_affected(track: tracks^.inner[k], select: select);
-      if hit {
-        set tracks^.inner[k].touched = True();
-      }
+fn grid_proposal_length(tracks: &Box<Slots<GridTrack>>, item: GridItem, rows: Bool, group: i32) -> length: u64 reads(tracks) {
+  let live = band(item.active, item.needs);
+  if live {
+    let (start, span) = grid_axis_of(item: item, rows: rows);
+    let first = grid_index(value: start);
+    let width = grid_index(value: span);
+    let reach = first +sat width;
+    let end = imin(reach, tracks^.inner.len);
+    let flexy = grid_spans_flex(tracks: tracks, first: first, end: end);
+    let plain = bnot(flexy);
+    let same = span == group;
+    let grouped = band(same, plain);
+    let wanted = if group == 0_i32 {
+      give flexy;
+    } else {
+      give grouped;
+    }
+    if wanted {
+      return end -sat first;
+    }
+  }
+  return 0_u64;
+}
+
+fn grid_propose(tracks: &Box<Slots<GridTrack>>, item: GridItem, rows: Bool, group: i32, select: u8, to_limit: Bool, which: u8, proposal: &[GridTrack]) -> result: unit reads(tracks), writes(proposal) {
+  doc "One item's distribution owns only its spanned tracks. All items read the same phase bases and limits; water-filling rounds and numeric remainders retain their true dependencies inside this proposal.";
+  let count = proposal^.len;
+  if count == 0_u64 {
+    return unit;
+  }
+  let (start, span) = grid_axis_of(item: item, rows: rows);
+  let first = grid_index(value: start);
+  for (k in 0_u64..count) {
+    let at = first +sat k;
+    if at < tracks^.inner.len {
+      set proposal^[k] = tracks^.inner[at];
+      set proposal^[k].share = 0_i32;
+      let affected = grid_affected(track: proposal^[k], select: select);
+      set proposal^[k].touched = band(to_limit, affected);
+    }
+  }
+  let contribution = if which == 0_u8 {
+    give item.minimum;
+  } else if which == 1_u8 {
+    give item.least;
+  } else {
+    give item.most;
+  }
+  let end = first +sat count;
+  let basis = grid_sum(tracks: tracks, first: first, end: end, limits: to_limit);
+  let space = contribution -sat basis;
+  if space > 0_i32 {
+    if group == 0_i32 {
+      grid_spread_flex(tracks: proposal, first: 0_u64, end: count, space: space, select: select);
+    } else {
+      let to_base = bnot(to_limit);
+      grid_spread(tracks: proposal, first: 0_u64, end: count, space: space, select: select, to_limit: to_limit, caps: to_base, beyond: to_base);
     }
   }
   return unit;
 }
 
-fn grid_pass(tracks: &Box<Slots<GridTrack>>, items: &Box<Slots<GridItem>>, rows: Bool, group: i32, select: u8, to_limit: Bool, which: u8) -> result: unit reads(items), writes(tracks) {
-  doc "One step of resolving intrinsic track sizes (CSS Grid 11.5): for each item that spans group tracks and no flexible track (group zero: each item that spans a flexible track), the space its contribution needs beyond the tracks it spans (which is 0 its minimum contribution, 1 its min-content, else its max-content contribution) is spread over the tracks the step affects, the largest increase of any item is kept for each track, and the increases are applied.";
-  let count = items^.inner.len;
-  let length = tracks^.inner.len;
-  let to_base = bnot(to_limit);
-  for (c in 0_u64..count) {
-    let item = items^.inner[c];
-    let live = band(item.active, item.needs);
-    if live {
-      let (start, span) = grid_axis_of(item: item, rows: rows);
-      let first = grid_index(value: start);
-      let width = grid_index(value: span);
-      let reach = first +sat width;
-      let end = imin(reach, length);
-      let flexy = grid_spans_flex(tracks: tracks, first: first, end: end);
-      let plain = bnot(flexy);
-      let same = span == group;
-      let grouped = band(same, plain);
-      let wanted = if group == 0_i32 {
-        give flexy;
-      } else {
-        give grouped;
-      }
-      if wanted {
-        let contribution = if which == 0_u8 {
-          give item.minimum;
-        } else if which == 1_u8 {
-          give item.least;
-        } else {
-          give item.most;
-        }
-        if to_limit {
-          grid_touch(tracks: tracks, first: first, end: end, select: select);
-        }
-        let basis = grid_sum(tracks: tracks, first: first, end: end, limits: to_limit);
-        let space = contribution -sat basis;
-        if space > 0_i32 {
-          if group == 0_i32 {
-            grid_spread_flex(tracks: tracks, first: first, end: end, space: space, select: select);
-          } else {
-            grid_spread(tracks: tracks, first: first, end: end, space: space, select: select, to_limit: to_limit, caps: to_base, beyond: to_base);
+fn grid_reduce_proposals(proposals: &Box<Segments<GridTrack>>, items: &Box<Slots<GridItem>>, rows: Bool, track: u64, first: u64, end: u64) -> (increase: i32, touched: Bool) reads(proposals), reads(items) {
+  doc "Balanced maximum/OR reduction for one track. No item's proposal depends on another item's scratch.";
+  let count = end -sat first;
+  if count == 0_u64 {
+    return 0_i32, False();
+  }
+  if count == 1_u64 {
+    if first < items^.inner.len {
+      if first < proposals^.inner.len {
+        let (start, span) = grid_axis_of(item: items^.inner[first], rows: rows);
+        let origin = grid_index(value: start);
+        if track >= origin {
+          let at = track - origin;
+          if at < proposals^.inner[first].len {
+            let proposal = proposals^.inner[first][at];
+            return proposal.share, proposal.touched;
           }
-          grid_merge(tracks: tracks, first: first, end: end);
         }
       }
     }
+    return 0_i32, False();
+  }
+  let half = count / 2_u64;
+  let middle = first +sat half;
+  let (left, left_touched) = grid_reduce_proposals(proposals: proposals, items: items, rows: rows, track: track, first: first, end: middle);
+  let (right, right_touched) = grid_reduce_proposals(proposals: proposals, items: items, rows: rows, track: track, first: middle, end: end);
+  let increase = imax(left, right);
+  let touched = bor(left_touched, right_touched);
+  return increase, touched;
+}
+
+fn grid_has_proposals(lengths: &[u64]) -> any: Bool reads(lengths) {
+  doc "Balanced presence of nonempty item proposals. The complete length vector already precedes their allocation; an empty phase has no distribution or reduction work.";
+  let count = lengths^.len;
+  if count == 0_u64 {
+    return False();
+  }
+  if count == 1_u64 {
+    return lengths^[0_u64] > 0_u64;
+  }
+  let middle = count / 2_u64;
+  let left = grid_has_proposals(lengths: &lengths^[0_u64..middle]);
+  let right = grid_has_proposals(lengths: &lengths^[middle..count]);
+  return bor(left, right);
+}
+
+fn grid_pass(tracks: &Box<Slots<GridTrack>>, items: &Box<Slots<GridItem>>, rows: Bool, group: i32, select: u8, to_limit: Bool, which: u8) -> result: unit reads(items), writes(tracks) {
+  doc "One intrinsic phase/span group: independent item-owned proposals, balanced per-track maximum/OR reductions, then independent track application. Later phases consume the applied bases and limits.";
+  let count = items^.inner.len;
+  let lengths = box_array_filled::<u64>(count: count, value: 0_u64);
+  for (c in 0_u64..count) {
+    set lengths.inner[c] = grid_proposal_length(tracks: tracks, item: items^.inner[c], rows: rows, group: group);
+  }
+  let any = grid_has_proposals(lengths: &lengths.inner[0_u64..count]);
+  if any {
+  } else {
+    let length = tracks^.inner.len;
+    for (k in 0_u64..length) {
+      set tracks^.inner[k].planned = 0_i32;
+      set tracks^.inner[k].touched = False();
+    }
+    return unit;
+  }
+  let empty = grid_auto_track();
+  let proposals = box_segments_filled::<GridTrack>(lengths: &lengths.inner[0_u64..count], value: empty);
+  for (c in 0_u64..count) {
+    let proposal = &proposals.inner[c];
+    grid_propose(tracks: tracks, item: items^.inner[c], rows: rows, group: group, select: select, to_limit: to_limit, which: which, proposal: proposal);
+  }
+  let length = tracks^.inner.len;
+  for (k in 0_u64..length) {
+    let (increase, touched) = grid_reduce_proposals(proposals: &proposals, items: items, rows: rows, track: k, first: 0_u64, end: count);
+    set tracks^.inner[k].planned = increase;
+    set tracks^.inner[k].touched = touched;
   }
   grid_apply(tracks: tracks, to_limit: to_limit);
   return unit;
@@ -1767,7 +1835,10 @@ fn grid_sum_gaps(tracks: &Box<Slots<GridTrack>>) -> sum: i32 reads(tracks) {
 }
 
 fn grid_expand_intrinsic(tracks: &Box<Slots<GridTrack>>, items: &Box<Slots<GridItem>>, rows: Bool, minimum: Bool) -> result: unit reads(items), writes(tracks) {
-  doc "Expands the flexible tracks when there is no definite size to fill (CSS Grid 11.7.1): the flex fraction is the largest of each flexible track's base size per flex factor and, for each item that spans a flexible track, the fraction its min-content (when sizing under a min-content constraint) or max-content contribution needs after the inflexible tracks and gutters it spans.";
+  doc "CSS Grid 11.7 leaves flexible tracks at their base sizes under a min-content constraint: the used flex fraction is zero. Otherwise, with no definite size to fill, the fraction is the largest of each flexible track's base size per flex factor and, for each item spanning a flexible track, the fraction its max-content contribution needs after the inflexible tracks and gutters it spans.";
+  if minimum {
+    return unit;
+  }
   let length = tracks^.inner.len;
   let fraction = 0.0_f32;
   for (k in 0_u64..length) {
@@ -1796,11 +1867,7 @@ fn grid_expand_intrinsic(tracks: &Box<Slots<GridTrack>>, items: &Box<Slots<GridI
       let end = imin(reach, length);
       let flexy = grid_spans_flex(tracks: tracks, first: first, end: end);
       if flexy {
-        let contribution = if minimum {
-          give item.least;
-        } else {
-          give item.most;
-        }
+        let contribution = item.most;
         let fixed = grid_sum_flexless(tracks: tracks, first: first, end: end);
         let leftover = contribution -sat fixed;
         let sum = 0.0_f32;
@@ -1897,7 +1964,7 @@ fn grid_size(tracks: &Box<Slots<GridTrack>>, items: &Box<Slots<GridItem>>, rows:
     let used = grid_sum(tracks: tracks, first: 0_u64, end: all, limits: no);
     let free = avail -sat used;
     if free > 0_i32 {
-      grid_spread(tracks: tracks, first: 0_u64, end: all, space: free, select: 0_u8, to_limit: no, caps: yes, beyond: no);
+      grid_spread(tracks: &tracks^.inner[0_u64..all], first: 0_u64, end: all, space: free, select: 0_u8, to_limit: no, caps: yes, beyond: no);
       grid_add_shares(tracks: tracks);
     }
     grid_expand_definite(tracks: tracks, avail: avail);
@@ -1906,7 +1973,7 @@ fn grid_size(tracks: &Box<Slots<GridTrack>>, items: &Box<Slots<GridItem>>, rows:
       let spent = grid_sum(tracks: tracks, first: 0_u64, end: rest, limits: no);
       let room = avail -sat spent;
       if room > 0_i32 {
-        grid_spread(tracks: tracks, first: 0_u64, end: rest, space: room, select: 6_u8, to_limit: yes, caps: no, beyond: no);
+        grid_spread(tracks: &tracks^.inner[0_u64..rest], first: 0_u64, end: rest, space: room, select: 6_u8, to_limit: yes, caps: no, beyond: no);
         grid_add_shares(tracks: tracks);
       }
     }
@@ -2180,7 +2247,6 @@ fn grid_mark_needs(model: &GridModel, rows: Bool) -> result: unit writes(model) 
       give False();
     }
     set model^.items.inner[c].needs = found;
-    set model^.items.inner[c].measured = False();
   }
   return unit;
 }
@@ -2218,36 +2284,54 @@ fn grid_measure_column(child: &Context, styles: &Styles, document: &Document, fo
 }
 
 fn grid_measure_item(child: &Context, item: &GridItem, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, justify_items: u8, align_items: u8, updating: Bool) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(child), writes(item) {
-  doc "Lays an item out at the width of its grid area, its height not yet known, and records its margin-box height as its contributions to the rows it spans.";
+  doc "Obtains the item's natural row result in its complete measuring Space. An unchanged item's recorded result can be reused in repeated full-layout passes as well as updates, without replacing its final stretched interior; final placement separately checks and materializes the requested Space.";
   let style = child^.style;
   let group = item_of(styles: styles, style: style);
   let replaced = child^.kind == ctx_replaced;
   let justify = grid_choose(own: group.justify_self, inherited: justify_items);
   let align = grid_choose(own: group.align_self, inherited: align_items);
-  set child^.space = grid_item_space(styles: styles, style: style, replaced: replaced, justify: justify, align: align, width: item^.width, height: unknown);
+  let space = grid_item_space(styles: styles, style: style, replaced: replaced, justify: justify, align: align, width: item^.width, height: unknown);
+  let held = grid_read_row(record: &child^.grid_row);
+  let same = same_space(first: held.space, second: space);
+  let changed = bor(child^.dirty, child^.restyled);
+  let clean = bnot(changed);
+  let current = band(held.valid, clean);
+  let matching = band(current, same);
+  let reuse = matching;
+  if reuse {
+    let provenance_kept = keep_height_proof(context: child, styles: styles);
+    set reuse = provenance_kept;
+  }
+  if reuse {
+    grid_row_contribution(item: item, measured: held);
+    return unit;
+  }
+  set child^.space = space;
   let counted = lay_out_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: updating);
-  let outer = child^.margin_top +sat child^.margin_bottom;
-  let tall = child^.height +sat outer;
-  set item^.least = tall;
-  set item^.most = tall;
-  set item^.minimum = tall;
-  set item^.measured = True();
+  set item^.work = add_counts(first: item^.work, second: counted);
+  let yes = True();
+  let measured = GridRowResult(valid: yes, space: space, height: child^.height, margin_top: child^.margin_top, margin_bottom: child^.margin_bottom, first_baseline: child^.first_baseline, has_first_baseline: child^.has_first_baseline);
+  grid_store_row(record: &child^.grid_row, measured: measured);
+  grid_row_contribution(item: item, measured: measured);
   return unit;
 }
 
 fn grid_mark_baselines(context: &Context, styles: &Styles, model: &GridModel, align_items: u8) -> result: unit reads(context), reads(styles), writes(model) {
-  doc "Marks the items that share a baseline with the other items of their row: those whose align-self is baseline and that span one row. They are measured, since their baselines are needed.";
+  doc "Marks items whose first baseline aligns in their starting row, including row-spanning items and excluding vertical auto margins. They are measured because their baseline ascents contribute to sizing.";
   let count = model^.items.inner.len;
   for (c in 0_u64..count) {
     let item = model^.items.inner[c];
-    let one = item.rows == 1_i32;
-    let live = band(item.active, one);
-    let shares = if live {
+    let shares = if item.active {
       if c < context^.children.inner.len {
         let style = context^.children.inner[c].style;
         let group = item_of(styles: styles, style: style);
         let align = grid_choose(own: group.align_self, inherited: align_items);
-        give align == align_baseline;
+        let (auto_left, auto_right, auto_top, auto_bottom) = margin_auto(styles: styles, style: style);
+        let automatic = bor(auto_top, auto_bottom);
+        let aligned = align == align_baseline;
+        let manual = bnot(automatic);
+        let participates = band(aligned, manual);
+        give participates;
       } else {
         give False();
       }
@@ -2263,51 +2347,47 @@ fn grid_mark_baselines(context: &Context, styles: &Styles, model: &GridModel, al
   return unit;
 }
 
-fn grid_shim_baselines(context: &Context, model: &GridModel) -> result: unit reads(context), writes(model) {
-  doc "Shifts the items that share a baseline within their row so that their baselines line up: each is moved down by the difference between the largest distance from the top of a margin box to the baseline in its row and its own, and its contributions to the row grow by that shim.";
+fn grid_row_ascent(items: &[GridItem], row: i32) -> ascent: i32 reads(items) {
+  doc "Balanced maximum of independent item-owned ascent proposals for one row.";
+  let count = items^.len;
+  if count == 0_u64 {
+    return 0_i32;
+  }
+  if count == 1_u64 {
+    let item = items^[0_u64];
+    let same = item.row == row;
+    let takes = band(item.shared, same);
+    if takes {
+      return imax(item.ascent, 0_i32);
+    }
+    return 0_i32;
+  }
+  let middle = count / 2_u64;
+  let left = grid_row_ascent(items: &items^[0_u64..middle], row: row);
+  let right = grid_row_ascent(items: &items^[middle..count], row: row);
+  return imax(left, right);
+}
+
+fn grid_shim_baselines(model: &GridModel) -> result: unit writes(model) {
+  doc "Reduces item-owned baseline ascents independently per row, then writes each item's shim and contributions independently. No item updates shared row scratch.";
   let rows = model^.rows.inner.len;
   let slots = imin(rows, grid_max_tracks);
   let tops = box_array_filled::<i32>(count: slots, value: 0_i32);
   let count = model^.items.inner.len;
-  for (c in 0_u64..count) {
-    let item = model^.items.inner[c];
-    if item.shared {
-      if c < context^.children.inner.len {
-        let child = &context^.children.inner[c];
-        let inner = if child^.has_baseline {
-          give child^.baseline;
-        } else {
-          give child^.height;
-        }
-        let ascent = child^.margin_top +sat inner;
-        let at = grid_index(value: item.row);
-        if at < tops.inner.len {
-          let larger = imax(tops.inner[at], ascent);
-          set tops.inner[at] = larger;
-        }
-      }
-    }
+  for (row in 0_u64..slots) {
+    let index = grid_small(value: row);
+    set tops.inner[row] = grid_row_ascent(items: &model^.items.inner[0_u64..count], row: index);
   }
   for (c in 0_u64..count) {
     let item = model^.items.inner[c];
     if item.shared {
-      if c < context^.children.inner.len {
-        let child = &context^.children.inner[c];
-        let inner = if child^.has_baseline {
-          give child^.baseline;
-        } else {
-          give child^.height;
-        }
-        let ascent = child^.margin_top +sat inner;
-        let at = grid_index(value: item.row);
-        if at < tops.inner.len {
-          let top = tops.inner[at];
-          let shim = top -sat ascent;
-          set model^.items.inner[c].shim = shim;
-          set model^.items.inner[c].least = item.least +sat shim;
-          set model^.items.inner[c].most = item.most +sat shim;
-          set model^.items.inner[c].minimum = item.minimum +sat shim;
-        }
+      let at = grid_index(value: item.row);
+      if at < tops.inner.len {
+        let shim = tops.inner[at] -sat item.ascent;
+        set model^.items.inner[c].shim = shim;
+        set model^.items.inner[c].least = item.least +sat shim;
+        set model^.items.inner[c].most = item.most +sat shim;
+        set model^.items.inner[c].minimum = item.minimum +sat shim;
       }
     }
   }
@@ -2462,21 +2542,7 @@ fn grid_rows_pass(context: &Context, styles: &Styles, document: &Document, fonts
   return unit;
 }
 
-fn grid_percent_height(styles: &Styles, style: StyleRef) -> percent: Bool reads(styles) {
-  doc "Whether an item's height, min-height or max-height is a percentage, which its grid area's height resolves.";
-  let sizes = size_of(styles: styles, style: style);
-  let tall = sizes.height.kind == sizing_value;
-  let tall_percent = band(tall, sizes.height.value.has_percent);
-  let low = sizes.min_height.kind == sizing_value;
-  let low_percent = band(low, sizes.min_height.value.has_percent);
-  let high = sizes.max_height.kind == sizing_value;
-  let high_percent = band(high, sizes.max_height.value.has_percent);
-  let pair = bor(tall_percent, low_percent);
-  let made = bor(pair, high_percent);
-  return made;
-}
-
-fn grid_finish_child(child: &Context, item: &GridItem, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, justify_items: u8, align_items: u8, content_left: i32, content_top: i32, content_width: i32, content_height: i32, updating: Bool) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), reads(item), writes(child) {
+fn grid_finish_child(child: &Context, item: &GridItem, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, justify_items: u8, align_items: u8, content_left: i32, content_top: i32, content_width: i32, content_height: i32, updating: Bool) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(item), writes(child) {
   doc "Lays out an item in its grid area, unless the lay-out that measured it already is the one it needs, and places it in the area by its alignment; an absolutely positioned child is laid out in the content box (unless the update defers it to position_out_with: deferred_out) and put at its origin as its static position.";
   let style = child^.style;
   if item^.active {
@@ -2485,18 +2551,21 @@ fn grid_finish_child(child: &Context, item: &GridItem, styles: &Styles, document
     let justify = grid_choose(own: group.justify_self, inherited: justify_items);
     let align = grid_choose(own: group.align_self, inherited: align_items);
     let space = grid_item_space(styles: styles, style: style, replaced: replaced, justify: justify, align: align, width: item^.width, height: item^.height);
-    let forced = space.forced_height >= 0_i32;
-    let matches = space.forced_height == child^.height;
-    let unforced = bnot(forced);
-    let fits = bor(unforced, matches);
-    let percent = grid_percent_height(styles: styles, style: style);
-    let plain = bnot(percent);
-    let depends = band(item^.measured, plain);
-    let reuse = band(depends, fits);
-    if reuse {
+    set child^.space = space;
+    let same = grid_same_layout(child: child, styles: styles);
+    let changed = bor(child^.dirty, child^.restyled);
+    let clean = bnot(changed);
+    let ready = band(same, clean);
+    if ready {
+      let provenance_kept = keep_height_proof(context: child, styles: styles);
+      set ready = provenance_kept;
+    }
+    if ready {
+      set child^.laid = space;
+      resolve_margins(child: child, styles: styles);
     } else {
-      set child^.space = space;
       let counted = lay_out_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: updating);
+      set item^.work = add_counts(first: item^.work, second: counted);
     }
     let (auto_left, auto_right, auto_top, auto_bottom) = margin_auto(styles: styles, style: style);
     let across = grid_kind(value: justify, replaced: replaced);
@@ -2513,7 +2582,9 @@ fn grid_finish_child(child: &Context, item: &GridItem, styles: &Styles, document
     let (shift_x, shift_y) = relative_offset(styles: styles, style: style, basis_width: item^.width, basis_height: item^.height);
     let moved_x = x +sat shift_x;
     let moved_y = y +sat shift_y;
+    set child^.normal_x = content_left +sat x;
     set child^.x = content_left +sat moved_x;
+    set child^.normal_y = content_top +sat y;
     set child^.y = content_top +sat moved_y;
   } else {
     let yes = True();
@@ -2523,14 +2594,17 @@ fn grid_finish_child(child: &Context, item: &GridItem, styles: &Styles, document
       resolve_margins(child: child, styles: styles);
     } else {
       let counted = lay_out_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: updating);
+      set item^.work = add_counts(first: item^.work, second: counted);
     }
+    set child^.normal_x = content_left;
     set child^.x = content_left;
+    set child^.normal_y = content_top;
     set child^.y = content_top;
   }
   return unit;
 }
 
-fn grid_final_pass(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, model: &GridModel, justify_items: u8, align_items: u8, content_left: i32, content_top: i32, content_width: i32, content_height: i32) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), reads(model), writes(context) {
+fn grid_final_pass(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, model: &GridModel, justify_items: u8, align_items: u8, content_left: i32, content_top: i32, content_width: i32, content_height: i32) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(model), writes(context) {
   doc "Lays out and places every child of the context in one counted loop in which each iteration writes only its own child.";
   let count = context^.children.inner.len;
   let listed = model^.items.inner.len;
@@ -2543,9 +2617,9 @@ fn grid_final_pass(context: &Context, styles: &Styles, document: &Document, font
   return unit;
 }
 
-fn grid_arrange(context: &Context, styles: &Styles, model: &GridModel, group: ContainerGroup, column_def: GridDef, row_def: GridDef) -> size: GridSize reads(context), reads(styles), writes(model) {
+fn grid_arrange(context: &Context, events: &[Flow], styles: &Styles, model: &GridModel, group: ContainerGroup, column_def: GridDef, row_def: GridDef) -> size: GridSize reads(context), reads(events), reads(styles), writes(model) {
   doc "Collects the context's children into the model and places them by the container's grid-auto-flow, returning the implicit grid's size.";
-  grid_collect(context: context, styles: styles, model: model, column_def: column_def, row_def: row_def, areas: group.template_areas);
+  grid_collect(context: context, events: events, styles: styles, model: model, column_def: column_def, row_def: row_def, areas: group.template_areas);
   let column_bits = iand(group.auto_flow, flow_column);
   let dense_bits = iand(group.auto_flow, flow_dense);
   let by_column = column_bits != 0_u8;
@@ -2568,42 +2642,78 @@ fn grid_stretches(align: u8) -> stretch: Bool pure {
   return made;
 }
 
-fn grid_first_baseline(context: &Context, model: &GridModel) -> (baseline: i32, found: Bool) reads(context), reads(model) {
-  doc "The grid container's first baseline: that of the item that starts earliest, by row and then column, ties going to the earlier in placement order, from the container's border-box top; an item with no baseline gives its border box's bottom edge.";
-  let best = grid_infinite;
-  let baseline = 0_i32;
-  let found = False();
-  let count = model^.sequence.inner.len;
-  for (s in 0_u64..count) {
-    let child = model^.sequence.inner[s];
-    let at = cvt::<u32, u64>(child);
-    if at < model^.items.inner.len {
-      if at < context^.children.inner.len {
-        let item = model^.items.inner[at];
-        let rows = item.row *sat 4096_i32;
-        let key = rows +sat item.column;
-        let earlier = key < best;
-        if earlier {
-          set best = key;
-          set found = True();
-          let top = context^.children.inner[at].y;
-          let inner = if context^.children.inner[at].has_baseline {
-            give context^.children.inner[at].baseline;
+fn grid_baseline_item(items: &Box<Slots<GridItem>>, sequence: &[u32], prefer_sharing: Bool) -> child: u32 reads(items), reads(sequence) {
+  doc "Selects the first-row baseline-sharing item, or that row's first item, in grid order; ties retain placement order. Balanced selection depends only on settled item placement and sharing flags.";
+  let count = sequence^.len;
+  if count == 0_u64 {
+    return no_index;
+  }
+  if count == 1_u64 {
+    return sequence^[0_u64];
+  }
+  let middle = count / 2_u64;
+  let left = grid_baseline_item(items: items, sequence: &sequence^[0_u64..middle], prefer_sharing: prefer_sharing);
+  let right = grid_baseline_item(items: items, sequence: &sequence^[middle..count], prefer_sharing: prefer_sharing);
+  let a = cvt::<u32, u64>(left);
+  let b = cvt::<u32, u64>(right);
+  if a < items^.inner.len {
+    if b < items^.inner.len {
+      let first = items^.inner[a];
+      let second = items^.inner[b];
+      if second.row < first.row {
+        return right;
+      }
+      if first.row < second.row {
+        return left;
+      }
+      if prefer_sharing {
+        if first.shared {
+          if second.shared {
           } else {
-            give context^.children.inner[at].height;
+            return left;
           }
-          set baseline = top +sat inner;
+        } else if second.shared {
+          return right;
         }
       }
+      if second.column < first.column {
+        return right;
+      }
     }
+    return left;
   }
-  return baseline, found;
+  return right;
 }
 
-fn lay_out_grid(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+fn grid_export_baseline(context: &Context, model: &GridModel, first: Bool) -> (baseline: i32, found: Bool) reads(context), reads(model) {
+  doc "Exports the first alignment baseline from a sharing-priority selection, or preserves the legacy baseline from the earliest item and its existing baseline field. Missing item baselines synthesize the border-box bottom.";
+  let count = model^.sequence.inner.len;
+  let selected = grid_baseline_item(items: &model^.items, sequence: &model^.sequence.inner[0_u64..count], prefer_sharing: first);
+  let at = cvt::<u32, u64>(selected);
+  if at < context^.children.inner.len {
+    let position = child_position(context: context, at: at);
+    let inner = if first {
+      if context^.children.inner[at].has_first_baseline {
+        give context^.children.inner[at].first_baseline;
+      } else {
+        give context^.children.inner[at].height;
+      }
+    } else if context^.children.inner[at].has_baseline {
+      give context^.children.inner[at].baseline;
+    } else {
+      give context^.children.inner[at].height;
+    }
+    let baseline = position.y +sat inner;
+    return baseline, True();
+  }
+  return 0_i32, False();
+}
+
+fn lay_out_grid(context: &Context, events: &[Flow], styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: unit reads(events), reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
   doc "Lays out a grid container (CSS Grid 1): its width; the explicit grid from its templates and the placement of its items; the columns sized from the items' intrinsic widths, then the items laid out at their column widths in a counted loop to size the rows that depend on their heights; the rows; the items laid out in their grid areas in a counted loop, aligned in them; its height; and its absolutely positioned children.";
+  layout_height_inputs(context: context);
   let no = False();
-  let width = used_width(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  let width = used_width(context: context, events: events, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
   set context^.width = width;
   let style = context^.style;
   let basis = context^.space.basis_width;
@@ -2637,10 +2747,14 @@ fn lay_out_grid(context: &Context, styles: &Styles, document: &Document, fonts: 
   let column_def = grid_def(styles: styles, template: group.template_columns, auto: group.auto_columns, area_count: area_columns, avail: content_width, gap: column_gap);
   let row_def = grid_def(styles: styles, template: group.template_rows, auto: group.auto_rows, area_count: area_rows, avail: definite, gap: row_gap);
   let model = grid_model_new();
-  let size = grid_arrange(context: context, styles: styles, model: &model, group: group, column_def: column_def, row_def: row_def);
+  let size = grid_arrange(context: context, events: events, styles: styles, model: &model, group: group, column_def: column_def, row_def: row_def);
   let yes = True();
   grid_build_tracks(styles: styles, def: column_def, tracks: &model.columns, items: &model.items, rows: no, total: size.columns, origin: size.column_origin, basis: content_width, gap: column_gap);
   grid_build_tracks(styles: styles, def: row_def, tracks: &model.rows, items: &model.items, rows: yes, total: size.rows, origin: size.row_origin, basis: definite, gap: row_gap);
+  let children = context^.children.inner.len;
+  let items = model.items.inner.len;
+  let columns = model.columns.inner.len;
+  set context^.grid_columns_invariant = grid_column_items_ready(children: &context^.children.inner[0_u64..children], items: &model.items.inner[0_u64..items], tracks: &model.columns.inner[0_u64..columns], definite: yes, styles: styles);
   grid_mark_needs(model: &model, rows: no);
   grid_columns_pass(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, model: &model);
   let stretch_columns = grid_stretches(align: group.justify_content);
@@ -2650,7 +2764,7 @@ fn lay_out_grid(context: &Context, styles: &Styles, document: &Document, fonts: 
   grid_mark_needs(model: &model, rows: yes);
   grid_mark_baselines(context: context, styles: styles, model: &model, align_items: group.align_items);
   grid_rows_pass(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, model: &model, justify_items: group.justify_items, align_items: group.align_items);
-  grid_shim_baselines(context: context, model: &model);
+  grid_shim_baselines(model: &model);
   let stretch_rows = grid_stretches(align: group.align_content);
   let known = definite >= 0_i32;
   if known {
@@ -2680,15 +2794,24 @@ fn lay_out_grid(context: &Context, styles: &Styles, document: &Document, fonts: 
   grid_assign(model: &model, rows: yes);
   grid_final_pass(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, model: &model, justify_items: group.justify_items, align_items: group.align_items, content_left: content_left, content_top: content_top, content_width: content_width, content_height: target);
   set context^.height = used;
-  let (first_baseline, has_first) = grid_first_baseline(context: context, model: &model);
-  set context^.baseline = first_baseline;
-  set context^.has_baseline = has_first;
-  let positioned_counts = position_out(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  let (first_baseline, has_first) = grid_export_baseline(context: context, model: &model, first: yes);
+  let (baseline, has_baseline) = grid_export_baseline(context: context, model: &model, first: no);
+  set context^.baseline = baseline;
+  set context^.has_baseline = has_baseline;
+  set context^.first_baseline = first_baseline;
+  set context^.has_first_baseline = has_first;
+  let positioned_counts = position_out(context: context, events: events, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  let item_count = model.items.inner.len;
+  let item_work = grid_sum_work(items: &model.items.inner[0_u64..item_count]);
+  let own_work = one_context_count();
+  set own_work.entries = events^.len;
+  let child_work = add_counts(first: item_work, second: positioned_counts);
+  set context^.grid_counts = add_counts(first: own_work, second: child_work);
   add_own_fragment(context: context);
   return unit;
 }
 
-fn intrinsic_grid(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> (minimum: i32, maximum: i32) reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+fn intrinsic_grid(context: &Context, events: &[Flow], styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> (minimum: i32, maximum: i32) reads(events), reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
   doc "The min-content and max-content widths of a grid container's content: the columns sized under each constraint from the items' intrinsic widths (CSS Grid 11.1 and 11.7.1), plus the gutters, with percentages of the indefinite width taken as auto and an auto-fill or auto-fit repeat() repeated once.";
   let no = False();
   let style = context^.style;
@@ -2699,8 +2822,12 @@ fn intrinsic_grid(context: &Context, styles: &Styles, document: &Document, fonts
   let column_def = grid_def(styles: styles, template: group.template_columns, auto: group.auto_columns, area_count: area_columns, avail: unknown, gap: column_gap);
   let row_def = grid_def(styles: styles, template: group.template_rows, auto: group.auto_rows, area_count: area_rows, avail: unknown, gap: row_gap);
   let model = grid_model_new();
-  let size = grid_arrange(context: context, styles: styles, model: &model, group: group, column_def: column_def, row_def: row_def);
+  let size = grid_arrange(context: context, events: events, styles: styles, model: &model, group: group, column_def: column_def, row_def: row_def);
   grid_build_tracks(styles: styles, def: column_def, tracks: &model.columns, items: &model.items, rows: no, total: size.columns, origin: size.column_origin, basis: unknown, gap: column_gap);
+  let children = context^.children.inner.len;
+  let items = model.items.inner.len;
+  let columns = model.columns.inner.len;
+  set context^.grid_intrinsic_invariant = grid_column_items_ready(children: &context^.children.inner[0_u64..children], items: &model.items.inner[0_u64..items], tracks: &model.columns.inner[0_u64..columns], definite: no, styles: styles);
   grid_mark_needs(model: &model, rows: no);
   grid_columns_pass(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, model: &model);
   grid_size(tracks: &model.columns, items: &model.items, rows: no, avail: unknown, mode: grid_mode_min, stretch: no);

@@ -51,8 +51,8 @@
 # PAGES replaces the directory of the real pages and their sheets,
 # build/research/concurrency by default; a worktree whose build directory
 # links to another checkout's needs a copy outside the link, since the driver
-# opens no path through a symbolic link (docs/todo.md, Whitefoot
-# requirements).
+# opens no path through a symbolic link (follow-up
+# sg-fraga-host-symlink).
 #
 # UA replaces the user-agent sheet, a path relative to the repository, for a
 # diagnostic run.
@@ -121,7 +121,9 @@ case_floors() {
 	columns-cases) echo "93 2 65" ;;
 	flex-cases) echo "259 2 25" ;;
 	flow-cases) echo "219 145 294" ;;
+	percentage-height-cases) echo "14 0 0" ;;
 	grid-cases) echo "286 2 198" ;;
+	grid-final-space-cases) echo "26 0 8" ;;
 	table-cases) echo "694 29 306" ;;
 	*) echo "" ;;
 	esac

@@ -1,0 +1,1306 @@
+# M2, Q139 and Q140 semantic mutations. Hosted jobs reject a wrong result
+# only through the intended fixture observation, never a compiler failure.
+name: falsify-m2
+
+on:
+  push:
+    branches: [research/m2-sync-main, main, research/m2-layout, research/m2-edit-cost, research/m2-apollo11-fix, research/m2-q139, research/m2-frag-a, research/m2-frag-b, research/m2-fallback-cost]
+
+  workflow_dispatch:
+    inputs:
+      q139_mutations:
+        description: Comma-separated Q139 rows to retry; empty runs all M2, Q139 and Q140 rows
+        required: false
+        default: ''
+      fallback_only:
+        description: Retry only fallback mutations and their shared baseline checks
+        type: boolean
+        default: false
+      baseline_run:
+        description: Reuse a q139-baseline artifact only when renderer source is identical
+        required: false
+        default: ''
+
+jobs:
+  q140:
+    if: inputs.fallback_only != true && (inputs.q139_mutations == '' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[falsify]')))
+    uses: ./.github/workflows/q140.yml
+    permissions:
+      contents: read
+      actions: read
+    with:
+      mutations: true
+  check-machinery:
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[falsify]') || contains(github.event.head_commit.message, '[frontier]')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Oracle assertions reject each violated condition inside a loop
+        run: |
+          python3 - <<'PYEOF'
+          import os
+          import subprocess
+          from pathlib import Path
+          lines = Path('.github/workflows/oracles-m2.yml').read_text().splitlines()
+          groups = []
+          for index, line in enumerate(lines):
+              if line.strip().startswith('test "$differs"'):
+                  group = []
+                  for following in lines[index:]:
+                      if not following.strip().startswith('test '):
+                          break
+                      group.append(following.strip())
+                  groups.append('\n'.join(group))
+          assert len(groups) >= 3, 'missing oracle assertion groups'
+          for index, group in enumerate(groups, 1):
+              command = 'for build in seq par; do\n' + group + '\ndone\necho survived'
+              values = dict(os.environ, differs='0', refused='2', allowed='2', same='8')
+              good = subprocess.run(['bash', '-e', '-c', command], env=values, capture_output=True)
+              assert good.returncode == 0, (index, good.stderr)
+              for name, wrong in [('differs', '1'), ('refused', '3'), ('same', '0')]:
+                  if '$' + name not in group:
+                      continue
+                  bad = subprocess.run(['bash', '-e', '-c', command], env=dict(values, **{name: wrong}), capture_output=True)
+                  assert bad.returncode == 1 and b'survived' not in bad.stdout, (index, name, bad.stdout)
+                  print('detected assertion group', index, name, wrong)
+          PYEOF
+      - name: Mutated driver failures distinguish expected assertions from unrelated errors
+        run: |
+          python3 - <<'PYEOF'
+          import subprocess
+          import tempfile
+          from pathlib import Path
+          workflow = Path('.github/workflows/falsify-m2.yml').read_text()
+          lines = workflow.splitlines()
+          start = lines.index('            status=$?')
+          end = next(index for index in range(start, len(lines)) if lines[index].startswith('            elif ! python3'))
+          handler = '\n'.join(lines[start:end]) + '\n            fi\necho reached-end'
+          with tempfile.TemporaryDirectory() as directory:
+              root = Path(directory)
+              (root / 'build').mkdir()
+              error = root / 'build/probe.mutated.err'
+              for status, diagnostic, expected in [(9, 'unrelated driver error', 9), (2, 'boundary transfer check failed', 0), (0, '', 0)]:
+                  error.write_text(diagnostic)
+                  command = 'name=probe\n(exit ' + str(status) + ')\n' + handler
+                  result = subprocess.run(['bash', '-c', command], cwd=root, capture_output=True, text=True)
+                  assert result.returncode == expected, (status, diagnostic, result)
+                  assert ('reached-end' in result.stdout) == (expected == 0), result
+                  assert ('detected:' in result.stdout) == ('boundary transfer check failed' in diagnostic), result
+                  print('driver status', status, diagnostic or 'success', 'handled as', expected)
+          PYEOF
+      - name: Lineless classification assertions reject missing and unrelated reasons
+        run: |
+          python3 - <<'PYEOF'
+          import importlib.util
+          import sys
+          from pathlib import Path
+          scripts = Path('research/investigations/incremental-layout/scripts')
+          sys.path.insert(0, str(scripts))
+          spec = importlib.util.spec_from_file_location('frontier_fixture', scripts / 'dirty-frontier.py')
+          fixture = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(fixture)
+          def record(refused=2, reason=2048):
+              return f'style edit 1 prepared 2 frontier_refusals {refused} frontier_reasons {reason}\n'
+          for reason in (2048, 4096):
+              fixture.refusal_counts(record(reason=reason), 2, reason, 1)
+              for wrong in ('', record(refused=1, reason=reason), record(reason=512), record(reason=0)):
+                  try:
+                      fixture.refusal_counts(wrong, 2, reason, 1)
+                  except ValueError:
+                      print('detected wrong classification', repr(wrong))
+                  else:
+                      raise AssertionError(wrong)
+          PYEOF
+      - name: Sparse frontier work assertions reject unrelated work and omitted leaves
+        run: |
+          python3 - <<'PYEOF'
+          import importlib.util
+          import sys
+          from pathlib import Path
+          scripts = Path('research/investigations/incremental-layout/scripts')
+          sys.path.insert(0, str(scripts))
+          spec = importlib.util.spec_from_file_location('frontier_fixture', scripts / 'dirty-frontier.py')
+          fixture = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(fixture)
+          def records(prepared=3, paragraphs=3, held=0, entries=6):
+              return ''.join(f'style edit {edit} prepared {prepared} contexts 2 paragraphs {paragraphs} held_entries {held} entries {entries}\n' for edit in range(1, 5))
+          fixture.sparse_counts(records())
+          for wrong in [dict(prepared=2), dict(paragraphs=2), dict(paragraphs=4), dict(held=1), dict(entries=32)]:
+              try:
+                  fixture.sparse_counts(records(**wrong))
+              except ValueError:
+                  print('detected sparse counter violation', wrong)
+              else:
+                  raise AssertionError(('accepted incorrect sparse work', wrong))
+          try:
+              fixture.sparse_counts('')
+          except ValueError:
+              print('detected missing sparse records')
+          else:
+              raise AssertionError('accepted missing sparse records')
+          fixture.column_counts(records(prepared=1, paragraphs=1, held=5))
+          for wrong in ['', records(prepared=2, paragraphs=1, held=5), records(prepared=1, paragraphs=1, held=32)]:
+              try:
+                  fixture.column_counts(wrong)
+              except ValueError:
+                  print('detected incorrect column replay count')
+              else:
+                  raise AssertionError('accepted incorrect column replay count')
+          fixture.column_counts(records(prepared=1, paragraphs=1, held=192), scoped=False)
+          for wrong in ['', records(prepared=2, paragraphs=1, held=192), records(prepared=1, paragraphs=1, held=5)]:
+              try:
+                  fixture.column_counts(wrong, scoped=False)
+              except ValueError:
+                  print('detected incorrect legacy column block replay count')
+              else:
+                  raise AssertionError('accepted unproved legacy column block scope')
+          good_inputs = records(prepared=1, paragraphs=1, held=192).splitlines()[:2]
+          good_inputs = '\n'.join(good_inputs) + '\n' + records(prepared=1, paragraphs=1, held=5)
+          fixture.column_input_counts(good_inputs)
+          for wrong in ['', good_inputs.replace('held_entries 192', 'held_entries 5'), good_inputs.replace('held_entries 5', 'held_entries 192')]:
+              try:
+                  fixture.column_input_counts(wrong)
+              except ValueError:
+                  print('detected incorrect completed column input admission')
+              else:
+                  raise AssertionError('accepted incorrect completed column input admission')
+          PYEOF
+      - name: Frontier counter protocol rejects partial and contradictory records
+        run: |
+          python3 - <<'PYEOF'
+          import importlib.util
+          import tempfile
+          from pathlib import Path
+          path = Path('research/investigations/incremental-layout/scripts/inctime.py')
+          spec = importlib.util.spec_from_file_location('inctime', path)
+          checker = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(checker)
+          row = 'edit 1 us 10 prepared 1 contexts 1 paragraphs 1 held_entries 2 entries 2 boundary_entries 1 boundary_blocks 0 boundary_indexes 0 boundary_fallbacks 1 boundary_reason 1'
+          with tempfile.TemporaryDirectory() as directory:
+              raw = Path(directory) / 'counter.raw'
+              def read(suffix):
+                  raw.write_text('base hash 0000000000000000 bytes 1\n' + row + suffix + '\n')
+                  return checker.read(raw, ['T'])
+              for suffix in ['', ' frontier_refusals 0 frontier_reasons 0', ' frontier_refusals 2 frontier_reasons 1536', ' frontier_refusals 1 frontier_reasons 2048', ' frontier_refusals 1 frontier_reasons 4096']:
+                  read(suffix)
+              for suffix in [' frontier_refusals 1', ' frontier_reasons 2',
+                             ' frontier_refusals 0 frontier_reasons 2',
+                             ' frontier_refusals 1 frontier_reasons 0',
+                             ' frontier_refusals 1 frontier_reasons 8192']:
+                  try:
+                      read(suffix)
+                  except ValueError:
+                      print('rejected malformed frontier counters:', suffix)
+                  else:
+                      raise AssertionError(suffix)
+          PYEOF
+      - name: Path-log falsifiers reject missing and contradictory rows
+        run: |
+          python3 - <<'PYEOF'
+          import subprocess
+          import tempfile
+          from pathlib import Path
+          checker = 'research/investigations/incremental-layout/scripts/inctime.py'
+          rows = ['base hash 0000000000000000 bytes 1', 'created 10',
+                  'structure path 1 splice 1 reason 0', 'edit 1 hash 0000000000000001 bytes 2 inc same',
+                  'structure path 2 splice 1 reason 0', 'edit 2 hash 0000000000000000 bytes 1 inc same']
+          with tempfile.TemporaryDirectory() as directory:
+              script = Path(directory) / 'case.edits'
+              script.write_text('B 1 - Text\nX 10\n')
+              raw = Path(directory) / 'case.raw'
+              def check(lines):
+                  raw.write_text('\n'.join(lines) + '\n')
+                  return subprocess.run(['python3', checker, '--check', str(script), str(raw)], capture_output=True, text=True)
+              good = check(rows)
+              assert good.returncode == 0, good.stderr
+              completed_fallback = [row.replace('splice 1 reason 0', 'splice 0 reason 10') for row in rows]
+              accepted_fallback = check(completed_fallback)
+              assert accepted_fallback.returncode == 0, accepted_fallback.stderr
+              grid_fallback = [row.replace('splice 1 reason 0', 'splice 0 reason 11') for row in rows]
+              accepted_grid = check(grid_fallback)
+              assert accepted_grid.returncode == 0, accepted_grid.stderr
+              faults = {
+                  'success with grid refusal': ([row.replace('splice 1 reason 0', 'splice 1 reason 11') for row in rows], 'inconsistent splice/fallback reason'),
+                  'unknown fallback reason': ([row.replace('splice 1 reason 0', 'splice 0 reason 12') for row in rows], 'inconsistent splice/fallback reason'),
+                  'success with completed fallback reason': ([row.replace('splice 1 reason 0', 'splice 1 reason 10') for row in rows], 'inconsistent splice/fallback reason'),
+                  'one missing path': ([row for row in rows if not row.startswith('structure path 1 ')], 'partial structural path records'),
+                  'all missing paths': ([row for row in rows if not row.startswith('structure path ')], 'partial structural path records'),
+                  'splice zero reason zero': ([row.replace('splice 1 reason 0', 'splice 0 reason 0') for row in rows], 'inconsistent splice/fallback reason'),
+                  'splice one reason nonzero': ([row.replace('splice 1 reason 0', 'splice 1 reason 5') for row in rows], 'inconsistent splice/fallback reason'),
+              }
+              for name, (mutated, diagnostic) in faults.items():
+                  result = check(mutated)
+                  assert result.returncode != 0 and diagnostic in result.stderr, (name, result.stdout, result.stderr)
+                  print('detected', name, diagnostic)
+              assert check(rows).returncode == 0
+          PYEOF
+      - name: Semantic mutation detection requires valid identity evidence
+        run: |
+          python3 - <<'PYEOF'
+          import subprocess
+          import sys
+          import tempfile
+          from pathlib import Path
+
+          lines = Path('.github/workflows/falsify-m2.yml').read_text().splitlines()
+          start = lines.index("          cat > build/semantic-falsify.py <<'PYEOF'") + 1
+          end = lines.index('          PYEOF', start)
+          source = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines[start:end]) + '\n'
+          rows = ['base hash 0000000000000000 bytes 1', 'created 10',
+                  'structure path 1 splice 1 reason 0', 'edit 1 hash 0000000000000001 bytes 2 inc same',
+                  'structure path 2 splice 1 reason 0', 'edit 2 hash 0000000000000000 bytes 1 inc same']
+          good = '\n'.join(rows) + '\n'
+          different = good.replace('bytes 2 inc same', 'bytes 2 inc DIFF')
+          cases = [
+              ('baseline negative control', good, '', 0, 1),
+              ('actual incremental difference', different, '', 0, 0),
+              ('valid path change alone', good.replace('splice 1 reason 0', 'splice 0 reason 7'), '', 0, 1),
+              ('unrelated crash', '', 'unrelated driver error', 9, 2),
+              ('intended boundary assertion', '', 'boundary transfer check failed\n', 2, 0),
+              ('wrong boundary exit', '', 'boundary transfer check failed\n', 9, 2),
+              ('mixed boundary diagnostic', '', 'boundary transfer check failed\nunrelated error', 2, 2),
+              ('late boundary diagnostic', good, 'boundary transfer check failed\n', 2, 2),
+              ('unexpected successful stderr', good, 'unrelated diagnostic', 0, 2),
+              ('empty output', '', '', 0, 2),
+              ('malformed after difference', different + 'not a protocol record\n', '', 0, 2),
+              ('incomplete after difference', different.replace(rows[-1] + '\n', ''), '', 0, 2),
+              ('missing paths after difference', different.replace(rows[2] + '\n', ''), '', 0, 2),
+              ('contradictory path', different.replace('splice 1 reason 0', 'splice 0 reason 0'), '', 0, 2),
+              ('refused edit', good.replace('bytes 2 inc same', 'bytes 2 inc refused'), '', 0, 2),
+          ]
+          with tempfile.TemporaryDirectory() as directory:
+              root = Path(directory)
+              helper = root / 'semantic-falsify.py'
+              helper.write_text(source)
+              script = root / 'case.edits'
+              script.write_text('B 1 - Text\nX 10\n')
+              raw = root / 'case.raw'
+              error = root / 'case.err'
+              for name, output, diagnostic, status, expected in cases:
+                  raw.write_text(output)
+                  error.write_text(diagnostic)
+                  result = subprocess.run([sys.executable, str(helper), str(script), str(raw), str(error), str(status), name], capture_output=True, text=True)
+                  assert result.returncode == expected, (name, result.returncode, result.stdout, result.stderr)
+                  assert ('detected:' in result.stdout) == (expected == 0), (name, result.stdout)
+                  print(name, 'classified as', expected)
+              required = Path(str(script) + '.paths')
+              required.write_text(rows[2] + '\n' + rows[4] + '\n')
+              for name, output, expected_status in [
+                  ('path negative control', good, 1),
+                  ('required path changed', good.replace('splice 1 reason 0', 'splice 0 reason 3'), 0),
+                  ('malformed path protocol', good.replace(rows[2] + '\n', ''), 2),
+              ]:
+                  raw.write_text(output)
+                  error.write_text('')
+                  result = subprocess.run([sys.executable, str(helper), str(script), str(raw), str(error), '0', name, 'path'], capture_output=True, text=True)
+                  assert result.returncode == expected_status, (name, result.stdout, result.stderr)
+                  print(name, 'classified as', expected_status)
+              for name, contents in [('missing required paths', None), ('invalid required path', 'malformed\n'), ('duplicate required path', rows[2] + '\n' + rows[2] + '\n')]:
+                  if contents is None:
+                      required.unlink()
+                  else:
+                      required.write_text(contents)
+                  raw.write_text(good)
+                  error.write_text('')
+                  result = subprocess.run([sys.executable, str(helper), str(script), str(raw), str(error), '0', name, 'path'], capture_output=True, text=True)
+                  assert result.returncode == 2, (name, result.stdout, result.stderr)
+                  print(name, 'rejected')
+              for name, output, diagnostic, status, expected in [
+                  ('certificate assertion', '', 'boundary transfer check failed\n', 2, 0),
+                  ('certificate mutation with unchanged output', good, '', 0, 2),
+                  ('certificate mutation with only an identity difference', different, '', 0, 2),
+                  ('certificate mutation with unrelated crash', '', 'unrelated driver error', 9, 2),
+              ]:
+                  raw.write_text(output)
+                  error.write_text(diagnostic)
+                  result = subprocess.run([sys.executable, str(helper), str(script), str(raw), str(error), str(status), name, 'boundary'], capture_output=True, text=True)
+                  assert result.returncode == expected, (name, result.returncode, result.stdout, result.stderr)
+                  assert ('detected:' in result.stdout) == (expected == 0), (name, result.stdout)
+                  print(name, 'classified as', expected)
+          PYEOF
+      - name: Fixture path expectations reject every wrong row
+        run: |
+          python3 -B - <<'PYEOF'
+          import importlib.util
+          import subprocess
+          import sys
+          import tempfile
+          from pathlib import Path
+          from types import SimpleNamespace
+
+          scripts = Path('research/investigations/incremental-layout/scripts').resolve()
+          sys.path.insert(0, str(scripts))
+          spec = importlib.util.spec_from_file_location('splice_cases', scripts / 'splice-cases.py')
+          fixture = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(fixture)
+          def verify(kind):
+              texts, elements = [], {}
+              for index, case in enumerate(fixture.CASES[kind], 1):
+                  base = index * 10
+                  texts.extend((dict(node=base + 1, parent=base + 2, data=('M2 retained %s.' % case).encode()),
+                                dict(node=base + 3, parent=base + 4, data=('M2 probe %s.' % case).encode())))
+                  elements[base + 2] = dict(name='p', parent=base + 5, node=base + 2)
+                  if case in fixture.INITIAL_REMOVALS:
+                      texts.append(dict(node=base + 6, parent=base + 7, data=('M2 remove %s.' % case).encode()))
+                      elements[base + 7] = dict(name=fixture.INITIAL_REMOVALS[case][0], parent=base + 5, node=base + 7)
+              tree = SimpleNamespace(texts=texts, by_node=elements, arena=1000)
+              edits, paths = fixture.generate(tree, kind)
+              rows = paths.splitlines()
+              selected = set(fixture.CASES[kind]) & fixture.EXPECTED_PATHS.keys()
+              initial = set(fixture.CASES[kind]) & fixture.INITIAL_REMOVALS.keys()
+              assert len(rows) == 2 * len(selected) + len(initial)
+              commands = [line for line in edits.splitlines() if line.split()[0] in ('T', 'D', 'C', 'K', 'B', 'X')]
+              for row in rows:
+                  operation = int(row.split()[2])
+                  assert commands[operation - 1][0] in ('B', 'X'), row
+              for case in initial:
+                  removal = fixture.marker(tree, case, 'remove')
+                  target = tree.by_node[removal['parent']]
+                  operation = commands.index('X %d' % target['node']) + 1
+                  _, splice, reason = fixture.INITIAL_REMOVALS[case]
+                  assert 'structure path %d splice %d reason %d' % (operation, splice, reason) in rows
+                  for field, wrong in [('name', 'span'), ('parent', None)]:
+                      saved = target[field]
+                      target[field] = wrong
+                      try:
+                          fixture.generate(tree, kind)
+                      except ValueError as error:
+                          assert 'removal marker must be a sibling' in str(error)
+                      else:
+                          raise AssertionError('invalid removal target accepted: ' + field)
+                      finally:
+                          target[field] = saved
+              original = fixture.text_pair
+              def extra_pair(lines, node):
+                  original(lines, node)
+                  original(lines, node)
+              fixture.text_pair = extra_pair
+              longer_edits, longer_paths = fixture.generate(tree, kind)
+              assert longer_paths != paths
+              longer_commands = [line for line in longer_edits.splitlines() if line.split()[0] in ('T', 'D', 'C', 'K', 'B', 'X')]
+              for row in longer_paths.splitlines():
+                  operation = int(row.split()[2])
+                  assert longer_commands[operation - 1][0] in ('B', 'X'), row
+              fixture.text_pair = original
+              with tempfile.TemporaryDirectory() as directory:
+                  expected = Path(directory) / 'case.edits.paths'
+                  raw = Path(directory) / 'case.raw'
+                  expected.write_text(paths)
+                  def check(content):
+                      raw.write_text(content)
+                      return subprocess.run([sys.executable, str(scripts / 'splice-cases.py'), '--check-paths', str(expected), str(raw)], capture_output=True, text=True)
+                  good = check(paths)
+                  assert good.returncode == 0, good.stderr
+                  faults = {
+                      'missing required row': paths.replace(rows[0] + '\n', ''),
+                      'duplicate required row': paths + rows[0] + '\n',
+                      'wrong splice': paths.replace(rows[0], rows[0].replace('splice ' + rows[0].split()[4], 'splice ' + str(1 - int(rows[0].split()[4])))),
+                      'wrong reason': paths.replace(rows[0], rows[0].replace('reason ' + rows[0].split()[6], 'reason ' + str(1 + int(rows[0].split()[6])))),
+                  }
+                  for row in rows:
+                      fields = row.split()
+                      wrong_splice = str(1 - int(fields[4]))
+                      wrong_reason = str(int(fields[6]) + 1)
+                      for label, changed in [('splice', row.replace('splice ' + fields[4], 'splice ' + wrong_splice)), ('reason', row.replace('reason ' + fields[6], 'reason ' + wrong_reason))]:
+                          result = check(paths.replace(row, changed))
+                          assert result.returncode != 0 and 'expected exactly one' in result.stderr, (label, row, result)
+                  for name, content in faults.items():
+                      result = check(content)
+                      assert result.returncode != 0 and 'expected exactly one' in result.stderr, (name, result)
+                      print('detected', name)
+                  for invalid in (paths + rows[0] + '\n', 'malformed\n'):
+                      expected.write_text(invalid)
+                      result = check(paths)
+                      assert result.returncode != 0 and 'malformed or duplicate expectation' in result.stderr, result
+                  expected.write_text('')
+                  assert check('unrelated records are checked by inctime\n').returncode == 0
+              print(kind, 'Required paths follow generated operation positions; good and empty expectations pass; every violated condition fails')
+          for kind in ('positioned', 'positioned-isolated', 'flex', 'transfer'):
+              verify(kind)
+          PYEOF
+  falsify:
+    needs: q139-baseline
+    if: inputs.fallback_only != true && (inputs.q139_mutations == '' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[geometry-readers]') || contains(github.event.head_commit.message, '[position-readers]') || contains(github.event.head_commit.message, '[migrated]') || contains(github.event.head_commit.message, '[range]') || contains(github.event.head_commit.message, '[frontier]') || contains(github.event.head_commit.message, '[falsify]') || contains(github.event.head_commit.message, '[stationary]') || contains(github.event.head_commit.message, '[reference]') || contains(github.event.head_commit.message, '[fragment]')))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        # reassociate-saturation awaits follow-up sg-fraga-reassociation.
+        # Step 4's descendant-scan mutation awaits sg-fraga-visit-sentinels.
+        mutation: ${{ contains(github.event.head_commit.message, '[geometry-readers]') && fromJSON('["range-geometry-own","range-geometry-inherited"]') || contains(github.event.head_commit.message, '[position-readers]') && fromJSON('["position-frame-owner","position-frame-anchor"]') || contains(github.event.head_commit.message, '[migrated]') && fromJSON('["reference-suffix","no-positioned-anchor"]') || contains(github.event.head_commit.message, '[range]') && !contains(github.event.head_commit.message, '[falsify]') && fromJSON('["range-geometry-own","range-geometry-inherited","range-activation","range-retained-activation","range-hybrid-geometry","range-hybrid-semantic","range-context-basis","range-ordinary-geometry","range-splice-geometry","range-rotation","range-insert-distribution","range-remove-distribution","range-expose","range-inherited","range-inherited-output","range-normalize","range-atomic-frame","range-positioned-selection","range-own-semantic","range-point-geometry","range-point-output","range-paragraph-membership"]') || contains(github.event.head_commit.message, '[frontier]') && !contains(github.event.head_commit.message, '[falsify]') && fromJSON('["frontier-lined-to-lineless","frontier-lineless-to-lined","frontier-empty-inline","frontier-lineless-publication","frontier-no-leaf","frontier-column-balance","frontier-column-height","frontier-column-inputs","frontier-column-publication","frontier-column-block-widths","frontier-column-block-scope","frontier-no-prepare","frontier-inputs","frontier-premature-inputs","frontier-marked-child","frontier-own-settlement","frontier-positioned","frontier-float","frontier-atomic","frontier-columns","frontier-placement","frontier-publication","frontier-retirement","frontier-source-certificate","frontier-legacy-block"]') || contains(github.event.head_commit.message, '[fragment]') && !contains(github.event.head_commit.message, '[falsify]') && fromJSON('["zero-suffix","reference-suffix","reference-natural-sentinel","no-topology-replacement","no-old-reference-frame","no-reference-natural-floor","no-anchored-fragment-repair","no-following-fragment-translation","no-split-anchor","no-split-line-refresh","stale-split-ranks"]') || fromJSON('["zero-suffix","reference-natural-sentinel","no-topology-replacement","no-old-reference-frame","no-reference-natural-floor","no-anchored-fragment-repair","no-following-fragment-translation","position-frame-owner","position-frame-anchor","reference-origin","reference-suffix","reference-sentinel","stationary-height","stationary-baseline","omit-ancestor","relative-twice","shift-table-descendants","column-map-early","collapse-strut","clear-floats-at-close","stop-on-height","unchecked-baseline","omit-ancestor-height","skip-seam","omit-edge","no-sibling-move","live-count-insert","live-count-remove","lose-text-route","synthetic-checkpoint","stale-class-frontier","unsafe-admission","no-positioned-anchor","no-stretch","no-free-space","no-wrap-rebreak","no-float-floor","stale-intrinsic-margins","omit-transfer-travel","omit-transfer-natural-floor","omit-transfer-float-reach","omit-transfer-free-transfer","omit-transfer-motion-known","no-moving-float-anchor","no-positioned-retirement","no-atomic-retirement","no-split-anchor","no-split-line-refresh","stale-split-ranks","omit-transfer-fragment-sources","omit-transfer-fragment-first","omit-transfer-fragment-last","frontier-lined-to-lineless","frontier-lineless-to-lined","frontier-empty-inline","frontier-lineless-publication","frontier-no-leaf","frontier-column-balance","frontier-column-height","frontier-column-inputs","frontier-column-publication","frontier-column-block-widths","frontier-column-block-scope","frontier-no-prepare","frontier-inputs","frontier-premature-inputs","frontier-marked-child","frontier-own-settlement","frontier-positioned","frontier-float","frontier-atomic","frontier-columns","frontier-placement","frontier-publication","frontier-retirement","frontier-source-certificate","frontier-legacy-block","range-geometry-own","range-geometry-inherited","range-activation","range-retained-activation","range-hybrid-geometry","range-hybrid-semantic","range-context-basis","range-ordinary-geometry","range-splice-geometry","range-rotation","range-insert-distribution","range-remove-distribution","range-expose","range-inherited","range-inherited-output","range-normalize","range-atomic-frame","range-positioned-selection","range-own-semantic","range-point-geometry","range-point-output","range-paragraph-membership"]') }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Toolchain and fonts
+        run: |
+          sudo sh -c 'printf "%s\n" https://archive.ubuntu.com/ubuntu > /etc/apt/apt-mirrors.txt'
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=30 update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+      - name: Legacy marking diagnostic driver route
+        if: matrix.mutation == 'frontier-legacy-block'
+        run: |
+          python3 - <<'PYEOF'
+          from pathlib import Path
+          path = Path('renderer/oracle/layout/edit.wf')
+          source = path.read_text()
+          old = '  let marked = marks_after(started: started, layout: &kept^.layout, traversal: &page^.traversal, changed: &done.changed.inner[0_u64..count]);'
+          new = '''  let legacy_removed = None<NodeId>();
+            let legacy_changed = propagate structure_flags(started: started, page: page, done: &done, removed: legacy_removed);
+            let legacy_count = legacy_changed.inner.len;
+            let legacy_attributes = slots_new::<AttributeChange, 0>();
+            let marked = styles_changed(layout: &kept^.layout, old: &kept^.state.styles, new: &kept^.state.styles, traversal: &page^.traversal, changed: &legacy_changed.inner[0_u64..legacy_count], attributes: &legacy_attributes[0_u64..0_u64]);'''
+          assert source.count(old) == 1
+          path.write_text(source.replace(old, new))
+          PYEOF
+      - name: Unmutated driver
+        run: |
+          make -s toolchain compiler oracle-fonts
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          echo "WFC=$wfc" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        with:
+          name: q139-baseline
+          path: build
+      - name: Restore the shared unmutated drivers' executable bits
+        run: chmod +x build/layout_base build/layout_base_par
+      - name: Preserve the legacy-marking detector's own control
+        if: matrix.mutation == 'frontier-legacy-block'
+        run: |
+          (cd renderer && "$WFC" --cache ../build/mutation-cache --fragments function --graph modules.wfg --entry layout_oracle -o ../build/layout_base)
+          (cd renderer && "$WFC" --cache ../build/mutation-cache --fragments function --par --graph modules.wfg --entry layout_oracle -o ../build/layout_base_par)
+      - name: Apply the mutation
+        run: |
+          python3 - "${{ matrix.mutation }}" <<'PYEOF'
+          import sys
+          from pathlib import Path
+          m = sys.argv[1]
+          def swap(path, old, new):
+              p = Path(path); t = p.read_text()
+              assert t.count(old) == 1, (path, old, t.count(old))
+              p.write_text(t.replace(old, new))
+          if m == "frontier-column-balance":
+              swap("renderer/layout/update.wf", "    give reflow_column_height(context: context, events: events, styles: styles, frame: frame, laid_height: content);", "    give content;")
+          elif m == "frontier-column-height":
+              swap("renderer/layout/update.wf", "  let used = used_height(context: context, styles: styles, content: laid_height);", "  let used = used_height(context: context, styles: styles, content: content);")
+          elif m == "frontier-column-inputs":
+              swap("renderer/layout/columns.wf", "same_space(first: context^.space, second: saved.space)", "equivalent_space(styles: styles, style: context^.style, first: context^.space, second: saved.space)")
+          elif m == "frontier-column-block-widths":
+              swap("renderer/layout/update.wf", "      let kept = block_keeps_width(context: context, styles: styles, b: nested);", "      let kept = True();")
+          elif m == "frontier-column-block-scope":
+              swap("renderer/layout/update.wf", "  let usable = band(closed, all_marks_inside);", "  let usable = closed;")
+          elif m == "frontier-column-publication":
+              swap("renderer/layout/update.wf", "  set scope^.delta = scope_delta;", "  set scope^.delta = scope_delta;\n  if frame.columned {\n    set scope^.from = 18446744073709551615_u64;\n    set scope^.until = 0_u64;\n    set scope^.delta = 0_i32;\n  }")
+          elif m == "frontier-lined-to-lineless":
+              swap("renderer/layout/frontier.wf", "  } else if new_lines == 0_u64 {\n    return 2048_u32;", "  } else if new_lines == 0_u64 {\n    return 0_u32;")
+          elif m == "frontier-lineless-to-lined":
+              swap("renderer/layout/frontier.wf", "    if new_lines != 0_u64 {\n      return 2048_u32;", "    if new_lines != 0_u64 {\n      return 0_u32;")
+          elif m == "frontier-lineless-publication":
+              swap("renderer/layout/frontier.wf", "        propagate_boundary(context: context, owner: owner, slot: slot, output: fresh_output^, delta: 0_i32);", "        if fresh_output^.through {\n        } else {\n          propagate_boundary(context: context, owner: owner, slot: slot, output: fresh_output^, delta: 0_i32);\n        }")
+          elif m == "frontier-empty-inline":
+              swap("renderer/layout/frontier.wf", "        return 4096_u32;", "        return 0_u32;")
+          elif m == "frontier-no-leaf":
+              swap("renderer/layout/frontier.wf", "        frontier_mark(frontier: &stored_right^.inner, at: later, span: half);", "        let omitted_slot = later;")
+          elif m == "frontier-no-prepare":
+              swap("renderer/layout/frontier.wf", "      let right_ok = frontier_prepare(frontier: &right_tree^.inner, paragraphs: &paragraphs^[middle..count], span: half, document: document, styles: styles, fonts: fonts, picks: picks);", "      let right_ok = True();")
+          elif m == "frontier-inputs":
+              swap("renderer/layout/frontier.wf", "same_space(first: context^.space, second: saved.space)", "same_space(first: context^.space, second: context^.space)")
+              swap("renderer/layout/frontier.wf", "if width != saved.width {", "if width != width {")
+              for field in ("content_left", "content_top", "flow_width", "definite"):
+                  swap("renderer/layout/frontier.wf", f"if frame.{field} != saved.frame.{field} {{", f"if frame.{field} != frame.{field} {{")
+          elif m == "frontier-premature-inputs":
+              swap("renderer/layout/update.wf", "  let (attempted, handled, trial) = stationary_frontier(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);", "  retain_flow_inputs(context: context, styles: styles);\n  let (attempted, handled, trial) = stationary_frontier(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);")
+          elif m == "frontier-marked-child":
+              swap("renderer/layout/frontier.wf", "  if context^.marked_children != 0_u32 {", "  if context^.marked_children != context^.marked_children {")
+          elif m == "frontier-own-settlement":
+              swap("renderer/layout/frontier.wf", "  let (moved, settled) = finish_in_place(context: context, events: &no_events[0_u64..0_u64], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, delta: 0_i32, position_children: position_children);", "  let moved = False();\n  let settled = no_updates();")
+          elif m == "frontier-positioned":
+              swap("renderer/layout/frontier.wf", "  if context^.has_out {", "  if no {")
+          elif m == "frontier-float":
+              swap("renderer/layout/frontier.wf", "  if paragraph^.beside {", "  let omit_float_dependency = False();\n  if omit_float_dependency {")
+          elif m == "frontier-atomic":
+              swap("renderer/layout/frontier.wf", "  if paragraph^.atomics.inner.len != 0_u64 {", "  if paragraph^.atomics.inner.len != paragraph^.atomics.inner.len {")
+          elif m == "frontier-columns":
+              swap("renderer/layout/frontier.wf", "  if frame.columned {", "  if no {")
+              swap("renderer/layout/frontier.wf", "  if saved.frame.columned {", "  if no {")
+          elif m == "frontier-placement":
+              swap("renderer/layout/frontier.wf", "  if stationary {", "  let assume_stationary = True();\n  if assume_stationary {")
+          elif m == "frontier-publication":
+              swap("renderer/layout/frontier.wf", "        propagate_boundary(context: context, owner: owner, slot: slot, output: fresh_output^, delta: 0_i32);", "        set context^.dirty = context^.dirty;")
+          elif m == "frontier-retirement":
+              swap("renderer/layout/frontier.wf", "        set paragraphs^[0_u64].dirty = False();", "        set paragraphs^[0_u64].dirty = paragraphs^[0_u64].dirty;")
+          elif m == "frontier-source-certificate":
+              swap("renderer/layout/structure.wf", "  set to^.flow_inputs.valid = False();", "  set to^.flow_inputs = from^.flow_inputs;")
+          elif m == "frontier-legacy-block":
+              swap("renderer/layout/style_update.wf", "    set context^.restyled_blocks = 2_u32;\n    set context^.restyled_block = no_index;", "    set context^.restyled_blocks = 0_u32;\n    set context^.restyled_block = no_index;")
+          elif m in ("stationary-height", "stationary-baseline"):
+              field = "advance" if m == "stationary-height" else "last_baseline"
+              swap("renderer/layout/boundary.wf", f"if output.{field} != old_output.{field} {{", f"if output.{field} != output.{field} {{")
+          elif m == "zero-suffix":
+              swap("renderer/layout/reference.wf", "  let suffix_moves = bor(flow_moved, owners_moved);", "  let suffix_moves = bor(flow_moved, flow_moved);")
+          elif m == "reference-origin":
+              swap("renderer/layout/geometry.wf", "  let child_slot = no_index;\n  match item {", "  if context^.local_geometry {\n  } else {\n    return unit;\n  }\n  let child_slot = no_index;\n  match item {")
+          elif m == "reference-sentinel":
+              swap("renderer/layout/reference.wf", "  let fits = bound < 2147483647_i64;", "  let fits = bound <= 2147483647_i64;")
+          elif m == "reference-suffix":
+              swap("renderer/layout/reference.wf", "      publish_reference_ranges(context: context);\n", "")
+          elif m == "omit-ancestor":
+              swap("renderer/layout/geometry.wf", "let normal_y = owner.y +sat local.y;", "let normal_y = local.y;")
+          elif m == "relative-twice":
+              swap("renderer/layout/geometry.wf", "  let wide_y = value.y +sat value.dy;\n", "  let wide_y = value.y +sat value.dy;\n  set wide_y = wide_y +sat value.dy;\n")
+          elif m == "shift-table-descendants":
+              swap("renderer/layout/table.wf", "  set cell^.content_dy = cell^.content_dy +sat dy;\n", "  set cell^.content_dy = cell^.content_dy +sat dy;\n  let mutation_shift = cvt::<i32, i64>(dy);\n  let mutation_blocks = cell^.blocks.inner.len;\n  for (b in 0_u64..mutation_blocks) {\n    set cell^.blocks.inner[b].y = cell^.blocks.inner[b].y +sat mutation_shift;\n  }\n")
+          elif m == "column-map-early":
+              swap("renderer/layout/flow.wf", "let local_top = top -sat map_y;", "let local_top = fragment.y;")
+          elif m == "reassociate-saturation":
+              swap("renderer/layout/flow.wf", "      let y_shifted = geometry_read_9.y +sat frame.dy;\n      set context^.blocks.inner[at].resolved_x = content_left +sat x_shifted;", "      let y_shifted = geometry_read_9.y +sat frame.dy;\n      set context^.blocks.inner[at].resolved_x = context^.blocks.inner[at].normal_x +sat frame.dx;")
+              swap("renderer/layout/flow.wf", "            let y_shifted = geometry_read_15.y +sat dy;\n            set context^.blocks.inner[at].resolved_x = content_left +sat x_shifted;", "            let y_shifted = geometry_read_15.y +sat dy;\n            set context^.blocks.inner[at].resolved_x = context^.blocks.inner[at].normal_x +sat dx;")
+          elif m == "collapse-strut":
+              swap("renderer/layout/sequence.wf", "    set joined.leading_negative = composed_4;\n", "    set joined.leading_negative = composed_4;\n    set joined.leading_positive = joined.leading_positive +sat joined.leading_negative;\n    set joined.leading_negative = 0_i32;\n")
+          elif m == "clear-floats-at-close":
+              swap("renderer/layout/flow.wf", "      Close(block: b) => {\n        let depth = frames.inner.len;\n", "      Close(block: b) => {\n        let cleared_floats = box_slots_new::<Exclusion>(capacity: 0_u64);\n        set stack.floats = move cleared_floats;\n        set stack.reach = -2147483647_i32;\n        let depth = frames.inner.len;\n")
+          elif m == "stop-on-height":
+              swap("renderer/layout/boundary.wf", "let stable = band(same, size_same);", "let stable = size_same;")
+          elif m == "unchecked-baseline":
+              swap("renderer/layout/boundary.wf", "  if first.first_baseline != second.first_baseline {\n    return False();\n  }\n  if first.last_baseline != second.last_baseline {\n    return False();\n  }\n", "")
+          elif m == "omit-ancestor-height":
+              swap("renderer/layout/boundary.wf", "      set context^.blocks.inner[at].height = height;\n", "")
+          elif m == "skip-seam":
+              swap("renderer/layout/splice_boundary.wf", "    let reason = splice_boundary(context: context, item: preceding_item, removing: no, visits: visits);\n", "    let checked_preceding = splice_boundary(context: context, item: preceding_item, removing: no, visits: visits);\n    let reason = 0_u32;\n")
+              swap("renderer/layout/splice_boundary.wf", "    let reason = splice_boundary(context: context, item: following_item, removing: no, visits: visits);\n", "    let checked_following = splice_boundary(context: context, item: following_item, removing: no, visits: visits);\n    let reason = 0_u32;\n")
+          elif m == "omit-edge":
+              swap("renderer/layout/splice_sequence.wf", "let gap = wide_positive +sat wide_negative;", "let gap = 0_i64;")
+          elif m == "no-sibling-move":
+              swap("renderer/layout/splice_boundary.wf", "let move_y = new_y -sat old_y;", "let move_y = 0_i64;")
+          elif m == "live-count-insert":
+              swap("renderer/layout/splice.wf", "set layout^.paragraphs = kept_paragraphs +sat added_paragraphs;", "set layout^.paragraphs = kept_paragraphs;")
+          elif m == "live-count-remove":
+              swap("renderer/layout/splice.wf", "let kept_paragraphs = layout^.paragraphs -sat lost_paragraphs;", "let kept_paragraphs = layout^.paragraphs;")
+          elif m == "lose-text-route":
+              swap("renderer/layout/splice_publish.wf", "route_write::<TextUnit>(table: &layout^.text_units, at: at, value: text);", "route_write::<TextUnit>(table: &layout^.text_units, at: at, value: absent_text);")
+          elif m == "synthetic-checkpoint":
+              swap("renderer/layout/splice.wf", "set context^.walk_exact = False();", "set context^.walk_exact = True();")
+          elif m == "stale-class-frontier":
+              swap("renderer/style/restyle.wf", "let full = unbounded;", "let full = bor(unbounded, traversal^.stale);")
+          elif m == "unsafe-admission":
+              swap("renderer/layout/boundary.wf", "let fits = bound <= 2147483647_i64;", "let fits = bound <= 68719476735_i64;")
+          elif m == "no-positioned-anchor":
+              swap("renderer/layout/boundary.wf", "        set context^.children.inner[at].anchor = moved;\n", "        set context^.children.inner[at].anchor = context^.children.inner[at].anchor;\n")
+          elif m == "no-moving-float-anchor":
+              swap("renderer/layout/boundary.wf", "        set own.placed = 1_u64;\n", "")
+          elif m == "no-positioned-retirement":
+              old = "      Out(context: c) => {\n        let at = cvt::<u32, u64>(c);\n        if at < context^.children.inner.len {\n          let (removed_contexts, removed_paragraphs) = retire_splice_child(child: &context^.children.inner[at], paths: paths);\n          set contexts = contexts +sat removed_contexts;\n          set paragraphs = paragraphs +sat removed_paragraphs;\n        }\n      }\n"
+              swap("renderer/layout/splice_publish.wf", old, "      Out(..) => {\n      }\n")
+          elif m == "no-atomic-retirement":
+              old = "          let children = context^.children.inner.len;\n          let (removed_contexts, removed_paragraphs) = retire_splice_atomics(paragraph: &context^.paragraphs.inner[at], children: &context^.children.inner[0_u64..children], paths: paths);\n          set contexts = contexts +sat removed_contexts;\n          set paragraphs = paragraphs +sat removed_paragraphs;\n"
+              swap("renderer/layout/splice_publish.wf", old, "")
+          elif m == "reference-natural-sentinel":
+              swap("renderer/layout/update.wf", "    set block^.natural_known = block^.natural != 2147483647_i32;\n", "")
+          elif m == "no-old-reference-frame":
+              swap("renderer/layout/geometry.wf", "          let saved = context^.blocks.inner[at].reference_old;", "          let saved = origin_from_resolved(nx: context^.blocks.inner[at].normal_x, ny: context^.blocks.inner[at].normal_y, vx: context^.blocks.inner[at].resolved_x, vy: context^.blocks.inner[at].resolved_y);")
+          elif m == "no-reference-natural-floor":
+              swap("renderer/layout/flow.wf", "    return origin.y +sat output.natural_floor;", "    return 9223372036854775807_i64;")
+          elif m == "no-topology-replacement":
+              swap("renderer/layout/fragment_topology.wf", '  let published_joins = update_split_joins(targets: &candidates.inner[0_u64..selected], values: &changed_joins.inner[0_u64..selected], offset: 0_u64, count: count, joins: &context^.split_joins.inner[0_u64..join_nodes]);\n', "")
+          elif m == "no-anchored-fragment-repair":
+              swap("renderer/layout/fragment_repair.wf", '  repair_fragment_cell(context: context, styles: styles, content_left: content_left, fragment: fragment, anchor: anchor);\n', '  let lost_fragment = fragment^;\n  let lost_anchor = anchor^;\n  repair_fragment_cell(context: context, styles: styles, content_left: content_left, fragment: &lost_fragment, anchor: &lost_anchor);\n  set fragment^ = fragment^;\n  set anchor^ = anchor^;\n')
+          elif m == "no-following-fragment-translation":
+              swap("renderer/layout/fragment_geometry.wf", "    set fragment.y = top;\n    set fragment.height = bottom -sat top;", "    set fragment.height = bottom -sat top;")
+          elif m == "no-split-anchor":
+              swap("renderer/layout/fragment_geometry.wf", "  let use_anchor = band(context^.local_geometry, context^.fragments_valid);\n  if context^.fragments_anchored {\n    set use_anchor = context^.fragments_valid;\n  }", "  let use_anchor = band(context^.local_geometry, context^.fragments_valid);\n  if context^.fragments_anchored {\n    set use_anchor = context^.fragments_valid;\n  }\n  set use_anchor = False();")
+          elif m == "no-split-line-refresh":
+              swap("renderer/layout/fragment_geometry.wf", "      let line = wide +sat context^.splits.inner[split].line_offset;", "      let line = cvt::<i32, i64>(context^.splits.inner[split].line);")
+          elif m == "stale-split-ranks":
+              swap("renderer/layout/fragment_geometry.wf", "      set split.open = opening;\n      set split.close = closing;\n", "")
+          elif m == "no-stretch":
+              p = Path("renderer/layout/flex.wf")
+              source = p.read_text()
+              start = source.index("fn flex_stretch(")
+              end = source.index("\nfn ", start + 1)
+              body = source[start:end]
+              old = "  let counted = no_updates();\n"
+              assert body.count(old) == 1
+              body = body.replace(old, old + "  if setup.updating {\n    return counted;\n  }\n")
+              p.write_text(source[:start] + body + source[end:])
+          elif m == "no-free-space":
+              swap("renderer/layout/flex.wf", "    flex_resolve(lanes: &lanes, first: first, end: end, space: main_inner, gap: main_gap);", "    if setup.updating {\n    } else {\n      flex_resolve(lanes: &lanes, first: first, end: end, space: main_inner, gap: main_gap);\n    }")
+          elif m == "no-wrap-rebreak":
+              swap("renderer/layout/flex.wf", "  let lines = flex_build_lines(lanes: &lanes, wrapping: wrapping, available: available, gap: main_gap);", "  let line_wrapping = if setup.updating {\n    give False();\n  } else {\n    give wrapping;\n  }\n  let lines = flex_build_lines(lanes: &lanes, wrapping: line_wrapping, available: available, gap: main_gap);")
+          elif m == "no-float-floor":
+              p = Path("renderer/layout/splice_motion.wf")
+              source = p.read_text()
+              start = source.index("fn motion_above(")
+              end = source.index("\nfn ", start + 1)
+              body = source[start:end]
+              doc_end = body.index(';') + 1
+              p.write_text(source[:start] + body[:doc_end] + "\n  return True();\n}\n" + source[end:])
+          elif m == "stale-intrinsic-margins":
+              p = Path("renderer/layout/flow.wf")
+              source = p.read_text()
+              start = source.index("fn intrinsic_flow(")
+              end = source.index("\nfn ", start + 1)
+              body = source[start:end]
+              old = "    let (least, most) = intrinsic_sizes(context: &context^.children.inner[c], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);\n"
+              assert body.count(old) == 1
+              body = body.replace(old, old + "    let measured_style = context^.children.inner[c].style;\n    let measured_margins = margin_edges(styles: styles, style: measured_style, basis: 0_i32);\n    set context^.children.inner[c].margin_left = measured_margins.left;\n    set context^.children.inner[c].margin_right = measured_margins.right;\n")
+              p.write_text(source[:start] + body + source[end:])
+          elif m.startswith("omit-transfer-"):
+              field = m.removeprefix("omit-transfer-").replace("-", "_")
+              if field in ("travel", "natural_floor", "float_reach", "fragment_sources", "fragment_first", "fragment_last"):
+                  old = "  if first." + field + " != second." + field + " {\n    return False();\n  }\n"
+              elif field in ("free_transfer", "motion_known"):
+                  local = "free_same" if field == "free_transfer" else "motion_same"
+                  old = "  let " + local + " = first." + field + " == second." + field + ";\n  if " + local + " {\n  } else {\n    return False();\n  }\n"
+              else:
+                  raise AssertionError(m)
+              p = Path("renderer/layout/boundary.wf")
+              source = p.read_text()
+              start = source.index("fn same_transfer(")
+              end = source.index("\nfn ", start + 1)
+              body = source[start:end]
+              assert body.count(old) == 1, (m, old)
+              p.write_text(source[:start] + body.replace(old, "") + source[end:])
+          print("applied", m)
+          PYEOF
+          git diff --stat
+      - name: Apply the range or positioned-reader mutation
+        if: startsWith(matrix.mutation, 'range-') || startsWith(matrix.mutation, 'position-frame-')
+        run: |
+          python3 - "${{ matrix.mutation }}" <<'PYEOF'
+          import sys
+          from pathlib import Path
+          m = sys.argv[1]
+          def swap(path, old, new):
+              p = Path(path); t = p.read_text()
+              assert t.count(old) == 1, (path, old, t.count(old))
+              p.write_text(t.replace(old, new))
+          if m == "position-frame-owner":
+              swap("renderer/layout/splice_position.wf", "      set owner = origin_accumulate(owner: local, local: owner);", "      set owner = zero_origin();")
+          elif m == "position-frame-anchor":
+              swap("renderer/layout/splice_position.wf", "        set anchor = origin_accumulate(owner: local, local: anchor);", "        set anchor = zero_origin();")
+          elif m == "range-geometry-own":
+              swap("renderer/layout/range.wf", "  return origin_accumulate(owner: own, local: inherited);", "  return inherited;")
+          elif m == "range-geometry-inherited":
+              swap("renderer/layout/range.wf", "    set inherited = origin_accumulate(owner: inherited, local: pending);", "    set inherited = zero_origin();")
+          elif m == "range-activation":
+              swap("renderer/layout/range.wf", "  set sequence^.range_actions = True();", "  set sequence^.range_actions = False();")
+          elif m == "range-retained-activation":
+              swap("renderer/layout/range.wf", "  return install_range_subtree(sequence: sequence, root: root, skip: skip, action: action, visits: visits);", "  let installed = install_range_subtree(sequence: sequence, root: root, skip: skip, action: action, visits: visits);\n  set sequence^.range_actions = False();\n  return installed;")
+          elif m == "range-hybrid-geometry":
+              swap("renderer/layout/reference.wf", "    let installed = RangeAction(geometry: action, semantic: 0_i64, basis: 0_i32, basis_set: no);", "    let omitted_geometry = zero_origin();\n    let installed = RangeAction(geometry: omitted_geometry, semantic: 0_i64, basis: 0_i32, basis_set: no);")
+          elif m == "range-hybrid-semantic":
+              swap("renderer/layout/reference.wf", "      let action = RangeAction(geometry: zero, semantic: descriptor.action.y, basis: 0_i32, basis_set: no);", "      let action = RangeAction(geometry: zero, semantic: 0_i64, basis: 0_i32, basis_set: no);")
+          elif m == "range-context-basis":
+              swap("renderer/layout/reference.wf", "      let action = RangeAction(geometry: zero, semantic: descriptor.action.y, basis: 0_i32, basis_set: no);", "      let corrupt_basis = True();\n      let action = RangeAction(geometry: zero, semantic: descriptor.action.y, basis: -1_i32, basis_set: corrupt_basis);")
+          elif m == "range-ordinary-geometry":
+              swap("renderer/layout/boundary.wf", "    let geometry = Origin(x: 0_i64, y: delta, dx: 0_i64, dy: 0_i64);\n    let no = False();\n    let action = RangeAction(geometry: geometry, semantic: delta,", "    let geometry = Origin(x: 0_i64, y: 0_i64, dx: 0_i64, dy: 0_i64);\n    let no = False();\n    let action = RangeAction(geometry: geometry, semantic: delta,")
+          elif m == "range-splice-geometry":
+              swap("renderer/layout/splice_boundary.wf", "  let geometry = Origin(x: 0_i64, y: delta, dx: 0_i64, dy: 0_i64);", "  let geometry = Origin(x: 0_i64, y: 0_i64, dx: 0_i64, dy: 0_i64);")
+          elif m == "range-rotation":
+              swap("renderer/layout/sequence.wf", "  range_distribute(sequence: sequence, slot: slot, visits: visits);\n  let base = boundary_node(sequence: sequence, slot: slot, visits: visits);\n  let pivot_slot = base.right;\n  range_distribute(sequence: sequence, slot: pivot_slot, visits: visits);\n", "  let base = boundary_node(sequence: sequence, slot: slot, visits: visits);\n  let pivot_slot = base.right;\n")
+              swap("renderer/layout/sequence.wf", "  range_distribute(sequence: sequence, slot: slot, visits: visits);\n  let base = boundary_node(sequence: sequence, slot: slot, visits: visits);\n  let pivot_slot = base.left;\n  range_distribute(sequence: sequence, slot: pivot_slot, visits: visits);\n", "  let base = boundary_node(sequence: sequence, slot: slot, visits: visits);\n  let pivot_slot = base.left;\n")
+              swap("renderer/layout/sequence.wf", "  range_distribute(sequence: sequence, slot: slot, visits: visits);\n  let held = boundary_node(sequence: sequence, slot: slot, visits: visits);\n  if held.live {\n    let left_node", "  let held = boundary_node(sequence: sequence, slot: slot, visits: visits);\n  if held.live {\n    let left_node")
+              path = Path("renderer/layout/sequence.wf")
+              text = path.read_text()
+              for function in ("sequence_repair", "sequence_rotate_left", "sequence_rotate_right", "sequence_balance"):
+                  start = text.index("fn " + function + "(")
+                  end = text.index(" {\n", start)
+                  header = text[start:end].replace(", reads(sequence.range_actions)", "")
+                  text = text[:start] + header + text[end:]
+              path.write_text(text)
+          elif m == "range-insert-distribution":
+              swap("renderer/layout/sequence.wf", "only index ancestors are visited. Each path node distributes its pending range actions first, so the new private payload inherits no movement that happened before its insertion.\";\n  range_distribute(sequence: sequence, slot: root, visits: visits);\n", "only index ancestors are visited. Each path node distributes its pending range actions first, so the new private payload inherits no movement that happened before its insertion.\";\n")
+          elif m == "range-remove-distribution":
+              swap("renderer/layout/sequence.wf", "carries its own effective action.\";\n  range_distribute(sequence: sequence, slot: root, visits: visits);\n", "carries its own effective action.\";\n")
+              swap("renderer/layout/sequence.wf", "the removed slot's own action is retired with it.\";\n  range_distribute(sequence: sequence, slot: root, visits: visits);\n", "the removed slot's own action is retired with it.\";\n")
+          elif m == "range-expose":
+              swap("renderer/layout/boundary.wf", "  range_expose(sequence: sequence, slot: slot, visits: visits);\n  let cursor = slot;", "  let cursor = slot;")
+              path = Path("renderer/layout/boundary.wf")
+              text = path.read_text()
+              start = text.index("fn boundary_set(")
+              end = text.index(" {\n", start)
+              header = text[start:end].replace(", reads(sequence.range_actions)", "")
+              path.write_text(text[:start] + header + text[end:])
+          elif m == "range-inherited":
+              swap("renderer/layout/range.wf", "    let geometry = origin_accumulate(owner: made.geometry, local: actions.child_geometry);\n    set made.geometry = geometry;\n", "")
+          elif m == "range-inherited-output":
+              swap("renderer/layout/splice_sequence.wf", "  let below = inherited +sat actions.child_semantic;", "  let below = inherited;")
+          elif m == "range-normalize":
+              swap("renderer/layout/range.wf", "  let root_slot = context^.entries.root;\n  normalize_owner(", "  let skip_fold = True();\n  if skip_fold {\n    set context^.range_actions = False();\n    return unit;\n  }\n  let root_slot = context^.entries.root;\n  normalize_owner(")
+          elif m == "range-atomic-frame":
+              swap("renderer/layout/geometry.wf", "  } else if source < frames^.len {\n    give frames^[source];\n", "  } else if source < frames^.len {\n    give owner_origin(origins: origins, owner: child^.block);\n")
+          elif m == "range-positioned-selection":
+              swap("renderer/layout/range.wf", "  if total.positioned == 0_u64 {\n    return unit;\n  }", "  if total.positioned <= total.count {\n    return unit;\n  }")
+          elif m == "range-own-semantic":
+              swap("renderer/layout/range.wf", "    if actions.own_semantic != 0_i64 {\n      set context^.blocks.inner[at].output.offset", "    let fold_semantic = False();\n    if fold_semantic {\n      set context^.blocks.inner[at].output.offset")
+          elif m == "range-point-geometry":
+              swap("renderer/layout/range.wf", "  set actions.own_geometry = zero_origin();\n  owner_store_actions(context: context, owner: owner, slot: slot, actions: actions);", "  owner_store_actions(context: context, owner: owner, slot: slot, actions: actions);")
+          elif m == "range-point-output":
+              swap("renderer/layout/range.wf", "  let view = range_inherited(sequence: sequence, slot: slot);\n  if view.semantic == 0_i64 {", "  let view = no_inheritance();\n  if view.semantic == 0_i64 {")
+              path = Path("renderer/layout/range.wf")
+              text = path.read_text()
+              start = text.index("fn effective_output(")
+              end = text.index(" {\n", start)
+              header = text[start:end].replace(", reads(sequence.range_actions)", "")
+              path.write_text(text[:start] + header + text[end:])
+              path = Path("renderer/layout/reference.wf")
+              text = path.read_text()
+              start = text.index("fn reference_owner_output(")
+              end = text.index(" {\n", start)
+              header = text[start:end].replace(", reads(context.entries.range_actions)", "")
+              path.write_text(text[:start] + header + text[end:])
+          elif m == "range-paragraph-membership":
+              swap("renderer/layout/boundary.wf", "    set output.placed = 1_u64;\n    set output.through = False();", "    set output.through = False();")
+          else:
+              raise AssertionError(m)
+          print("applied", m)
+          PYEOF
+          git diff --stat
+      - name: Mutated driver
+        run: (cd renderer && "$WFC" --cache ../build/mutation-cache --fragments function --graph modules.wfg --entry layout_oracle -o ../build/layout_mutated)
+      - name: Near-limit unsafe-admission falsifier
+        if: matrix.mutation == 'unsafe-admission'
+        run: |
+          python3 research/investigations/incremental-layout/scripts/near-limit.py build/layout_base build/near-limit-base
+          if python3 research/investigations/incremental-layout/scripts/near-limit.py build/layout_base build/near-limit-negative --unsafe > build/near-limit-negative.log 2>&1; then
+            echo 'the unsafe-mutation check accepted an unmutated renderer' >&2
+            exit 1
+          fi
+          grep 'unsafe arithmetic admission produced no rebuild difference' build/near-limit-negative.log
+          python3 research/investigations/incremental-layout/scripts/near-limit.py build/layout_mutated build/near-limit-unsafe --unsafe
+      - name: Detect topology replacement omission
+        if: matrix.mutation == 'no-topology-replacement'
+        run: |
+          set -euo pipefail
+          s=research/investigations/incremental-layout/scripts
+          python3 "$s/fragment-topology.py" build/layout_base build/topology-base
+          negative=0
+          python3 "$s/fragment-topology.py" build/layout_base build/topology-negative --detect-omission > build/topology-negative.log 2>&1 || negative=$?
+          if [ "$negative" = 0 ]; then
+            echo 'the topology detector accepted the unmutated renderer' >&2
+            exit 1
+          fi
+          grep 'topology omission produced no rebuild difference' build/topology-negative.log
+          python3 "$s/fragment-topology.py" build/layout_mutated build/topology-mutated --detect-omission
+      - name: Detect semantic extension mutations
+        if: contains(fromJSON('["position-frame-owner","position-frame-anchor","reference-natural-sentinel","no-old-reference-frame","no-reference-natural-floor","no-anchored-fragment-repair","no-following-fragment-translation","no-positioned-anchor","no-stretch","no-free-space","no-wrap-rebreak","no-float-floor","stale-intrinsic-margins","omit-transfer-travel","omit-transfer-natural-floor","omit-transfer-float-reach","omit-transfer-free-transfer","omit-transfer-motion-known","no-moving-float-anchor","no-positioned-retirement","no-atomic-retirement","no-split-anchor","no-split-line-refresh","stale-split-ranks","omit-transfer-fragment-sources","omit-transfer-fragment-first","omit-transfer-fragment-last","frontier-lined-to-lineless","frontier-lineless-to-lined","frontier-empty-inline","frontier-lineless-publication","frontier-no-leaf","frontier-column-balance","frontier-column-height","frontier-column-inputs","frontier-column-publication","frontier-column-block-widths","frontier-column-block-scope","frontier-no-prepare","frontier-inputs","frontier-premature-inputs","frontier-marked-child","frontier-own-settlement","frontier-positioned","frontier-float","frontier-atomic","frontier-columns","frontier-placement","frontier-publication","frontier-retirement","frontier-source-certificate","frontier-legacy-block","range-geometry-own","range-geometry-inherited","range-activation","range-retained-activation","range-hybrid-geometry","range-hybrid-semantic","range-context-basis","range-ordinary-geometry","range-splice-geometry","range-rotation","range-insert-distribution","range-remove-distribution","range-expose","range-inherited","range-inherited-output","range-normalize","range-atomic-frame","range-positioned-selection","range-own-semantic","range-point-geometry","range-point-output","range-paragraph-membership"]'), matrix.mutation)
+        run: |
+          set -euo pipefail
+          cat > build/semantic-falsify.py <<'PYEOF'
+          import re
+          import subprocess
+          import sys
+          import tempfile
+          from pathlib import Path
+
+          script, raw, error, status, label = sys.argv[1:6]
+          mode = sys.argv[6] if len(sys.argv) == 7 else "identity"
+          status = int(status)
+          output = Path(raw).read_text()
+          diagnostic = Path(error).read_text()
+          if status == 2 and diagnostic.strip() == 'boundary transfer check failed' and not output:
+              print('detected:', label, 'boundary transfer check failed')
+              raise SystemExit(0)
+          if mode == 'boundary':
+              print('INVALID:', label, 'required boundary assertion did not fail', file=sys.stderr)
+              raise SystemExit(2)
+          if status != 0 or diagnostic:
+              print('INVALID:', label, 'driver status', status, diagnostic, file=sys.stderr)
+              raise SystemExit(2)
+          pattern = r'^(edit \d+ hash [0-9a-f]{16} bytes \d+ inc )DIFF$'
+          normalized, differences = re.subn(pattern, r'\1same', output, flags=re.M)
+          with tempfile.TemporaryDirectory() as directory:
+              checked = Path(directory) / 'normalized.raw'
+              checked.write_text(normalized)
+              result = subprocess.run([sys.executable, 'research/investigations/incremental-layout/scripts/inctime.py', '--check', script, str(checked)], capture_output=True, text=True)
+          if result.returncode != 0:
+              print('INVALID:', label, 'oracle protocol', result.stderr, file=sys.stderr)
+              raise SystemExit(2)
+          if differences:
+              print('detected:', label, differences, 'incremental rebuild differences')
+              raise SystemExit(0)
+          if mode == 'column-inputs':
+              import importlib.util
+              scripts = Path('research/investigations/incremental-layout/scripts')
+              sys.path.insert(0, str(scripts))
+              spec = importlib.util.spec_from_file_location('frontier_fixture', scripts / 'dirty-frontier.py')
+              fixture = importlib.util.module_from_spec(spec)
+              spec.loader.exec_module(fixture)
+              try:
+                  fixture.column_input_counts(output)
+              except ValueError as failure:
+                  if failure.args[0][0] != 'changed incoming column inputs were admitted':
+                      print('INVALID:', label, failure, file=sys.stderr)
+                      raise SystemExit(2)
+                  print('detected:', label, 'changed incoming input admitted to scoped replay')
+                  raise SystemExit(0)
+          if mode == 'path':
+              try:
+                  expected_rows = Path(script + '.paths').read_text().splitlines()
+                  expected = {}
+                  for row in expected_rows:
+                      match = re.fullmatch(r'structure path (\d+) splice ([01]) reason (\d+)', row)
+                      if not match or match[1] in expected:
+                          raise ValueError('malformed or duplicate required path')
+                      expected[match[1]] = row
+              except (OSError, ValueError) as failure:
+                  print('INVALID:', label, str(failure), file=sys.stderr)
+                  raise SystemExit(2)
+              actual = {match[1]: match[0] for match in re.finditer(r'^structure path (\d+) splice [01] reason \d+$', output, re.M)}
+              changed = [number for number, row in expected.items() if actual.get(number) != row]
+              if changed:
+                  print('detected:', label, 'required structural paths changed', ','.join(changed))
+                  raise SystemExit(0)
+          print('NOT DETECTED:', label)
+          raise SystemExit(1)
+          PYEOF
+          s=research/investigations/incremental-layout/scripts
+          detection_mode=identity
+          case "${{ matrix.mutation }}" in
+            frontier-*)
+              frontier_args=()
+              if [ "${{ matrix.mutation }}" = frontier-legacy-block ]; then
+                frontier_args+=(--legacy-marks)
+              fi
+              python3 "$s/dirty-frontier.py" build/layout_base build/frontier-fixtures "${frontier_args[@]}"
+              pairs=""
+              for generated in build/frontier-fixtures/*.edits; do
+                name=$(basename "$generated" .edits)
+                cp "$generated" "build/frontier-$name.edits"
+                cp "build/frontier-fixtures/$name.html" "build/frontier-$name.html"
+                : > "build/frontier-$name.edits.paths"
+                pairs="$pairs frontier-$name:frontier-$name"
+              done
+              if [ "${{ matrix.mutation }}" = frontier-column-block-widths ]; then
+                pairs="frontier-column-block-width:frontier-column-block-width"
+              fi
+              if [ "${{ matrix.mutation }}" = frontier-column-block-scope ]; then
+                pairs="frontier-column-marked-block:frontier-column-marked-block"
+              fi
+              if [ "${{ matrix.mutation }}" = frontier-column-inputs ]; then
+                pairs="frontier-column-incoming-space:frontier-column-incoming-space"
+                detection_mode=column-inputs
+              fi
+              if [ "${{ matrix.mutation }}" = frontier-lined-to-lineless ] || [ "${{ matrix.mutation }}" = frontier-lineless-to-lined ] || [ "${{ matrix.mutation }}" = frontier-empty-inline ] || [ "${{ matrix.mutation }}" = frontier-lineless-publication ] || [ "${{ matrix.mutation }}" = frontier-no-leaf ] || [ "${{ matrix.mutation }}" = frontier-publication ] || [ "${{ matrix.mutation }}" = frontier-retirement ] || [ "${{ matrix.mutation }}" = frontier-source-certificate ]; then
+                detection_mode=boundary
+              fi
+              ;;
+            range-*)
+              python3 "$s/range-displacement.py" build/layout_base build/range-fixtures
+              pairs=""
+              for generated in build/range-fixtures/*.edits; do
+                name=$(basename "$generated" .edits)
+                cp "$generated" "build/range-$name.edits"
+                cp "build/range-fixtures/$name.html" "build/range-$name.html"
+                : > "build/range-$name.edits.paths"
+                pairs="$pairs range-$name:range-$name"
+              done
+              for kind in positioned positioned-isolated flex transfer edit-cost edit-baseline edit-height edit-cascade edit-reference-frame; do
+                python3 "$s/splice-cases.py" build/layout_base "$kind" "build/$kind-case.edits"
+              done
+              pairs="$pairs positioned-case:positioned-case positioned-isolated-case:positioned-case flex-case:flex-case transfer-case:transfer-case edit-cost-case:transfer-case edit-baseline-case:style-case edit-height-case:style-case edit-cascade-case:transfer-case edit-reference-frame-case:transfer-case"
+              for fixed in sibling-margin-case:sibling-margin-case sentence-convergence-case:sentence-convergence-case; do
+                name=${fixed%%:*}
+                cp "$s/$name.edits" "build/$name.edits"
+                if [ -f "$s/$name.edits.paths" ]; then cp "$s/$name.edits.paths" "build/$name.edits.paths"; else : > "build/$name.edits.paths"; fi
+                pairs="$pairs $fixed"
+              done
+              ;;
+            omit-transfer-*|reference-natural-sentinel)
+              detection_mode=boundary
+              pairs="splice-route-case:block-case"
+              cp "$s/splice-route-case.edits" build/splice-route-case.edits
+              : > build/splice-route-case.edits.paths
+              ;;
+            *)
+              pairs="positioned-case:positioned-case positioned-isolated-case:positioned-case flex-case:flex-case transfer-case:transfer-case edit-cost-case:transfer-case edit-baseline-case:style-case edit-height-case:style-case edit-cascade-case:transfer-case edit-reference-frame-case:transfer-case"
+              for kind in positioned positioned-isolated flex transfer edit-cost edit-baseline edit-height edit-cascade edit-reference-frame; do
+                python3 "$s/splice-cases.py" build/layout_base "$kind" "build/$kind-case.edits"
+              done
+              ;;
+          esac
+          if [ "${{ matrix.mutation }}" = no-split-line-refresh ]; then
+            detection_mode=path
+            WF_WORKERS=4 build/layout_base_par edit build/transfer-case.edits "$s/transfer-case.html" renderer/style/ua.css > build/transfer-case.par.raw
+            python3 "$s/inctime.py" --check build/transfer-case.edits build/transfer-case.par.raw
+            python3 "$s/splice-cases.py" --check-paths build/transfer-case.edits.paths build/transfer-case.par.raw
+          fi
+          detected=no
+          for pair in $pairs; do
+            name=${pair%%:*} html=${pair#*:}
+            script="build/$name.edits"
+            page="$s/$html.html"
+            case "$name" in frontier-*|range-*) page="build/$html.html" ;; esac
+            base_status=0
+            build/layout_base edit "$script" "$page" renderer/style/ua.css > "build/$name.base.raw" 2> "build/$name.base.err" || base_status=$?
+            negative_status=0
+            python3 build/semantic-falsify.py "$script" "build/$name.base.raw" "build/$name.base.err" "$base_status" "$name baseline" > "build/$name.negative.log" 2>&1 || negative_status=$?
+            cat "build/$name.negative.log"
+            if [ "$negative_status" -ne 1 ]; then
+              echo "baseline failed or was accepted as mutation detection: $name" >&2
+              exit 1
+            fi
+            python3 "$s/splice-cases.py" --check-paths "$script.paths" "build/$name.base.raw"
+            mutant_status=0
+            build/layout_mutated edit "$script" "$page" renderer/style/ua.css > "build/$name.mutated.raw" 2> "build/$name.mutated.err" || mutant_status=$?
+            detection_status=0
+            python3 build/semantic-falsify.py "$script" "build/$name.mutated.raw" "build/$name.mutated.err" "$mutant_status" "$name ${{ matrix.mutation }}" "$detection_mode" || detection_status=$?
+            if [ "${{ matrix.mutation }}" = frontier-inputs ]; then
+              case "$name" in
+                frontier-frame-width|frontier-frame-left|frontier-frame-top|frontier-frame-flow-width|frontier-frame-definite)
+                  if [ "$detection_status" -ne 0 ]; then
+                    echo "input omission was not detected by its required case: $name" >&2
+                    exit 1
+                  fi
+                  ;;
+              esac
+            fi
+            case "${{ matrix.mutation }}:$name" in
+              frontier-positioned:frontier-positioned-containing-box|frontier-float:frontier-float-dependent|frontier-atomic:frontier-atomic-child|frontier-columns:frontier-active-columns|frontier-marked-child:frontier-marked-child|frontier-premature-inputs:frontier-frame-left|frontier-premature-inputs:frontier-frame-top)
+                if [ "$detection_status" -ne 0 ]; then
+                  echo "admission omission was not detected by its required case: $name" >&2
+                  exit 1
+                fi
+                ;;
+            esac
+            if [ "$detection_status" -eq 0 ]; then
+              detected=yes
+            elif [ "$detection_status" -ne 1 ]; then
+              exit "$detection_status"
+            fi
+          done
+          if [ "$detected" != yes ]; then
+            echo "NOT DETECTED: ${{ matrix.mutation }}" >&2
+            exit 1
+          fi
+      - name: Detect
+        if: matrix.mutation != 'unsafe-admission' && matrix.mutation != 'no-topology-replacement' && !contains(fromJSON('["position-frame-owner","position-frame-anchor","reference-natural-sentinel","no-old-reference-frame","no-reference-natural-floor","no-anchored-fragment-repair","no-following-fragment-translation","no-positioned-anchor","no-stretch","no-free-space","no-wrap-rebreak","no-float-floor","stale-intrinsic-margins","omit-transfer-travel","omit-transfer-natural-floor","omit-transfer-float-reach","omit-transfer-free-transfer","omit-transfer-motion-known","no-moving-float-anchor","no-positioned-retirement","no-atomic-retirement","no-split-anchor","no-split-line-refresh","stale-split-ranks","omit-transfer-fragment-sources","omit-transfer-fragment-first","omit-transfer-fragment-last","frontier-lined-to-lineless","frontier-lineless-to-lined","frontier-empty-inline","frontier-lineless-publication","frontier-no-leaf","frontier-column-balance","frontier-column-height","frontier-column-inputs","frontier-column-publication","frontier-column-block-widths","frontier-column-block-scope","frontier-no-prepare","frontier-inputs","frontier-premature-inputs","frontier-marked-child","frontier-own-settlement","frontier-positioned","frontier-float","frontier-atomic","frontier-columns","frontier-placement","frontier-publication","frontier-retirement","frontier-source-certificate","frontier-legacy-block","range-geometry-own","range-geometry-inherited","range-activation","range-retained-activation","range-hybrid-geometry","range-hybrid-semantic","range-context-basis","range-ordinary-geometry","range-splice-geometry","range-rotation","range-insert-distribution","range-remove-distribution","range-expose","range-inherited","range-inherited-output","range-normalize","range-atomic-frame","range-positioned-selection","range-own-semantic","range-point-geometry","range-point-output","range-paragraph-membership"]'), matrix.mutation)
+        run: |
+          set +e
+          detected=""
+          sh research/investigations/concurrency/run.sh fetch >/dev/null 2>&1
+          d=build/research/concurrency
+          for page in tests/layout/*-cases.html research/investigations/structure-edits/scripts/saturation-case.html "$d/ecma262.html"; do
+            sheets=""
+            [ "$page" = "$d/ecma262.html" ] && sheets="assets/css/ecmarkup.css=$d/ecma262-ecmarkup.css assets/css/print.css=$d/ecma262-print.css"
+            build/layout_base dump 1 "$page" renderer/style/ua.css $sheets > build/a.dump 2>/dev/null
+            build/layout_mutated dump 1 "$page" renderer/style/ua.css $sheets > build/b.dump 2>/dev/null
+            if ! cmp -s build/a.dump build/b.dump; then echo "detected: $page full-build dump differs"; detected=yes; fi
+          done
+          s=research/investigations/incremental-layout/scripts
+          sh "$s/checkpoint-case.sh" build/layout_base build/checkpoint-case.edits
+          for kind in positioned positioned-isolated flex transfer edit-cost edit-baseline edit-height edit-cascade edit-reference-frame; do
+            html=${kind/edit-cost/transfer}
+            html=${html/edit-baseline/style}
+            html=${html/edit-height/style}
+            html=${html/edit-cascade/transfer}
+            html=${html/edit-reference-frame/transfer}
+            html=${html/positioned-isolated/positioned}
+            python3 "$s/splice-cases.py" build/layout_base "$kind" "build/$kind-case.edits" || exit 1
+          done
+          for pair in sentence-convergence-case:sentence-convergence-case sibling-margin-case:sibling-margin-case sibling-context-case:sibling-margin-case splice-route-case:block-case splice-style-case:block-case checkpoint-case:checkpoint-case positioned-case:positioned-case positioned-isolated-case:positioned-case flex-case:flex-case transfer-case:transfer-case edit-cost-case:transfer-case edit-baseline-case:style-case edit-height-case:style-case edit-cascade-case:transfer-case edit-reference-frame-case:transfer-case; do
+            name=${pair%%:*} html=${pair#*:}
+            script="$s/$name.edits"
+            if [ "$name" = checkpoint-case ]; then script=build/checkpoint-case.edits; fi
+            case "$name" in positioned-case|positioned-isolated-case|flex-case|transfer-case|edit-cost-case|edit-baseline-case|edit-height-case|edit-cascade-case|edit-reference-frame-case) script="build/$name.edits";; esac
+            build/layout_base edit "$script" "$s/$html.html" renderer/style/ua.css > "build/$name.base.raw" || exit 1
+            python3 "$s/inctime.py" --check "$script" "build/$name.base.raw" || exit 1
+            case "$name" in
+              sibling-margin-case|sibling-context-case|positioned-case|flex-case|transfer-case)
+                python3 "$s/splice-cases.py" --check-paths "$script.paths" "build/$name.base.raw" || exit 1
+                ;;
+            esac
+            build/layout_mutated edit "$script" "$s/$html.html" renderer/style/ua.css > "build/$name.mutated.raw" 2> "build/$name.mutated.err"
+            status=$?
+            if grep -q 'boundary transfer check failed' "build/$name.mutated.err"; then
+              echo "detected: $name boundary transfer check failed"
+              detected=yes
+            elif [ "$status" -ne 0 ]; then
+              cat "build/$name.mutated.err" >&2
+              exit "$status"
+            elif ! python3 "$s/inctime.py" --check "$script" "build/$name.mutated.raw"; then
+              echo "detected: $name incremental identity or path check"
+              grep -E 'structure path| inc (same|DIFF|refused)$' "build/$name.mutated.raw"
+              detected=yes
+            fi
+          done
+          for pair in block-case:block-case style-case:style-case boundary-case:block-case boundary-baseline-case:boundary-baseline-case; do
+            name=${pair%%:*} html=${pair#*:}
+            build/layout_mutated edit "$s/$name.edits" "$s/$html.html" renderer/style/ua.css > build/m.raw 2> build/m.err
+            differs=$(grep -c ' inc DIFF$' build/m.raw)
+            [ "$differs" -gt 0 ] && { echo "detected: $name has $differs incremental differences"; detected=yes; }
+            grep -q 'boundary transfer check failed' build/m.err && { echo "detected: $name: boundary transfer check failed"; detected=yes; }
+          done
+          build/layout_base edit "$s/block-case.edits" "$s/block-case.html" renderer/style/ua.css 2>/dev/null | grep -E 'structure path| inc (same|DIFF|refused)$' > build/base.paths
+          build/layout_mutated edit "$s/block-case.edits" "$s/block-case.html" renderer/style/ua.css 2>/dev/null | grep -E 'structure path| inc (same|DIFF|refused)$' > build/mutated.paths
+          if ! cmp -s build/base.paths build/mutated.paths; then echo "detected: block-case structure paths or edit outcomes differ"; diff build/base.paths build/mutated.paths | head -6; detected=yes; fi
+          if [ -z "$detected" ]; then echo "NOT DETECTED: ${{ matrix.mutation }}"; exit 1; fi
+      - uses: actions/upload-artifact@v4
+        if: always() && matrix.mutation == 'unsafe-admission'
+        with:
+          name: unsafe-admission-evidence
+          path: |
+            build/near-limit-*/
+            build/near-limit-negative.log
+      - uses: actions/upload-artifact@v4
+        if: always() && contains(fromJSON('["position-frame-owner","position-frame-anchor","reference-natural-sentinel","no-old-reference-frame","no-reference-natural-floor","no-anchored-fragment-repair","no-following-fragment-translation","no-positioned-anchor","no-stretch","no-free-space","no-wrap-rebreak","no-float-floor","stale-intrinsic-margins","omit-transfer-travel","omit-transfer-natural-floor","omit-transfer-float-reach","omit-transfer-free-transfer","omit-transfer-motion-known","no-moving-float-anchor","no-positioned-retirement","no-atomic-retirement","no-split-anchor","no-split-line-refresh","stale-split-ranks","omit-transfer-fragment-sources","omit-transfer-fragment-first","omit-transfer-fragment-last","frontier-lined-to-lineless","frontier-lineless-to-lined","frontier-empty-inline","frontier-lineless-publication","frontier-no-leaf","frontier-column-balance","frontier-column-height","frontier-column-inputs","frontier-column-publication","frontier-column-block-widths","frontier-column-block-scope","frontier-no-prepare","frontier-inputs","frontier-premature-inputs","frontier-marked-child","frontier-own-settlement","frontier-positioned","frontier-float","frontier-atomic","frontier-columns","frontier-placement","frontier-publication","frontier-retirement","frontier-source-certificate","frontier-legacy-block","range-geometry-own","range-geometry-inherited","range-activation","range-retained-activation","range-hybrid-geometry","range-hybrid-semantic","range-context-basis","range-ordinary-geometry","range-splice-geometry","range-rotation","range-insert-distribution","range-remove-distribution","range-expose","range-inherited","range-inherited-output","range-normalize","range-atomic-frame","range-positioned-selection","range-own-semantic","range-point-geometry","range-point-output","range-paragraph-membership"]'), matrix.mutation)
+        with:
+          name: semantic-${{ matrix.mutation }}
+          path: |
+            build/*-case.edits*
+            build/*-case.*.raw
+            build/*-case.*.err
+            build/*-case.negative.log
+            build/frontier-*.*
+            build/frontier-fixtures/
+            build/range-*.*
+            build/range-fixtures/
+
+      - uses: actions/upload-artifact@v4
+        if: always() && matrix.mutation == 'no-topology-replacement'
+        with:
+          name: topology-replacement-evidence
+          path: |
+            build/topology-base/
+            build/topology-negative/
+            build/topology-mutated/
+            build/topology-negative.log
+
+      - uses: actions/upload-artifact@v4
+        if: always() && startsWith(matrix.mutation, 'stationary-')
+        with:
+          name: ${{ matrix.mutation }}-evidence
+          path: |
+            build/edit-baseline-case.*
+            build/edit-height-case.*
+            build/edit-cascade-case.*
+            build/edit-reference-frame-case.*
+            build/positioned-isolated-case.*
+            build/edit-cost-case.*
+
+      - uses: actions/upload-artifact@v4
+        if: always() && (startsWith(matrix.mutation, 'reference-') || matrix.mutation == 'zero-suffix' || matrix.mutation == 'sibling-frontier')
+        with:
+          name: ${{ matrix.mutation }}-evidence
+          path: |
+            build/*-case.edits*
+            build/*-case.*.raw
+            build/*-case.*.err
+
+  numeric-suffix:
+    if: inputs.fallback_only != true && ((github.event_name == 'workflow_dispatch' && inputs.q139_mutations == '') || contains(github.event.head_commit.message, '[falsify]') || contains(github.event.head_commit.message, '[numeric]'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Compiler and fonts
+        run: |
+          set -euo pipefail
+          sudo sh -c 'printf "%s\n" https://archive.ubuntu.com/ubuntu > /etc/apt/apt-mirrors.txt'
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=30 update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          make -s toolchain compiler oracle-fonts
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          echo "WFC=$wfc" >> "$GITHUB_ENV"
+          (cd renderer && "$wfc" --graph modules.wfg --entry layout_oracle -o ../build/layout_numeric_base)
+      - name: Unmutated identity and detector negative control
+        run: |
+          set -euo pipefail
+          s=research/investigations/incremental-layout/scripts
+          python3 "$s/split-limit.py" build/layout_numeric_base build/split-limit-base
+          if python3 "$s/split-limit.py" build/layout_numeric_base build/split-limit-negative --detect-omission > build/split-limit-negative.log 2> build/split-limit-negative.err; then
+            echo "unmutated boundary output was accepted as omission detection" >&2
+            exit 1
+          fi
+          grep -Fx 'AssertionError: omitted numeric suffix admission produced no high-origin difference' build/split-limit-negative.err
+      - name: Omit each numeric admission independently
+        run: |
+          set -euo pipefail
+          for route in in-place convergence; do
+            git restore renderer/layout/update.wf renderer/layout/flow.wf
+            python3 - "$route" <<'PYEOF'
+          import sys
+          from pathlib import Path
+          if sys.argv[1] == 'in-place':
+              path = Path('renderer/layout/update.wf')
+              old = '    let exact_motion = reference_motion_fits(origin: frame.content_top, travel: old_output.travel, delta: change.delta);'
+              new = '    let exact_motion = True();'
+          else:
+              path = Path('renderer/layout/flow.wf')
+              old = '  let exact_suffix = reference_motion_fits(origin: content_top, travel: old_travel, delta: delta);'
+              new = '  let exact_suffix = True();'
+          text = path.read_text()
+          assert text.count(old) == 1
+          path.write_text(text.replace(old, new))
+          PYEOF
+            (cd renderer && "$WFC" --graph modules.wfg --entry layout_oracle -o "../build/layout_numeric_$route")
+            python3 research/investigations/incremental-layout/scripts/split-limit.py "build/layout_numeric_$route" "build/split-limit-$route" --detect-omission
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: numeric-suffix-evidence
+          path: |
+            build/split-limit-*/
+            build/split-limit-negative.log
+            build/split-limit-negative.err
+
+  q139-baseline:
+    if: (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[geometry-readers]') || contains(github.event.head_commit.message, '[position-readers]') || contains(github.event.head_commit.message, '[migrated]') || contains(github.event.head_commit.message, '[range]') || contains(github.event.head_commit.message, '[frontier]') || contains(github.event.head_commit.message, '[falsify]') || contains(github.event.head_commit.message, '[stationary]') || contains(github.event.head_commit.message, '[reference]') || contains(github.event.head_commit.message, '[fragment]') || contains(github.event.head_commit.message, '[q139-falsify]'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      mutations: ${{ steps.inventory.outputs.mutations }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Mutation inventory and detector controls
+        id: inventory
+        env:
+          SELECTED_MUTATIONS: ${{ inputs.q139_mutations }}
+        run: |
+          set -euo pipefail
+          s=research/investigations/incremental-layout/scripts/percentage-falsify.py
+          python3 "$s" self-test
+          python3 - <<'PYEOF'
+          import json, os, subprocess
+          names = subprocess.check_output(['python3', 'research/investigations/incremental-layout/scripts/percentage-falsify.py', 'list'], text=True).split()
+          selected = os.environ['SELECTED_MUTATIONS']
+          if selected:
+              wanted = selected.split(',')
+              if not wanted or len(set(wanted)) != len(wanted) or set(wanted) - set(names):
+                  raise SystemExit('unknown or repeated Q139 mutation')
+              names = wanted
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('mutations=' + json.dumps(names) + '\n')
+          PYEOF
+      - uses: actions/download-artifact@v4
+        if: inputs.baseline_run != ''
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.baseline_run }}
+          name: q139-baseline
+          path: build
+      - name: Require the same renderer for a reused baseline
+        if: inputs.baseline_run != ''
+        run: |
+          set -euo pipefail
+          baseline=$(head -1 build/baseline-revision.txt)
+          git fetch origin "$baseline"
+          git diff --exit-code "$baseline" -- renderer whitefoot.pin
+      - name: Unmutated driver
+        if: inputs.baseline_run == ''
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld
+          make -s toolchain compiler
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          (cd renderer && "$wfc" --cache ../build/mutation-cache --fragments function --graph modules.wfg --entry layout_oracle -o ../build/layout_base)
+          (cd renderer && "$wfc" --cache ../build/mutation-cache --fragments function --par --graph modules.wfg --entry layout_oracle -o ../build/layout_base_par)
+          git rev-parse HEAD > build/baseline-revision.txt
+          cat whitefoot.pin >> build/baseline-revision.txt
+          sha256sum "$wfc" build/layout_base* >> build/baseline-revision.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: q139-baseline
+          path: |
+            build/layout_base
+            build/layout_base_par
+            build/baseline-revision.txt
+            build/mutation-cache/
+  q139-falsify:
+    needs: q139-baseline
+    if: inputs.fallback_only != true && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[q139-falsify]') || contains(github.event.head_commit.message, '[falsify]'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        mutation: ${{ fromJSON(needs.q139-baseline.outputs.mutations) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: q139-baseline
+          path: build
+      - name: Toolchain and identical fonts
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          make -s toolchain compiler oracle-fonts
+          chmod +x build/layout_base
+      - name: Apply exactly one mutation and compile it
+        run: |
+          set -euo pipefail
+          python3 research/investigations/incremental-layout/scripts/percentage-falsify.py apply '${{ matrix.mutation }}'
+          git diff > build/mutation.diff
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          (cd renderer && "$wfc" --cache ../build/mutation-cache --fragments function --graph modules.wfg --entry layout_oracle -o ../build/layout_mutated)
+      - name: Require the focused observation and negative control
+        run: |
+          python3 research/investigations/incremental-layout/scripts/percentage-falsify.py verify '${{ matrix.mutation }}' build/layout_base build/layout_mutated build/q139-mutation
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: q139-${{ matrix.mutation }}
+          path: |
+            build/q139-mutation/
+            build/mutation.diff
+
+  fallback-falsify:
+    needs: q139-baseline
+    if: inputs.q139_mutations == '' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[falsify]'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        mutation: [omit-fallback-style-routes, omit-fallback-text-routes, omit-retained-heads, omit-bulk-retained-units, omit-bulk-retained-contexts, omit-bulk-path-copy]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: q139-baseline
+          path: build
+      - name: Compiler and fonts
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          make -s toolchain compiler oracle-fonts
+          chmod +x build/layout_base build/layout_base_par
+      - name: Require the unmutated fallback lifetime before mutation
+        run: |
+          set -euo pipefail
+          python3 research/investigations/incremental-layout/scripts/fallback-followup.py --self-test
+          WF_WORKERS=4 /usr/bin/time -p python3 research/investigations/incremental-layout/scripts/fallback-followup.py build/layout_base build/fallback-pilot
+      - name: Remove one kind of still-needed fallback record
+        run: |
+          set -euo pipefail
+          python3 research/investigations/incremental-layout/scripts/fallback-falsify.py apply '${{ matrix.mutation }}'
+          git diff > build/fallback-mutation.diff
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          (cd renderer && "$wfc" --cache ../build/mutation-cache --fragments function --graph modules.wfg --entry layout_oracle -o ../build/layout_mutant)
+          (cd renderer && "$wfc" --cache ../build/mutation-cache --fragments function --par --graph modules.wfg --entry layout_oracle -o ../build/layout_mutant_par)
+      - name: Require the intended next-edit failure in both modes
+        run: |
+          set -euo pipefail
+          WF_WORKERS=4 python3 research/investigations/incremental-layout/scripts/fallback-falsify.py verify '${{ matrix.mutation }}' build/layout_base build/layout_mutant build/fallback-mutation-seq
+          WF_WORKERS=4 python3 research/investigations/incremental-layout/scripts/fallback-falsify.py verify '${{ matrix.mutation }}' build/layout_base_par build/layout_mutant_par build/fallback-mutation-par
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fallback-${{ matrix.mutation }}
+          path: |
+            build/fallback-pilot/
+            build/fallback-mutation-*/
+            build/fallback-mutation.diff

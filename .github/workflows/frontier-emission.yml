@@ -1,0 +1,51 @@
+# Temporary evidence capture for the owning-sibling repair; retire when the
+# emission comparison is recorded and this research branch is ready.
+name: frontier-emission
+on:
+  push:
+    branches: [research/m2-frag-a]
+  workflow_dispatch:
+jobs:
+  emission:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[emission]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: previous
+            source: 8f973e691e18f7322c39e2adbb2a8d4647865079
+            pin: wf-01697d2de8a1
+          - name: repaired
+            source: 8f973e691e18f7322c39e2adbb2a8d4647865079
+            pin: wf-41f46e60030c
+          - name: candidate
+            source: HEAD
+            pin: wf-78223721f77d
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+      - name: Same-source ledger and unoptimized LLVM
+        env:
+          SOURCE: ${{ matrix.source }}
+          RELEASE: ${{ matrix.pin }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/emission-evidence
+          git worktree add --detach build/emission "$SOURCE"
+          echo "release = $RELEASE" > build/emission.pin
+          make -s compiler PIN="$PWD/build/emission.pin"
+          wfc=$(realpath "build/whitefoot/$RELEASE/whitefootc")
+          git -C build/emission rev-parse HEAD > build/emission-evidence/revision.txt
+          cat build/emission.pin >> build/emission-evidence/revision.txt
+          sha256sum "$wfc" >> build/emission-evidence/revision.txt
+          /usr/bin/time -p -o build/emission-evidence/emission.time sh -c 'cd build/emission/renderer && "$1" --par --par-ledger --emit-llvm --graph modules.wfg --function pkg::layout::frontier_prepare -o "$2"' sh "$wfc" "$GITHUB_WORKSPACE/build/emission-evidence/frontier.ll" > build/emission-evidence/frontier-ledger.txt 2>&1
+          cat build/emission-evidence/emission.time
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: frontier-emission-${{ matrix.name }}
+          path: build/emission-evidence/

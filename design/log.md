@@ -4,6 +4,22 @@ Newest first. One entry per approved change of the tree: a dated title,
 `Nodes:` naming every node changed, `Owner-approved:` and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-10-09 Prove grid columns invariant, reduce item-owned proposals and publish first baselines
+
+Nodes: pipeline/layout
+
+Owner-approved: On 2026-10-08 the owner chose Q140 B, a grid splice admitted only when the container's column sizes are provably unchanged with the container's track sizing rerun and counted fallback otherwise; on the status board on 2026-10-09 the owner chose item-owned grid proposals with balanced reductions (A), distinct first-baseline publication (A), extending the width proof through an enclosing flex (A), fixing Apollo11's full-layout regression within this branch (B) and investigating the flexible-track maximum chain separately (B).
+
+Summary: Grid splices prove invariant columns through enclosing flex inputs, rerun sizing and placement with current item-owned natural measurements, and count unproved dependencies as refusals. Independent CSS Grid 11.5 proposals reduce per track, while first-baseline consumers receive a distinct context output. Consumed-input equality avoids repeating equivalent final flow layout without discarding height dependencies, and a changed direct height-reader signature renews parent preparation. These rules preserve the algorithm's dependencies and correct baselines while removing Apollo11's duplicate work; the inherited CSS Grid 11.7 maximum chain remains a separate investigation ([Q140 evidence and grounds](../research/investigations/structure-edits/layout-design.md#q140-grid-row-sizing-under-invariant-columns)).
+
+## 2026-10-09 Admit percentage heights whose basis a structural edit cannot change
+
+Nodes: pipeline/layout
+
+Owner-approved: On 2026-10-08 the owner chose Q139 A, that a structural splice may admit a percentage height whose basis the edit cannot change, recording each basis and falling back with a counted reason otherwise; on the status board the owner then chose the direct-reader inventory and compact records for that scope and cost, and on 2026-10-09 chose to accept the remaining root-font cost and track it separately, and approved, in Chinese, correcting the first layout decision so that a child context's inputs are its element and its resolved containing space, including height and definiteness, instead of its element and width.
+
+Summary: The splice keeps height provenance only for boxes that read a percentage height and admits such a reader only when its basis is current, definite, independent of content and outside the edit's growing ancestor chain; each route context counts its own direct readers, and nested contexts stay under unchanged-space translation and flex space-equality relayout. Apollo11's block edits no longer refuse for percentage heights, ecma262 and html5 keep every splice, and the fixtures, Chromium floors, page identity and the full mutation matrix pass. Compact records hold the large pages' memory growth to 1.5 to 1.9 percent; root-font edits stay within the twin's spread except ECMA262 and Apollo sequential, at most 0.3 percent above it, which docs/todo.md tracks ([measurements](../research/investigations/structure-edits/layout-design.md#approved-direct-inventory-and-compact-records)). The first layout decision's grounds now name the resolved containing space, because a child context's percentage heights depend on its containing block's height and definiteness as well as its width.
+
 ## 2026-10-06 Keep style slots stable across structural edits and bound the insertion restyle
 
 Nodes: pipeline/style

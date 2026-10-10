@@ -120,3 +120,113 @@ font size, 452 against 487 us); three runs per script are no same-source
 attribution, and none is claimed. Against
 Chromium, Snowghost leads every kind on every page, sequential and par-4, but
 the block edits and ecma262's font size (1.9 to 2.1 times Chromium's).
+
+## Full layout across M2's layout steps (2026-10-06)
+
+Workflow time-14900k on the temporary branch research/timing-m2-layout:
+run 37487857702 (main 6f2235c against the layout branch at 8069a47, every
+page, best of five) and run 37493327318 (main against each step's head,
+html5 only, best of three). Same machine, compiler and pages as above;
+layout/run.sh time, per-run seconds, par at WF_WORKERS=4.
+
+Run 37487857702, layout (full stage), main against 8069a47 (steps 1a to 3a):
+
+page      mode    main seq  main par4  8069a47 seq  8069a47 par4
+ecma262   boxes     0.0567     0.0633       0.1933        0.3433
+ecma262   layout    0.5533     0.2533       2.1167        2.4567
+html5     boxes     0.0600     0.0567       0.3133        0.5167
+html5     layout    0.6000     0.2700       3.3967        3.7500
+apollo11  boxes     0.0030     0.0030       0.0110        0.0190
+apollo11  layout    0.0350     0.0180       0.0790        0.0830
+
+The style stage is unchanged (ecma262 all seq 0.746 against 0.748).
+
+Run 37493327318, html5, each step's head:
+
+step  commit   boxes seq  boxes par4  text seq  layout seq  layout par4
+main  6f2235c     0.0600      0.0600    0.4567      0.6000       0.2667
+1a    1c3b767     0.0667      0.0667    0.4700      0.6300       0.2800
+1b    bb2acd7     0.0700      0.0700    0.4733      0.6200       0.2800
+1c    c75039f     0.0667      0.0667    0.4700      0.6233       0.2833
+2     0e2a093     0.0733      0.0667    0.4833      0.6133       0.2900
+3a    db5d98c     0.3200      0.5067    0.7200      3.4067       3.7633
+
+Steps 1a to 2 stay within 2 to 5 percent of main on layout; step 3a's
+entry sequences account for the regression: its flow_event answers each
+rank by descending the root and every nested block sequence from the root,
+so a walk over a context's events costs O(n x depth x log n) node copies
+where main read an array, and the box build inserts entries one at a time.
+At four workers step 3a is slower than sequential.
+
+### First repair round (2084e34)
+
+2084e34 materializes each walk's events once and bulk-builds sequences at
+owner close (and carries step 4's first part). Run 37502720095, best of
+three, per-run seconds:
+
+page     build    boxes seq  boxes par4  layout seq  layout par4
+html5    main        0.0600      0.0633      0.6000       0.2667
+html5    step 2      0.0733      0.0733      0.6267       0.2933
+html5    2084e34     0.1133      0.1233      1.3567       1.0700
+ecma262  main        0.0600      0.0567      0.5533       0.2533
+ecma262  step 2      0.0700      0.0733      0.5800       0.2667
+ecma262  2084e34     0.1200      0.1300      1.0633       0.7867
+
+Run 37508283552, html5, variants of 2084e34 built from the temporary branch
+research/timing-m2-variants: nb drops the full build's publish_boundaries
+call, nr also drops stack_flow's two record_event_lines calls.
+
+build     boxes seq  layout seq  layout par4
+step 2       0.0700      0.6300       0.2967
+2084e34      0.1100      1.3700       1.0600
+nb           0.1133      1.2700       0.9700
+nr           0.1133      0.7000       0.3733
+
+perf record (task-clock, 1999 Hz) on each sequential driver, html5 layout
+with three repetitions: memmove is 29.7 percent of 2084e34's samples against
+0.9 percent of step 2's, then boundary_set 4.8, slot_read 3.0, fill_flow 1.7
+and join_output 1.5 percent. Per-entry summary publication repairs the
+index path to the root and copies whole index nodes at every level; that is
+the remaining regression.
+
+### Second repair round (a0d2a05)
+
+a0d2a05 leaves each entry's output in its payload during the walk and
+reduces every sequence once bottom-up after it, with topology stored apart
+from the transfers. Run 37515789411, best of three, per-run seconds:
+
+page     build    boxes seq  boxes par4  layout seq  layout par4
+html5    main        0.0600      0.0600      0.6067       0.2733
+html5    step 2      0.0667      0.0700      0.6333       0.2967
+html5    a0d2a05     0.1133      0.1100      0.7267       0.4033
+ecma262  main        0.0633      0.0667      0.5533       0.2467
+ecma262  step 2      0.0767      0.0700      0.5833       0.2733
+ecma262  a0d2a05     0.1167      0.1167      0.7100       0.4067
+
+Against step 2, layout is 15 and 22 percent slower sequentially and 36 and
+49 percent at four workers (html5, ecma262), still outside the five-percent
+criterion. memmove falls from 29.7 to 1.5 percent of samples; the profile
+is flat, with fill_flow at 2.6 percent, more allocation than step 2, and
+the box build 0.04 to 0.05 s slower.
+
+### Third repair round (18773bc)
+
+18773bc shares one event array per layout pass, writes topology into
+initially sized pages and seals owners in counted loops. Run 37523097849,
+clang 18, best of three, per-run seconds:
+
+page     build    boxes seq  boxes par4  layout seq  layout par4
+html5    main        0.0667      0.0600      0.6000       0.2667
+html5    step 2      0.0733      0.0700      0.6300       0.2933
+html5    18773bc     0.1033      0.1000      0.6933       0.3700
+ecma262  main        0.0600      0.0633      0.5533       0.2533
+ecma262  step 2      0.0667      0.0767      0.5867       0.2767
+ecma262  18773bc     0.1100      0.0967      0.6667       0.3600
+
+Against step 2, layout is 10 and 14 percent slower sequentially and 26 and
+30 percent at four workers (html5, ecma262), outside the repair's
+five-percent criterion and M2's criterion 4. The box build accounts for 0.03
+to 0.04 s of the sequential gap; allocator functions are about 15 percent of
+samples against step 2's 12. Round 2's oracles (5b32455) were byte-identical
+on both pages and every case page, and every incremental kind matched its
+rebuild, sequential and parallel.

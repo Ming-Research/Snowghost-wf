@@ -5,8 +5,8 @@ usage: python3 inctime.py SCRIPT RUN...
        python3 inctime.py --reparse SCRIPT EDIT_OUTPUT REPARSE_OUTPUT COUNT
 
 The script defines the exact, nonempty edit sequence. Each run must report
-one base and every edit once in order: T/D/C/K/B/X must succeed
-incrementally. C/K/B/X carry a style edit line, and B/X a structure edit
+one base and every edit once in order: T/D/C/K/B/J/X must succeed
+incrementally. C/K/B/J/X carry a style edit line, and B/J/X a structure edit
 line with the contexts and paragraphs built again and those that kept their
 preparation.
 Checking validates raw driver stdout before run.sh extracts comparable
@@ -15,21 +15,38 @@ a filter. Raw dumps and the separate style diagnostics are accepted only
 in their documented forms. Timing takes the best microseconds per edit over
 the runs and requires identical counts across runs. No timed edits is an
 error. The 1 ms reporting threshold is unchanged. Python 3 standard library.
+Structural path records distinguish local splices from reason-coded fallbacks.
+J PARENT BEFORE DEPTH TEXT inserts nested divs around a paragraph through
+the same structural path as B; DEPTH is between 1 and 32.
+V WIDTH HEIGHT is a full viewport refresh between edits, not a timed edit;
+the next edit compares against a fresh build at that viewport.
+--check requires them for every structural edit. Historical timing and
+filtered reparse logs may omit the entire set; a partial set is invalid.
+Historical logs may omit the entire boundary-count suffix. Current logs
+must supply all five fields together; timings retain and compare those
+counts, and reject mixed old/new timing records within one run. The optional
+frontier_refusals/frontier_reasons pair follows the complete boundary suffix;
+it records observed leaf refusals and their reason-bit union, not inferred
+geometry changes. Both fields must be present together.
 """
 import re
 import sys
 
-TIMED = re.compile(r'edit (\d+) us (\d+) prepared (\d+) contexts (\d+) paragraphs (\d+) held_entries (\d+) entries (\d+)$')
+BOUNDARY = (r'(?: boundary_entries (\d+) boundary_blocks (\d+) boundary_indexes (\d+)'
+            r' boundary_fallbacks (\d+) boundary_reason (\d+)'
+            r'(?: frontier_refusals (\d+) frontier_reasons (\d+))?)?')
+TIMED = re.compile(r'edit (\d+) us (\d+) prepared (\d+) contexts (\d+) paragraphs (\d+) held_entries (\d+) entries (\d+)' + BOUNDARY + '$')
 OTHER = re.compile(r'edit (\d+) (inc refused|full)$')
 HASH = re.compile(r'edit (\d+) hash [0-9a-f]{16} bytes \d+(?: inc (same|DIFF|refused))?$')
 BASE = re.compile(r'base hash [0-9a-f]{16} bytes \d+$')
-STYLE_COUNTS = re.compile(r'style edit (\d+) prepared \d+ contexts \d+ paragraphs \d+ held_entries \d+ entries \d+$')
+STYLE_COUNTS = re.compile(r'style edit (\d+) prepared \d+ contexts \d+ paragraphs \d+ held_entries \d+ entries \d+' + BOUNDARY + '$')
 STYLE_TIME = re.compile(r'style edit (\d+) delta_us (\d+) picks_us (\d+) full_us (\d+)(?: style_us (\d+))?$')
 STRUCTURE = re.compile(r'structure edit (\d+) contexts (\d+) paragraphs (\d+) reused (\d+)$')
 CREATED = re.compile(r'created \d+$')
 STRUCTURE_FALLBACK = re.compile(r'structure fallback (\d+)$')
-INCREMENTAL = ('T', 'D', 'C', 'K', 'B', 'X')
-RESTYLED = ('C', 'K', 'B', 'X')
+STRUCTURE_PATH = re.compile(r'structure path (\d+) splice ([01]) reason (\d+)$')
+INCREMENTAL = ('T', 'D', 'C', 'K', 'B', 'J', 'X')
+RESTYLED = ('C', 'K', 'B', 'J', 'X')
 
 
 def script_operations(path):
@@ -39,19 +56,30 @@ def script_operations(path):
         if not line:
             continue
         kind = line[:1]
-        if kind not in (b'S', b'P', b'T', b'D', b'C', b'K', b'B', b'X') or line[1:2] != b' ':
+        if kind not in (b'S', b'P', b'V', b'T', b'D', b'C', b'K', b'B', b'J', b'X') or line[1:2] != b' ':
             raise ValueError('%s:%d: unreadable operation' % (path, number))
-        if kind not in (b'S', b'P'):
+        if kind not in (b'S', b'P', b'V'):
             operations.append(kind.decode('ascii'))
     if not operations:
         raise ValueError(path + ': no edits')
     return operations
 
 
-def read(path, operations, checking=False):
+def frontier_record(match):
+    """Validate the complete optional leaf-refusal suffix, including its meaning."""
+    refused, reasons = match.groups()[-2:]
+    if refused is None and reasons is None:
+        return
+    refused, reasons = int(refused), int(reasons)
+    if reasons & ~8191 or (refused == 0) != (reasons == 0):
+        raise ValueError('inconsistent dirty-frontier refusal count/reasons')
+
+
+def read(path, operations, checking=False, require_paths=False):
     timed, other, styled, built = {}, {}, {}, {}
     seen, auxiliary, structural = set(), set(), set()
     fallbacks = set()
+    paths = {}
     base_count = 0
     created_count = 0
     for line_number, raw in enumerate(open(path), 1):
@@ -63,6 +91,8 @@ def read(path, operations, checking=False):
             continue
         style = (STYLE_COUNTS if checking else STYLE_TIME).fullmatch(line)
         if style:
+            if checking:
+                frontier_record(style)
             edit = int(style.group(1))
             if edit in auxiliary or not 1 <= edit <= len(operations) or operations[edit - 1] not in RESTYLED:
                 raise ValueError('%s:%d: unexpected style edit' % (path, line_number))
@@ -73,17 +103,28 @@ def read(path, operations, checking=False):
         structure = STRUCTURE.fullmatch(line)
         if structure:
             edit = int(structure.group(1))
-            if edit in structural or not 1 <= edit <= len(operations) or operations[edit - 1] not in ('B', 'X'):
+            if edit in structural or not 1 <= edit <= len(operations) or operations[edit - 1] not in ('B', 'J', 'X'):
                 raise ValueError('%s:%d: unexpected structure edit' % (path, line_number))
             structural.add(edit)
             built[edit] = [int(value) for value in structure.groups()[1:]]
+            continue
+        path_record = STRUCTURE_PATH.fullmatch(line)
+        if path_record:
+            edit, local, reason = map(int, path_record.groups())
+            if (edit in paths or edit in seen or
+                    not 1 <= edit <= len(operations) or
+                    operations[edit - 1] not in ('B', 'J', 'X')):
+                raise ValueError('%s:%d: unexpected structure path' % (path, line_number))
+            if (local == 1) != (reason == 0) or not 0 <= reason <= 11:
+                raise ValueError('%s:%d: inconsistent splice/fallback reason' % (path, line_number))
+            paths[edit] = [local, reason]
             continue
         fallback_record = STRUCTURE_FALLBACK.fullmatch(line)
         if fallback_record:
             edit = int(fallback_record.group(1))
             if (edit in fallbacks or edit in seen or
                     not 1 <= edit <= len(operations) or
-                    operations[edit - 1] not in ('B', 'X')):
+                    operations[edit - 1] not in ('B', 'J', 'X')):
                 raise ValueError('%s:%d: unexpected structure fallback' % (path, line_number))
             fallbacks.add(edit)
             continue
@@ -109,9 +150,10 @@ def read(path, operations, checking=False):
             if not incremental and status is not None:
                 raise ValueError('%s: edit %d: an edit of no incremental kind reported an incremental status' % (path, edit))
         elif match:
+            frontier_record(match)
             if not incremental:
                 raise ValueError('%s: edit %d: unexpected timed structural edit' % (path, edit))
-            timed[edit] = [int(value) for value in match.groups()[1:]]
+            timed[edit] = [int(value) for value in match.groups()[1:] if value is not None]
         else:
             status = fallback.group(2)
             if incremental or status != 'full':
@@ -119,14 +161,20 @@ def read(path, operations, checking=False):
             other[edit] = status
     if base_count != 1 or len(seen) != len(operations):
         raise ValueError('%s: %d edits for %d operations, %d bases' % (path, len(seen), len(operations), base_count))
-    if created_count != operations.count('B'):
-        raise ValueError('%s: %d created records for %d insertions' % (path, created_count, operations.count('B')))
+    if created_count != (operations.count('B') + operations.count('J')):
+        raise ValueError('%s: %d created records for %d insertions' % (path, created_count, (operations.count('B') + operations.count('J'))))
     if not checking and not timed:
         raise ValueError(path + ': no edits were timed')
     if not checking and set(styled) != {edit for edit in timed if operations[edit - 1] in RESTYLED}:
         raise ValueError(path + ': a timed style edit lacks its style edit line')
-    if not checking and set(built) != {edit for edit in timed if operations[edit - 1] in ('B', 'X')}:
+    if not checking and set(built) != {edit for edit in timed if operations[edit - 1] in ('B', 'J', 'X')}:
         raise ValueError(path + ': a timed structural edit lacks its structure edit line')
+    if paths or require_paths:
+        expected = {i for i, kind in enumerate(operations, 1) if kind in ('B', 'J', 'X')}
+        if set(paths) != expected:
+            raise ValueError(path + ': partial structural path records')
+        for edit in built:
+            built[edit] += paths[edit]
     return timed, other, styled, built
 
 
@@ -140,7 +188,7 @@ def check_reparse(script, edited, reparsed, count):
     operations = script_operations(script)
     read(edited, operations, checking=True)
     count = int(count)
-    forward = [i for i, kind in enumerate(operations, 1) if kind in ('T', 'B')]
+    forward = [i for i, kind in enumerate(operations, 1) if kind in ('T', 'B', 'J')]
     if count <= 0 or len(forward) < count:
         raise ValueError('reparse count must name available forward edits')
     hashes = {}
@@ -181,7 +229,7 @@ def main():
         if len(sys.argv) != 4:
             raise ValueError('usage: inctime.py --check SCRIPT OUTPUT')
         operations = script_operations(sys.argv[2])
-        read(sys.argv[3], operations, checking=True)
+        read(sys.argv[3], operations, checking=True, require_paths=True)
         return 0
     if len(sys.argv) < 3:
         raise ValueError('usage: inctime.py SCRIPT RUN...')
@@ -216,6 +264,14 @@ def main():
           % (min(times), rank(times, 0.5), rank(times, 0.9), max(times),
              sum(1 for t in times if t < 1000), len(times)))
     names = ['prepared', 'contexts', 'paragraphs', 'held_entries', 'entries']
+    widths = {len(values) for values in first_timed.values()}
+    if len(widths) != 1:
+        raise ValueError('mixed legacy and boundary count records')
+    if widths in ({11}, {13}):
+        names += ['boundary_entries', 'boundary_blocks', 'boundary_indexes',
+                  'boundary_fallbacks', 'boundary_reason']
+    if widths == {13}:
+        names += ['frontier_refusals', 'frontier_reasons']
     for k, name in enumerate(names):
         values = [first_timed[edit][k + 1] for edit in first_timed]
         print('%s min %d median %d max %d' % (name, min(values), rank(values, 0.5), max(values)))
@@ -250,6 +306,14 @@ def main():
             print('style_us median %d max %d; style+update us median %d max %d'
                   % (rank(styles, 0.5), max(styles), rank(whole, 0.5), max(whole)))
     if first_built:
+        if all(len(values) == 5 for values in first_built.values()):
+            local = sum(values[3] for values in first_built.values())
+            reasons = {}
+            for values in first_built.values():
+                if values[4]:
+                    reasons[values[4]] = reasons.get(values[4], 0) + 1
+            print('structural layout splices %d, fallbacks %d; reasons %s'
+                  % (local, len(first_built) - local, sorted(reasons.items())))
         names = ['built contexts', 'built paragraphs', 'reused paragraphs']
         for k, name in enumerate(names):
             values = [first_built[edit][k] for edit in first_built]

@@ -100,8 +100,8 @@ const kind_header: u8 = 1_u8;
 const kind_footer: u8 = 2_u8;
 
 struct Open {
-  doc "The paragraph a flow context's walk is filling: its first piece in the context's pieces, a bound on its scalar values, the block container whose anonymous block it is, the inline boxes open around the walk (their Begin pieces emitted into this paragraph up to emitted).";
-  first: u64;
+  doc "The paragraph a flow context's walk is filling: its owned pieces, a bound on its scalar values, the block container whose anonymous block it is, the inline boxes open around the walk (their Begin pieces emitted into this paragraph up to emitted).";
+  pieces: Box<Slots<Piece>>;
   size: u64;
   style: StyleRef;
   inlines: Box<Slots<StyleRef>>;
@@ -110,7 +110,7 @@ struct Open {
 
 struct Walk {
   doc "The state the walk in tree order carries: each node's element index (unlisted for a node that is no element of the traversal), the counter instances in scope, the quote depth and the element depth, and the text nodes it met where they make no piece (skip_text).";
-  order: Box<Array<u32>>;
+  effects: u64;
   counters: Box<Slots<Counter>>;
   quote_depth: i32;
   depth: u64;
@@ -185,8 +185,7 @@ fn new_context(kind: u8, style: StyleRef) -> made: Context pure {
   doc "A context of kind and style that holds nothing and has not been laid out.";
   let entered = empty_point();
   let left = empty_point();
-  let flow = box_slots_new::<Flow>(capacity: 0_u64);
-  let pieces = box_slots_new::<Piece>(capacity: 0_u64);
+  let entries = new_sequence();
   let blocks = box_slots_new::<Block>(capacity: 0_u64);
   let paragraphs = box_slots_new::<Paragraph>(capacity: 0_u64);
   let children = box_slots_new::<Context>(capacity: 0_u64);
@@ -196,24 +195,69 @@ fn new_context(kind: u8, style: StyleRef) -> made: Context pure {
   let captions = box_slots_new::<u32>(capacity: 0_u64);
   let fragments = box_slots_new::<Fragment>(capacity: 0_u64);
   let splits = box_slots_new::<Split>(capacity: 0_u64);
+  let fragment_anchors = box_slots_new::<FragmentAnchor>(capacity: 0_u64);
+  let empty_range = FragmentRange(first: no_index, last: no_index);
+  let fragment_ranges = box_array_filled::<FragmentRange>(count: 0_u64, value: empty_range);
+  let absent_flow = Flow::Close(block: no_index);
+  let inactive_role = False();
+  let absent_anchor = FragmentAnchor(active: inactive_role, mode: 0_u8, first: absent_flow, last: absent_flow, split: no_index, margin: 0_i32, last_split: no_index, leading_line: inactive_role);
+  let absent_rectangle = Fragment(kind: placed_element, owner: no_index, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32);
+  let absent_roles = FragmentRoles(leading: absent_rectangle, spanning: absent_rectangle, trailing: absent_rectangle, leading_anchor: absent_anchor, spanning_anchor: absent_anchor, trailing_anchor: absent_anchor);
+  let split_roles = box_array_filled::<FragmentRoles>(count: 0_u64, value: absent_roles);
+  let absent_link = SplitLink(previous: no_index, next: no_index, order: no_index, gap_possible: inactive_role);
+  let split_links = box_array_filled::<SplitLink>(count: 0_u64, value: absent_link);
+  let split_keys = box_array_filled::<u64>(count: 0_u64, value: 0_u64);
+  let absent_join = SplitJoin(first: no_index, last: no_index);
+  let split_joins = box_array_filled::<SplitJoin>(count: 0_u64, value: absent_join);
+  let split_dependencies = box_array_filled::<FragmentRange>(count: 0_u64, value: empty_range);
   let column_map = box_slots_new::<ColumnPiece>(capacity: 0_u64);
-  let naturals = box_slots_new::<i32>(capacity: 0_u64);
   let no = False();
   let space = Space(available: 0_i32, basis_width: 0_i32, basis_height: -1_i32, forced_width: -1_i32, forced_height: -1_i32, shrink: no);
   let never = Space(available: laid_never, basis_width: 0_i32, basis_height: -1_i32, forced_width: -1_i32, forced_height: -1_i32, shrink: no);
-  return Context(kind: kind, natural: natural_object, style: style, flow: move flow, pieces: move pieces, blocks: move blocks, paragraphs: move paragraphs, children: move children, rows: move rows, columns: move columns, cells: move cells, captions: move captions, fragments: move fragments, splits: move splits, column_map: move column_map, space: space, margin_top: 0_i32, margin_right: 0_i32, margin_bottom: 0_i32, margin_left: 0_i32, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32, baseline: 0_i32, has_baseline: no, viewport_origin: no, min_content: 0_i32, max_content: 0_i32, intrinsic_known: no, ratio_width: 0_i32, ratio_height: 0_i32, dirty: no, laid: never, flow_at: no_index, block: no_index, beside: no, content_raw: 0_i32, baseline_entry: no_index, has_out: no, intrinsic_basis: 0_i32, definite_free: no, marked_paragraphs: 0_u32, marked_paragraph: no_index, marked_children: 0_u32, marked_child: no_index, intrinsic_held: no, held_min: 0_i32, held_max: 0_i32, flow_end: 0_i32, naturals: move naturals, restyled: no, restyled_block: no_index, restyled_blocks: 0_u32, entered: move entered, left: move left);
+  let initial_origin = zero_origin();
+  let reference_blocks = box_slots_new::<u32>(capacity: 0_u64);
+  let reference_paragraphs = box_slots_new::<u32>(capacity: 0_u64);
+  let reference_children = box_slots_new::<u32>(capacity: 0_u64);
+  let range_descriptors = box_slots_new::<RangeDescriptor>(capacity: 0_u64);
+  let boundary_visits = no_boundary_visits();
+  let neutral = True();
+  let flex_cache = flex_blank_cache();
+  let flex_counts = no_updates();
+  let grid_counts = no_updates();
+  let grid_row = None<Box<GridRowResult>>();
+  let height_proof = absent_height_proof();
+  let height_summary = empty_height_summary();
+  let height_input = height_input_of(proof: height_proof);
+  let record = None<Box<HeightProof>>();
+  let flow_inputs = empty_flow_inputs();
+  let paragraph_frontier = ParagraphFrontier::Vacant();
+  return Context(height_input: height_input, height_proof: move record, height_summary: height_summary, split_head: no, flex_cache: flex_cache, flex_counts: flex_counts, grid_row: move grid_row, grid_counts: grid_counts, grid_columns_invariant: no, grid_intrinsic_invariant: no, retired: no, walk_exact: neutral, neutral: neutral, local_geometry: no, reference_phase: 0_u8, reference_dense: no, reference_blocks: move reference_blocks, reference_paragraphs: move reference_paragraphs, reference_children: move reference_children, range_actions: no, range_descriptors: move range_descriptors, placement_fresh: no, placement_natural: 0_i32, placement_natural_offset: 0_i64, placement_natural_known: no, boundary_visits: boundary_visits, boundary_dirty: no, content_dx: 0_i32, content_dy: 0_i32, anchor: initial_origin, normal_x: 0_i32, normal_y: 0_i32, slot: no_index, kind: kind, natural: natural_object, style: style, entries: move entries, build_owner: no_index, blocks: move blocks, paragraphs: move paragraphs, children: move children, rows: move rows, columns: move columns, cells: move cells, captions: move captions, fragments: move fragments, splits: move splits, fragment_anchors: move fragment_anchors, fragments_valid: neutral, fragment_repaired: no, fragments_anchored: no, fragment_ranges: move fragment_ranges, split_roles: move split_roles, split_links: move split_links, split_keys: move split_keys, split_joins: move split_joins, split_dependencies: move split_dependencies, split_topology_known: no, empty_fragment_sources: 0_u64, column_map: move column_map, space: space, margin_top: 0_i32, margin_right: 0_i32, margin_bottom: 0_i32, margin_left: 0_i32, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32, baseline: 0_i32, has_baseline: no, first_baseline: 0_i32, has_first_baseline: no, viewport_origin: no, min_content: 0_i32, max_content: 0_i32, intrinsic_known: no, ratio_width: 0_i32, ratio_height: 0_i32, dirty: no, laid: never, entry_slot: no_index, flow_at: no_index, block: no_index, placement_paragraph: no_index, beside: no, content_raw: 0_i32, baseline_entry: no_index, has_out: no, intrinsic_basis: 0_i32, definite_free: no, flow_inputs: flow_inputs, paragraph_frontier: move paragraph_frontier, frontier_span: 1_u64, marked_paragraphs: 0_u32, marked_paragraph: no_index, marked_children: 0_u32, marked_child: no_index, intrinsic_held: no, held_min: 0_i32, held_max: 0_i32, flow_end: 0_i32, restyled: no, restyled_block: no_index, restyled_blocks: 0_u32, entered: move entered, left: move left);
 }
 
-fn new_open(style: StyleRef, first: u64) -> made: Open pure {
-  doc "An empty open paragraph of the block container style, starting at piece first.";
+fn new_block(style: StyleRef, marker: Bool) -> made: Block pure {
+  doc "An unpublished block payload used by the builder and stable-pool publication.";
+  let nested_entries = new_sequence();
+  let boundary = empty_output();
+  let output = empty_block_output();
+  let neutral = True();
+  let no_split = False();
+  let record = None<Box<HeightProof>>();
+  let reference_old = zero_origin();
+  let made = Block(height_proof: move record, neutral: neutral, split_head: no_split, entries: move nested_entries, entry_slot: no_index, boundary: boundary, output: output, style: style, x: 0_i64, y: 0_i64, dx: 0_i64, dy: 0_i64, reference_old: reference_old, reference_captured: no_split, reference_fresh: no_split, natural: 0_i32, natural_offset: 0_i64, natural_known: no_split, normal_x: 0_i32, normal_y: 0_i32, resolved_x: 0_i32, resolved_y: 0_i32, width: 0_i32, height: 0_i32, marker: marker, parent: no_index, flow_at: no_index, inner_x: 0_i32, held_y: 0_i32, avail_left: 0_i32, avail_width: 0_i32, content_left: 0_i32, content_width: 0_i32);
+  return move made;
+}
+
+fn new_open(style: StyleRef) -> made: Open pure {
+  doc "An empty open paragraph of the block container style, owning its pieces.";
   let inlines = box_slots_new::<StyleRef>(capacity: 0_u64);
-  return Open(first: first, size: 0_u64, style: style, inlines: move inlines, emitted: 0_u64);
+  let pieces = box_slots_new::<Piece>(capacity: 0_u64);
+  return Open(pieces: move pieces, size: 0_u64, style: style, inlines: move inlines, emitted: 0_u64);
 }
 
-fn new_paragraph(style: StyleRef, first: u64, count: u64, reserve: u64) -> made: Paragraph pure contract {
+fn new_paragraph(style: StyleRef, pieces: Box<Slots<Piece>>, reserve: u64) -> made: Paragraph pure contract {
   requires reserve <= 1073741824_u64;
 } {
-  doc "A paragraph of the block container style over count pieces from first, its text reserved at reserve scalar values.";
+  doc "A paragraph of the block container style owning pieces, its text reserved at reserve scalar values.";
   let text = box_slots_new::<u32>(capacity: reserve);
   let runs = box_slots_new::<TextRun>(capacity: 0_u64);
   let run_styles = box_slots_new::<StyleRef>(capacity: 0_u64);
@@ -223,10 +267,13 @@ fn new_paragraph(style: StyleRef, first: u64, count: u64, reserve: u64) -> made:
   let fragments = box_slots_new::<Fragment>(capacity: 0_u64);
   let atomics = box_slots_new::<Atomic>(capacity: 0_u64);
   let clean = False();
-  return Paragraph(style: style, first: first, count: count, text: move text, runs: move runs, run_styles: move run_styles, marks: move marks, shaped: move shaped, lines: move lines, fragments: move fragments, atomics: move atomics, width: 0_i32, left: 0_i32, top: 0_i32, height: 0_i32, min_content: 0_i32, max_content: 0_i32, dirty: clean, x: 0_i32, flow_at: no_index, block: no_index, beside: clean, broken_width: laid_never, broken_left: laid_never);
+  let empty_rectangle = Fragment(kind: placed_element, owner: no_index, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32);
+  let absent_fragment = EmptyFragment(active: clean, value: empty_rectangle);
+  let empty_fragments = box_array_filled::<EmptyFragment>(count: 0_u64, value: absent_fragment);
+  return Paragraph(retired: clean, empty_fragment: clean, empty_fragments: move empty_fragments, style: style, pieces: move pieces, text: move text, runs: move runs, run_styles: move run_styles, marks: move marks, shaped: move shaped, lines: move lines, fragments: move fragments, atomics: move atomics, width: 0_i32, left: 0_i32, top: 0_i64, dx: 0_i64, dy: 0_i64, reference_fresh: clean, natural: 0_i32, natural_offset: 0_i64, natural_known: clean, normal_x: 0_i32, normal_top: 0_i32, resolved_top: 0_i32, height: 0_i32, min_content: 0_i32, max_content: 0_i32, dirty: clean, x: 0_i64, resolved_x: 0_i32, entry_slot: no_index, flow_at: no_index, block: no_index, beside: clean, broken_width: laid_never, broken_left: laid_never);
 }
 
-fn emit_begins(context: &Context, open: &Open) -> result: Result<unit, LayoutError> writes(context), writes(open) {
+fn emit_begins(context: &Context, open: &Open) -> result: Result<unit, LayoutError> reads(open.inlines.inner), writes(open.pieces), writes(open.emitted) {
   doc "Emits the Begin pieces of the inline boxes open around the open paragraph's next piece that this paragraph has not begun.";
   let open_count = open^.inlines.inner.len;
   let begun = open^.emitted;
@@ -234,14 +281,14 @@ fn emit_begins(context: &Context, open: &Open) -> result: Result<unit, LayoutErr
     for (k in begun..open_count) {
       let style = open^.inlines.inner[k];
       let begin = Piece::Begin(style: style);
-      let step = propagate push_or_fail::<Piece>(cell: &context^.pieces, value: begin);
+      let step = propagate push_or_fail::<Piece>(cell: &open^.pieces, value: begin);
     }
     set open^.emitted = open_count;
   }
   return Ok<unit, LayoutError>(value: unit);
 }
 
-fn add_piece(context: &Context, open: &Open, piece: Piece, size: u64) -> result: Result<unit, LayoutError> writes(context), writes(open) {
+fn add_piece(context: &Context, open: &Open, piece: Piece, size: u64) -> result: Result<unit, LayoutError> reads(open.inlines.inner), writes(open.pieces), writes(open.size), writes(open.emitted) {
   doc "Appends piece, standing for at most size scalar values, to the open paragraph, first emitting the Begin pieces of the inline boxes open around it that this paragraph has not begun; TooLarge past scalar_ceiling.";
   let begun = propagate emit_begins(context: context, open: open);
   let big = size > scalar_ceiling;
@@ -252,13 +299,13 @@ fn add_piece(context: &Context, open: &Open, piece: Piece, size: u64) -> result:
   if total > scalar_ceiling {
     return too_large::<unit>();
   }
-  let step = propagate push_or_fail::<Piece>(cell: &context^.pieces, value: piece);
+  let step = propagate push_or_fail::<Piece>(cell: &open^.pieces, value: piece);
   set open^.size = total;
   return Ok<unit, LayoutError>(value: unit);
 }
 
 fn end_paragraph(context: &Context, open: &Open) -> result: Result<unit, LayoutError> writes(context), writes(open) {
-  doc "Closes the inline boxes this paragraph began, moves the open paragraph into context's paragraphs and flow when it holds a piece, and starts an empty one after its pieces, whose inline boxes are begun again when content arrives.";
+  doc "Closes the inline boxes this paragraph began, moves the open paragraph into context's paragraphs and flow when it holds a piece, and starts an empty piece buffer, whose inline boxes are begun again when content arrives.";
   let begun = open^.emitted;
   let open_count = open^.inlines.inner.len;
   let closing = imin(begun, open_count);
@@ -269,25 +316,24 @@ fn end_paragraph(context: &Context, open: &Open) -> result: Result<unit, LayoutE
     if inside {
       let style = open^.inlines.inner[k];
       let end = Piece::End(style: style);
-      let pushed = propagate push_or_fail::<Piece>(cell: &context^.pieces, value: end);
+      let pushed = propagate push_or_fail::<Piece>(cell: &open^.pieces, value: end);
     }
   }
   set open^.emitted = 0_u64;
-  let recorded = context^.pieces.inner.len;
-  let first = open^.first;
-  if first < recorded {
+  let recorded = open^.pieces.inner.len;
+  if recorded > 0_u64 {
   } else {
-    set open^.first = recorded;
     set open^.size = 0_u64;
     return Ok<unit, LayoutError>(value: unit);
   }
-  let count = recorded - first;
   let reserve = open^.size;
   if reserve > scalar_ceiling {
     return too_large::<unit>();
   }
   let index = context^.paragraphs.inner.len;
-  let paragraph = new_paragraph(style: open^.style, first: first, count: count, reserve: reserve);
+  let pieces = box_slots_new::<Piece>(capacity: 0_u64);
+  swap(first: &pieces, second: &open^.pieces);
+  let paragraph = new_paragraph(style: open^.style, pieces: move pieces, reserve: reserve);
   let kept = propagate push_or_fail::<Paragraph>(cell: &context^.paragraphs, value: move paragraph);
   let small = index < 4294967295_u64;
   if small {
@@ -296,20 +342,19 @@ fn end_paragraph(context: &Context, open: &Open) -> result: Result<unit, LayoutE
   }
   let at = cvt::<u64, u32>(index);
   let item = Flow::Text(paragraph: at);
-  let listed = propagate push_or_fail::<Flow>(cell: &context^.flow, value: item);
-  set open^.first = recorded;
+  let listed = propagate append_flow(context: context, item: item);
   set open^.size = 0_u64;
   return Ok<unit, LayoutError>(value: unit);
 }
 
-fn begin_inline(context: &Context, open: &Open, style: StyleRef) -> result: Result<unit, LayoutError> writes(context), writes(open) {
+fn begin_inline(context: &Context, open: &Open, style: StyleRef) -> result: Result<unit, LayoutError> writes(open) {
   doc "Opens the inline box styled style: its Begin piece goes into the open paragraph at once, so an empty inline box still bounds a position.";
   let pushed = propagate push_or_fail::<StyleRef>(cell: &open^.inlines, value: style);
   let begun = propagate emit_begins(context: context, open: open);
   return Ok<unit, LayoutError>(value: unit);
 }
 
-fn end_inline(context: &Context, open: &Open) -> result: Result<unit, LayoutError> writes(context), writes(open) {
+fn end_inline(context: &Context, open: &Open) -> result: Result<unit, LayoutError> writes(open) {
   doc "Closes the innermost open inline box: its End piece goes into the open paragraph when this paragraph began it.";
   let open_count = open^.inlines.inner.len;
   if open_count == 0_u64 {
@@ -319,7 +364,7 @@ fn end_inline(context: &Context, open: &Open) -> result: Result<unit, LayoutErro
   let style = open^.inlines.inner[last];
   if open^.emitted >= open_count {
     let end = Piece::End(style: style);
-    let pushed = propagate push_or_fail::<Piece>(cell: &context^.pieces, value: end);
+    let pushed = propagate push_or_fail::<Piece>(cell: &open^.pieces, value: end);
     set open^.emitted = last;
   }
   let removed = take_back(window: &open^.inlines.inner);
@@ -338,7 +383,7 @@ fn current_style(open: &Open) -> style: StyleRef reads(open) {
   return block;
 }
 
-fn add_scalar_piece(context: &Context, open: &Open, value: u32, style: StyleRef) -> result: Result<unit, LayoutError> writes(context), writes(open) {
+fn add_scalar_piece(context: &Context, open: &Open, value: u32, style: StyleRef) -> result: Result<unit, LayoutError> writes(open) {
   doc "Adds one inserted scalar value to the open paragraph.";
   let piece = Piece::Scalar(value: value, style: style);
   let added = propagate add_piece(context: context, open: open, piece: piece, size: 1_u64);
@@ -392,8 +437,9 @@ fn restore_inlines(open: &Open, saved: &Box<Slots<StyleRef>>) -> result: unit re
   return unit;
 }
 
-fn open_splits(context: &Context, saved: &Box<Slots<StyleRef>>, flow_open: u64) -> first: u64 reads(saved), writes(context) {
-  doc "Records a block-in-inline for each element's inline box in saved around the block whose flow entry opens at flow_open, and returns the index of the first record, for close_splits.";
+fn open_splits(context: &Context, saved: &Box<Slots<StyleRef>>, flow_open: u64, opening: Flow) -> first: u64 reads(saved), writes(context) {
+  doc "Records a block-in-inline for each element's inline box in saved around the block whose flow entry opens at flow_open, retains its stable opening payload and marks that payload as a split head, then returns the index of the first record for close_splits.";
+  set context^.split_topology_known = False();
   let first = context^.splits.inner.len;
   let small = flow_open < 4294967295_u64;
   if small {
@@ -408,8 +454,33 @@ fn open_splits(context: &Context, saved: &Box<Slots<StyleRef>>, flow_open: u64) 
     let own = style.pseudo == no_pseudo;
     let shown = band(named, own);
     if shown {
-      let made = Split(owner: style.element, open: at, close: at, left: 0_i32, width: 0_i32, line: 0_i32);
+      let dirty_line = True();
+      let made = Split(owner: style.element, opening: opening, line_offset: 0_i64, line_dirty: dirty_line, open: at, close: at, left: 0_i32, width: 0_i32, line: 0_i32);
       let pushed = push_item::<Split>(cell: &context^.splits, value: made, ceiling: item_ceiling);
+    }
+  }
+  if context^.splits.inner.len > first {
+    match opening {
+      Open(block: b) => {
+        let block_at = cvt::<u32, u64>(b);
+        if block_at < context^.blocks.inner.len {
+          set context^.blocks.inner[block_at].split_head = True();
+        }
+      }
+      Child(context: c) => {
+        let child_at = cvt::<u32, u64>(c);
+        if child_at < context^.children.inner.len {
+          set context^.children.inner[child_at].split_head = True();
+        }
+      }
+      Close(..) => {
+      }
+      Text(..) => {
+      }
+      Float(..) => {
+      }
+      Out(..) => {
+      }
     }
   }
   return first;
@@ -417,6 +488,7 @@ fn open_splits(context: &Context, saved: &Box<Slots<StyleRef>>, flow_open: u64) 
 
 fn close_splits(context: &Context, first: u64, end: u64, flow_close: u64) -> result: unit writes(context) {
   doc "Gives the block-in-inline records from first to end, which open_splits made for one block, the flow entry flow_close that closes the block.";
+  set context^.split_topology_known = False();
   let small = flow_close < 4294967295_u64;
   if small {
   } else {
@@ -448,7 +520,7 @@ fn add_child_flow(context: &Context, child: Context, kind: u8) -> result: Result
   } else {
     give Flow::Out(context: at);
   }
-  let listed = propagate push_or_fail::<Flow>(cell: &context^.flow, value: item);
+  let listed = propagate append_flow(context: context, item: item);
   return Ok<unit, LayoutError>(value: unit);
 }
 
@@ -542,6 +614,7 @@ fn reset_list(document: &Document, walk: &Walk, node: NodeId) -> result: Result<
   } else {
     return Ok<unit, LayoutError>(value: unit);
   }
+  set walk^.effects = walk^.effects +sat 1_u64;
   let start = if ordered {
     give span_attribute(document: document, node: node, name: atom_start, fallback: 1_u32, least: 0_u32, most: 2147483647_u32);
   } else {
@@ -558,6 +631,15 @@ fn reset_list(document: &Document, walk: &Walk, node: NodeId) -> result: Result<
 fn apply_counters(styles: &Styles, walk: &Walk, style: StyleRef, list_item: Bool) -> result: Result<unit, LayoutError> reads(styles), writes(walk) {
   doc "Applies style's counter-reset, then counter-set, then counter-increment, as CSS Lists 3 orders them, instantiating a counter that is set or incremented without an instance in scope; a list item also increments list-item.";
   let group = content_of(styles: styles, style: style);
+  let reset_effect = group.counter_reset != 0_u32;
+  let set_effect = group.counter_set != 0_u32;
+  let increment_effect = group.counter_increment != 0_u32;
+  let writes_counter = bor(reset_effect, set_effect);
+  let bumps_counter = bor(increment_effect, list_item);
+  let has_effect = bor(writes_counter, bumps_counter);
+  if has_effect {
+    set walk^.effects = walk^.effects +sat 1_u64;
+  }
   let reset = cvt::<u32, u64>(group.counter_reset);
   if reset < styles^.counter_lists.inner.len {
     let list = styles^.counter_lists.inner[reset];
@@ -902,7 +984,7 @@ fn format_counter(atoms: &AtomTable, value: i32, style: u32, out: &Box<Slots<u32
   return unit;
 }
 
-fn add_scalars(context: &Context, open: &Open, scalars: &[u32], style: StyleRef) -> result: Result<unit, LayoutError> reads(scalars), writes(context), writes(open) {
+fn add_scalars(context: &Context, open: &Open, scalars: &[u32], style: StyleRef) -> result: Result<unit, LayoutError> reads(scalars), writes(open) {
   doc "Adds each scalar value to the open paragraph as an inserted one.";
   let count = scalars^.len;
   for (k in 0_u64..count) {
@@ -912,7 +994,7 @@ fn add_scalars(context: &Context, open: &Open, scalars: &[u32], style: StyleRef)
   return Ok<unit, LayoutError>(value: unit);
 }
 
-fn add_quote(styles: &Styles, context: &Context, open: &Open, style: StyleRef, depth: i32, closing: Bool) -> result: Result<unit, LayoutError> reads(styles), writes(context), writes(open) {
+fn add_quote(styles: &Styles, context: &Context, open: &Open, style: StyleRef, depth: i32, closing: Bool) -> result: Result<unit, LayoutError> reads(styles), writes(open) {
   doc "Adds the open or closing quote of nesting level depth from style's quotes: auto gives the English quotes, double at level 0 and single deeper; a list repeats its last pair past its end; none gives nothing.";
   let group = content_of(styles: styles, style: style);
   if group.quotes == quotes_none {
@@ -977,7 +1059,7 @@ fn add_quote(styles: &Styles, context: &Context, open: &Open, style: StyleRef, d
   return Ok<unit, LayoutError>(value: unit);
 }
 
-fn add_content(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &Walk, node: NodeId, style: StyleRef, context: &Context, open: &Open) -> result: Result<unit, LayoutError> reads(document), reads(styles), reads(atoms), writes(walk), writes(context), writes(open) {
+fn add_content(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &Walk, node: NodeId, style: StyleRef, context: &Context, open: &Open) -> result: Result<unit, LayoutError> reads(document), reads(styles), reads(atoms), writes(walk), writes(open) {
   doc "Adds the generated content of the pseudo-element styled style, of the element node, to the open paragraph: strings, counters in their counter styles, attribute values and quotes, which move the walk's quote depth.";
   let group = content_of(styles: styles, style: style);
   let id = cvt::<u32, u64>(group.content);
@@ -1001,6 +1083,7 @@ fn add_content(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &W
         let piece = Piece::Generated(start: item.text_start, end: item.text_end, style: style);
         let added = propagate add_piece(context: context, open: open, piece: piece, size: size);
       } else if item.kind == item_counter {
+        set walk^.effects = walk^.effects +sat 1_u64;
         let value = match find_counter(walk: walk, name: item.name.index) {
           Some(value: at) => {
             let count = walk^.counters.inner.len;
@@ -1019,6 +1102,7 @@ fn add_content(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &W
         let length = scalars.inner.len;
         let added = propagate add_scalars(context: context, open: open, scalars: &scalars.inner[0_u64..length], style: style);
       } else if item.kind == item_counters {
+        set walk^.effects = walk^.effects +sat 1_u64;
         let count = walk^.counters.inner.len;
         let shown = 0_u64;
         for (c in 0_u64..count) {
@@ -1059,11 +1143,13 @@ fn add_content(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &W
           }
         }
       } else if item.kind == item_open_quote {
+        set walk^.effects = walk^.effects +sat 1_u64;
         let depth = walk^.quote_depth;
         let no = False();
         let added = propagate add_quote(styles: styles, context: context, open: open, style: style, depth: depth, closing: no);
         set walk^.quote_depth = depth +sat 1_i32;
       } else if item.kind == item_close_quote {
+        set walk^.effects = walk^.effects +sat 1_u64;
         let raised = walk^.quote_depth;
         if raised > 0_i32 {
           let depth = raised - 1_i32;
@@ -1072,9 +1158,11 @@ fn add_content(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &W
           let added = propagate add_quote(styles: styles, context: context, open: open, style: style, depth: depth, closing: yes);
         }
       } else if item.kind == item_no_open_quote {
+        set walk^.effects = walk^.effects +sat 1_u64;
         let depth = walk^.quote_depth;
         set walk^.quote_depth = depth +sat 1_i32;
       } else if item.kind == item_no_close_quote {
+        set walk^.effects = walk^.effects +sat 1_u64;
         let raised = walk^.quote_depth;
         if raised > 0_i32 {
           set walk^.quote_depth = raised - 1_i32;
@@ -1085,14 +1173,11 @@ fn add_content(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &W
   return Ok<unit, LayoutError>(value: unit);
 }
 
-fn element_at(walk: &Walk, node: NodeId) -> element: u32 reads(walk) {
-  doc "Returns node's NodeId index, which a StyleRef names an element by, when node is an element of the traversal, or unlisted.";
-  let at = cvt::<u32, u64>(node.index);
-  if at < walk^.order.inner.len {
-    let found = walk^.order.inner[at];
-    if found != unlisted {
-      return node.index;
-    }
+fn element_at(styles: &Styles, node: NodeId) -> element: u32 reads(styles) {
+  doc "Resolves a NodeId through the style stage's stable order map without copying it into the builder.";
+  let at = element_position(styles: styles, element: node.index);
+  if at < styles^.elements.inner.len {
+    return node.index;
   }
   return unlisted;
 }
@@ -1307,7 +1392,7 @@ fn build_alt(document: &Document, styles: &Styles, node: NodeId, style: StyleRef
   if plain {
     set context^.natural = natural_alt_box;
   }
-  let open = new_open(style: style, first: 0_u64);
+  let open = new_open(style: style);
   let icon_style = anonymous_of(style: style);
   let icon = new_context(kind: ctx_replaced, style: icon_style);
   let drawn = propagate add_object(context: context, open: &open, child: move icon);
@@ -1523,7 +1608,7 @@ fn add_pseudo(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &Wa
     let unreplaced = False();
     let kind_of_box = inner_kind(display: group.display, replaced: unreplaced);
     let child = new_context(kind: kind_of_box, style: style);
-    let inner = new_open(style: style, first: 0_u64);
+    let inner = new_open(style: style);
     let added = propagate add_content(document: document, styles: styles, atoms: atoms, walk: walk, node: node, style: style, context: &child, open: &inner);
     let ended = propagate end_paragraph(context: &child, open: &inner);
     if out {
@@ -1598,7 +1683,7 @@ fn walk_children(document: &Document, styles: &Styles, atoms: &AtomTable, walk: 
 
 fn walk_element(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &Walk, node: NodeId, context: &Context, open: &Open) -> result: Result<unit, LayoutError> reads(document), reads(styles), reads(atoms), writes(walk), writes(context), writes(open) {
   doc "Adds the element node and its subtree to the flow context by its computed display, float and position: nothing for display none; its children for display contents; an inline box; an atomic inline, floated or positioned child context; an in-flow child context for a block-level box that establishes one; otherwise a block box of the context, bracketing its content.";
-  let element = element_at(walk: walk, node: node);
+  let element = element_at(styles: styles, node: node);
   if element == unlisted {
     return Ok<unit, LayoutError>(value: unit);
   }
@@ -1607,11 +1692,25 @@ fn walk_element(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &
   if group.display == display_none {
     return Ok<unit, LayoutError>(value: unit);
   }
+  let prior_effects = walk^.effects;
+  let prior_blocks = context^.blocks.inner.len;
+  let prior_children = context^.children.inner.len;
   set walk^.depth = walk^.depth +sat 1_u64;
   let item = group.display == display_list_item;
   let listed_reset = propagate reset_list(document: document, walk: walk, node: node);
   let counted = propagate apply_counters(styles: styles, walk: walk, style: style, list_item: item);
   let added = propagate place_element(document: document, styles: styles, atoms: atoms, walk: walk, node: node, element: element, style: style, group: group, context: context, open: open);
+  let unchanged_effects = prior_effects == walk^.effects;
+  let not_exhausted = walk^.effects < 18446744073709551615_u64;
+  let neutral_subtree = band(unchanged_effects, not_exhausted);
+  if prior_blocks < context^.blocks.inner.len {
+    set context^.blocks.inner[prior_blocks].neutral = neutral_subtree;
+  }
+  if prior_blocks == context^.blocks.inner.len {
+    if prior_children < context^.children.inner.len {
+      set context^.children.inner[prior_children].neutral = neutral_subtree;
+    }
+  }
   leave_scope(walk: walk);
   set walk^.depth = walk^.depth -sat 1_u64;
   return Ok<unit, LayoutError>(value: unit);
@@ -1690,13 +1789,16 @@ fn place_element(document: &Document, styles: &Styles, atoms: &AtomTable, walk: 
   let independent = bor(own, separate);
   if independent {
     let closed = propagate end_paragraph(context: context, open: open);
-    let flow_at = context^.flow.inner.len;
+    let flow_at = building_flow_length(context: context);
     let child = propagate build_box(document: document, styles: styles, atoms: atoms, walk: walk, node: node, element: element, style: style, kind: kind);
+    let child_slot = context^.children.inner.len;
     let placed = propagate add_child_flow(context: context, child: move child, kind: 0_u8);
+    let child_index = flow_index(at: child_slot);
+    let child_opening = Flow::Child(context: child_index);
     let around = open^.inlines.inner.len;
     if around > 0_u64 {
       let saved = stash_inlines(open: open);
-      let first = open_splits(context: context, saved: &saved, flow_open: flow_at);
+      let first = open_splits(context: context, saved: &saved, flow_open: flow_at, opening: child_opening);
       restore_inlines(open: open, saved: &saved);
     }
     return Ok<unit, LayoutError>(value: unit);
@@ -1709,13 +1811,13 @@ fn place_element(document: &Document, styles: &Styles, atoms: &AtomTable, walk: 
     return too_large::<unit>();
   }
   let marker = outside_marker(styles: styles, atoms: atoms, style: style, display: group.display);
-  let block = Block(style: style, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32, marker: marker, parent: no_index, flow_at: no_index, inner_x: 0_i32, held_y: 0_i32, avail_left: 0_i32, avail_width: 0_i32, content_left: 0_i32, content_width: 0_i32);
-  let kept = propagate push_or_fail::<Block>(cell: &context^.blocks, value: block);
+  let block = new_block(style: style, marker: marker);
+  let kept = propagate push_or_fail::<Block>(cell: &context^.blocks, value: move block);
   let at = cvt::<u64, u32>(index);
-  let flow_open = context^.flow.inner.len;
+  let flow_open = building_flow_length(context: context);
   let opening = Flow::Open(block: at);
-  let opened = propagate push_or_fail::<Flow>(cell: &context^.flow, value: opening);
-  let first_split = open_splits(context: context, saved: &saved, flow_open: flow_open);
+  let opened = propagate append_flow(context: context, item: opening);
+  let first_split = open_splits(context: context, saved: &saved, flow_open: flow_open, opening: opening);
   let split_end = context^.splits.inner.len;
   let outer = open^.style;
   set open^.style = style;
@@ -1725,9 +1827,9 @@ fn place_element(document: &Document, styles: &Styles, atoms: &AtomTable, walk: 
   let after = propagate add_pseudo(document: document, styles: styles, atoms: atoms, walk: walk, node: node, element: element, kind: pseudo_after, context: context, open: open);
   let ended = propagate end_paragraph(context: context, open: open);
   set open^.style = outer;
-  let flow_close = context^.flow.inner.len;
+  let flow_close = building_flow_length(context: context);
   let closing = Flow::Close(block: at);
-  let closed_block = propagate push_or_fail::<Flow>(cell: &context^.flow, value: closing);
+  let closed_block = propagate append_flow(context: context, item: closing);
   close_splits(context: context, first: first_split, end: split_end, flow_close: flow_close);
   restore_inlines(open: open, saved: &saved);
   return Ok<unit, LayoutError>(value: unit);
@@ -1735,11 +1837,14 @@ fn place_element(document: &Document, styles: &Styles, atoms: &AtomTable, walk: 
 
 fn build_box(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &Walk, node: NodeId, element: u32, style: StyleRef, kind: u8) -> result: Result<Context, LayoutError> reads(document), reads(styles), reads(atoms), writes(walk) {
   doc "Builds the context of kind that the element node establishes (build_box_body) and records in it the walk's state as it began and as it ended (entry and exit).";
+  let prior_effects = walk^.effects;
   let entered = walk_point(walk: walk);
   let built = propagate build_box_body(document: document, styles: styles, atoms: atoms, walk: walk, node: node, element: element, style: style, kind: kind);
   let left = walk_point(walk: walk);
   set built.entered = move entered;
   set built.left = move left;
+  let neutral = prior_effects == walk^.effects;
+  set built.neutral = neutral;
   return Ok<Context, LayoutError>(value: move built);
 }
 
@@ -1794,7 +1899,7 @@ fn build_box_body(document: &Document, styles: &Styles, atoms: &AtomTable, walk:
     let built = propagate build_table(document: document, styles: styles, atoms: atoms, walk: walk, node: node, element: element, table: &context);
     return Ok<Context, LayoutError>(value: move context);
   }
-  let open = new_open(style: style, first: 0_u64);
+  let open = new_open(style: style);
   let marked = propagate add_inside_marker(styles: styles, atoms: atoms, walk: walk, style: style, context: &context, open: &open);
   let before = propagate add_pseudo(document: document, styles: styles, atoms: atoms, walk: walk, node: node, element: element, kind: pseudo_before, context: &context, open: &open);
   let inside = propagate walk_children(document: document, styles: styles, atoms: atoms, walk: walk, parent: node, context: &context, open: &open);
@@ -1846,7 +1951,7 @@ fn add_item_pseudo(document: &Document, styles: &Styles, atoms: &AtomTable, walk
   let unreplaced = False();
   let kind_of_box = inner_kind(display: group.display, replaced: unreplaced);
   let child = new_context(kind: kind_of_box, style: style);
-  let inner = new_open(style: style, first: 0_u64);
+  let inner = new_open(style: style);
   let added = propagate add_content(document: document, styles: styles, atoms: atoms, walk: walk, node: node, style: style, context: &child, open: &inner);
   let ended = propagate end_paragraph(context: &child, open: &inner);
   let out_absolute = group.position == position_absolute;
@@ -1910,7 +2015,7 @@ fn build_item_children(document: &Document, styles: &Styles, atoms: &AtomTable, 
           } else {
             let style = anonymous_of(style: container^.style);
             let child = new_context(kind: ctx_flow, style: style);
-            let open = new_open(style: style, first: 0_u64);
+            let open = new_open(style: style);
             let size = end - start;
             let piece = Piece::Bytes(start: span^.start, end: span^.end, style: style, node: node.index);
             let added = propagate add_piece(context: &child, open: &open, piece: piece, size: size);
@@ -1920,7 +2025,7 @@ fn build_item_children(document: &Document, styles: &Styles, atoms: &AtomTable, 
         }
       }
       Element(..) => {
-        let element = element_at(walk: walk, node: node);
+        let element = element_at(styles: styles, node: node);
         if element != unlisted {
           let style = element_ref(element: element);
           let group = box_of(styles: styles, style: style);
@@ -2044,7 +2149,7 @@ fn add_columns(table: &Context, style: StyleRef, styled: Bool, group: StyleRef, 
   return Ok<unit, LayoutError>(value: unit);
 }
 
-fn add_column_group(document: &Document, styles: &Styles, walk: &Walk, node: NodeId, style: StyleRef, table: &Context) -> result: Result<unit, LayoutError> reads(document), reads(styles), reads(walk), writes(table) {
+fn add_column_group(document: &Document, styles: &Styles, walk: &Walk, node: NodeId, style: StyleRef, table: &Context) -> result: Result<unit, LayoutError> reads(document), reads(styles), writes(table) {
   doc "Adds a column group's columns: one per span of each col child, or its own span of columns when it has no col child.";
   let nodes = document^.nodes.inner.len;
   let index = cvt::<u32, u64>(node.index);
@@ -2069,7 +2174,7 @@ fn add_column_group(document: &Document, styles: &Styles, walk: &Walk, node: Nod
       return inconsistent::<unit>();
     }
     set cursor = document^.nodes.inner[at].links.next_sibling;
-    let element = element_at(walk: walk, node: child);
+    let element = element_at(styles: styles, node: child);
     if element != unlisted {
       let child_style = element_ref(element: element);
       let group = box_of(styles: styles, style: child_style);
@@ -2193,7 +2298,7 @@ fn walk_run(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &Walk
         }
       }
       Element(..) => {
-        let element = element_at(walk: walk, node: node);
+        let element = element_at(styles: styles, node: node);
         if element != unlisted {
           let style = element_ref(element: element);
           let group = box_of(styles: styles, style: style);
@@ -2266,7 +2371,7 @@ fn add_anonymous_row(document: &Document, styles: &Styles, atoms: &AtomTable, wa
             skip_text(walk: walk, node: child);
           } else {
             let content = new_context(kind: ctx_flow, style: row_style);
-            let open = new_open(style: row_style, first: 0_u64);
+            let open = new_open(style: row_style);
             let rest = propagate walk_run(document: document, styles: styles, atoms: atoms, walk: walk, first: child, context: &content, open: &open);
             let ended = propagate end_paragraph(context: &content, open: &open);
             let next = propagate place_cell(table: table, busy: busy, row: row, column: column, content: move content, row_span: 1_u32, column_span: 1_u32);
@@ -2276,7 +2381,7 @@ fn add_anonymous_row(document: &Document, styles: &Styles, atoms: &AtomTable, wa
         }
       }
       Element(..) => {
-        let element = element_at(walk: walk, node: child);
+        let element = element_at(styles: styles, node: child);
         if element != unlisted {
           let style = element_ref(element: element);
           let box_group = box_of(styles: styles, style: style);
@@ -2304,7 +2409,7 @@ fn add_anonymous_row(document: &Document, styles: &Styles, atoms: &AtomTable, wa
             set column = next;
           } else {
             let content = new_context(kind: ctx_flow, style: row_style);
-            let open = new_open(style: row_style, first: 0_u64);
+            let open = new_open(style: row_style);
             let rest = propagate walk_run(document: document, styles: styles, atoms: atoms, walk: walk, first: child, context: &content, open: &open);
             let ended = propagate end_paragraph(context: &content, open: &open);
             let next = propagate place_cell(table: table, busy: busy, row: row, column: column, content: move content, row_span: 1_u32, column_span: 1_u32);
@@ -2360,7 +2465,7 @@ fn add_row(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &Walk,
       return inconsistent::<unit>();
     }
     set cursor = document^.nodes.inner[at].links.next_sibling;
-    let element = element_at(walk: walk, node: child);
+    let element = element_at(styles: styles, node: child);
     if element != unlisted {
       let cell_style = element_ref(element: element);
       let cell_group = box_of(styles: styles, style: cell_style);
@@ -2410,7 +2515,7 @@ fn add_group(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &Wal
       return inconsistent::<unit>();
     }
     set cursor = document^.nodes.inner[at].links.next_sibling;
-    let element = element_at(walk: walk, node: child);
+    let element = element_at(styles: styles, node: child);
     if element != unlisted {
       let row_style = element_ref(element: element);
       let row_group = box_of(styles: styles, style: row_style);
@@ -2492,7 +2597,7 @@ fn build_table(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &W
       return inconsistent::<unit>();
     }
     set scan = document^.nodes.inner[at].links.next_sibling;
-    let child_element = element_at(walk: walk, node: child);
+    let child_element = element_at(styles: styles, node: child);
     if child_element != unlisted {
       let child_style = element_ref(element: child_element);
       let group = box_of(styles: styles, style: child_style);
@@ -2513,7 +2618,7 @@ fn build_table(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &W
   let busy = box_slots_new::<u32>(capacity: 0_u64);
   if header != no_index {
     let header_node = NodeId(index: header);
-    let header_element = element_at(walk: walk, node: header_node);
+    let header_element = element_at(styles: styles, node: header_node);
     let header_style = element_ref(element: header_element);
     set walk^.depth = walk^.depth +sat 1_u64;
     let added = propagate add_group(document: document, styles: styles, atoms: atoms, walk: walk, node: header_node, style: header_style, group_kind: kind_header, table: table, busy: &busy);
@@ -2538,7 +2643,7 @@ fn build_table(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &W
     let chosen_header = child.index == header;
     let chosen_footer = child.index == footer;
     let chosen = bor(chosen_header, chosen_footer);
-    let child_element = element_at(walk: walk, node: child);
+    let child_element = element_at(styles: styles, node: child);
     let listed = child_element != unlisted;
     let fresh = bnot(chosen);
     let usable = band(listed, fresh);
@@ -2622,7 +2727,7 @@ fn build_table(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &W
   }
   if footer != no_index {
     let footer_node = NodeId(index: footer);
-    let footer_element = element_at(walk: walk, node: footer_node);
+    let footer_element = element_at(styles: styles, node: footer_node);
     let footer_style = element_ref(element: footer_element);
     set walk^.depth = walk^.depth +sat 1_u64;
     let added = propagate add_group(document: document, styles: styles, atoms: atoms, walk: walk, node: footer_node, style: footer_style, group_kind: kind_footer, table: table, busy: &busy);
@@ -2642,10 +2747,34 @@ fn build_table(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &W
   return Ok<unit, LayoutError>(value: unit);
 }
 
+fn finish_tree_sequences(context: &Context) -> result: unit writes(context.entries), writes(context.blocks.inner), writes(context.children.inner) {
+  doc "Seals a completed builder tree: block owners and child contexts are independent counted iterations. Only pending Close weights depended on the document-order walk.";
+  finish_sequence(sequence: &context^.entries);
+  let blocks = context^.blocks.inner.len;
+  for (at in 0_u64..blocks) {
+    finish_sequence(sequence: &context^.blocks.inner[at].entries);
+  }
+  let children = context^.children.inner.len;
+  for (at in 0_u64..children) {
+    finish_tree_sequences(context: &context^.children.inner[at]);
+  }
+  return unit;
+}
+
 fn count_tree(context: &Context) -> (contexts: u64, paragraphs: u64) reads(context) {
   doc "Counts the contexts and paragraphs of the tree rooted at context.";
+  if context^.retired {
+    return 0_u64, 0_u64;
+  }
   let contexts = 1_u64;
-  let paragraphs = context^.paragraphs.inner.len;
+  let paragraphs = 0_u64;
+  let slots = context^.paragraphs.inner.len;
+  for (p in 0_u64..slots) {
+    if context^.paragraphs.inner[p].retired {
+    } else {
+      set paragraphs = paragraphs +sat 1_u64;
+    }
+  }
   let count = context^.children.inner.len;
   for (k in 0_u64..count) {
     let (inner_contexts, inner_paragraphs) = count_tree(context: &context^.children.inner[k]);
@@ -2655,21 +2784,18 @@ fn count_tree(context: &Context) -> (contexts: u64, paragraphs: u64) reads(conte
   return contexts, paragraphs;
 }
 
-fn record_units(context: &Context, serial: u32, listing: &Box<Array<TextUnit>>) -> result: unit reads(context), writes(listing) {
-  doc "Records, for each text node whose data a paragraph of context reads (a Bytes piece with a node), the context's serial, the piece and the paragraph in listing; consecutive pieces of one node in one paragraph extend its count.";
+fn record_units(context: &Context, serial: u32, paragraph_base: u32, listing: &RouteTable<TextUnit>) -> result: unit reads(context), writes(listing) {
+  doc "Records, for each text node whose data a paragraph of context reads (a Bytes piece with a node), the context's stable directory slot, the paragraph-local piece offset and the paragraph in listing; consecutive pieces of one node in one paragraph extend its count.";
   let paragraphs = context^.paragraphs.inner.len;
-  let total = context^.pieces.inner.len;
-  let known = listing^.inner.len;
+  let known = item_ceiling;
   for (p in 0_u64..paragraphs) {
-    let first = context^.paragraphs.inner[p].first;
-    let count = context^.paragraphs.inner[p].count;
-    let end_raw = first +sat count;
-    let end = imin(end_raw, total);
+    let count = context^.paragraphs.inner[p].pieces.inner.len;
     let small = p < 4294967295_u64;
     if small {
-      let paragraph = cvt::<u64, u32>(p);
-      for (k in first..end) {
-        let piece = context^.pieces.inner[k];
+      let local_paragraph = cvt::<u64, u32>(p);
+      let paragraph = local_paragraph +sat paragraph_base;
+      for (k in 0_u64..count) {
+        let piece = context^.paragraphs.inner[p].pieces.inner[k];
         match piece {
           Bytes(node: source, ..) => {
             let at = cvt::<u32, u64>(source);
@@ -2680,7 +2806,8 @@ fn record_units(context: &Context, serial: u32, listing: &Box<Array<TextUnit>>) 
             let recorded = band(usable, narrow);
             if recorded {
               let piece_at = cvt::<u64, u32>(k);
-              let held = listing^.inner[at];
+              let route_value_1 = route_read::<TextUnit>(table: listing, at: at);
+              let held = route_value_1;
               let same_context = held.serial == serial;
               let same_paragraph = held.paragraph == paragraph;
               let next_piece = held.piece +sat held.count;
@@ -2688,9 +2815,11 @@ fn record_units(context: &Context, serial: u32, listing: &Box<Array<TextUnit>>) 
               let same_place = band(same_context, same_paragraph);
               let extends = band(same_place, adjacent);
               if extends {
-                set listing^.inner[at].count = held.count +sat 1_u32;
+                set held.count = held.count +sat 1_u32;
+                route_write::<TextUnit>(table: listing, at: at, value: held);
               } else {
-                set listing^.inner[at] = TextUnit(serial: serial, piece: piece_at, count: 1_u32, paragraph: paragraph);
+                let route_value = TextUnit(serial: serial, piece: piece_at, count: 1_u32, paragraph: paragraph);
+                route_write::<TextUnit>(table: listing, at: at, value: route_value);
               }
             }
           }
@@ -2711,35 +2840,58 @@ fn record_units(context: &Context, serial: u32, listing: &Box<Array<TextUnit>>) 
   return unit;
 }
 
-fn record_tree(context: &Context, parent: u32, child: u32, paths: &Box<Slots<ContextPath>>, listing: &Box<Array<TextUnit>>, uses: &Box<Array<StyleUse>>, root: u32) -> result: Result<unit, LayoutError> reads(context), writes(paths), writes(listing), writes(uses) {
-  doc "Gives context the next serial of a preorder walk of the owned tree, its position in paths, recording its parent's serial and its index among its parent's children, records the text nodes its paragraphs read (record_units) and where it reads elements' styles (record_uses), then does the same for its children in order. TooLarge past no_index contexts.";
-  let next = paths^.inner.len;
-  let small = next < 4294967294_u64;
-  if small {
+fn record_tree(context: &Context, parent: u32, child: u32, paths: &RouteTable<ContextPath>, listing: &RouteTable<TextUnit>, uses: &RouteTable<StyleUse>, routes: &RouteTable<StyleRoute>, context_of: &RouteTable<u32>, root: u32) -> result: Result<unit, LayoutError> writes(context), writes(paths), writes(listing), writes(uses), writes(routes), writes(context_of) {
+  doc "Publishes an unpublished subtree in fresh directory slots; retained contexts are never passed here. Records checked parent/child links, text units, explicit style routes and establishing-element lookup.";
+  if context^.slot != no_index {
+    return inconsistent::<unit>();
+  }
+  let next = paths^.len;
+  if next < 4294967294_u64 {
   } else {
     return too_large::<unit>();
   }
   let serial = cvt::<u64, u32>(next);
-  let place = ContextPath(parent: parent, child: child);
-  let pushed = propagate push_or_fail::<ContextPath>(cell: paths, value: place);
-  record_units(context: context, serial: serial, listing: listing);
-  record_uses(context: context, serial: serial, uses: uses, root: root);
+  let yes = True();
+  let place = ContextPath(live: yes, parent: parent, child: child);
+  let pushed = propagate route_push::<ContextPath>(table: paths, value: place);
+  set context^.slot = serial;
+  rebase_height_context(record: &context^.height_proof, serial: parent);
+  set context^.height_input.context = parent;
+  let blocks = context^.blocks.inner.len;
+  for (at in 0_u64..blocks) {
+    rebase_height_context(record: &context^.blocks.inner[at].height_proof, serial: serial);
+  }
+  let style = context^.style;
+  let own = bnot(style.anonymous);
+  let element = style.pseudo == no_pseudo;
+  let named = style.element != root_element;
+  let plain = band(own, element);
+  let established = band(plain, named);
+  if established {
+    let at = cvt::<u32, u64>(style.element);
+    if at < item_ceiling {
+      let route_value_2 = route_read::<u32>(table: context_of, at: at);
+      if route_value_2 == no_index {
+        route_write::<u32>(table: context_of, at: at, value: serial);
+      }
+    }
+  }
+  record_units(context: context, serial: serial, paragraph_base: 0_u32, listing: listing);
+  let used = propagate record_uses(context: context, serial: serial, block_base: 0_u32, paragraph_base: 0_u32, own: yes, uses: uses, routes: routes, root: root);
   let children = context^.children.inner.len;
   for (k in 0_u64..children) {
     let narrow = k < 4294967295_u64;
     if narrow {
       let index = cvt::<u64, u32>(k);
-      let recorded = propagate record_tree(context: &context^.children.inner[k], parent: serial, child: index, paths: paths, listing: listing, uses: uses, root: root);
+      let recorded = propagate record_tree(context: &context^.children.inner[k], parent: serial, child: index, paths: paths, listing: listing, uses: uses, routes: routes, context_of: context_of, root: root);
     }
   }
   return Ok<unit, LayoutError>(value: unit);
 }
 
 fn unused_style() -> made: StyleUse pure {
-  doc "The uses of an element the tree does not read.";
-  let no = False();
-  let made = StyleUse(serial: no_index, structural: no, first: 0_u32, end: 0_u32, owner: no_index, block: no_index, shared: no);
-  return made;
+  doc "The empty list of style routes.";
+  return StyleUse(head: no_index);
 }
 
 fn use_element(style: StyleRef, root: u32) -> element: u32 pure {
@@ -2750,49 +2902,40 @@ fn use_element(style: StyleRef, root: u32) -> element: u32 pure {
   return style.element;
 }
 
-fn note_use(uses: &Box<Array<StyleUse>>, style: StyleRef, root: u32, serial: u32, structural: Bool, block: u32, paragraph: u32) -> result: unit writes(uses) {
-  doc "Records that the context serial reads style's element, for its geometry when structural, as the style of its block block unless it is no_index (a second block makes it structural), and in paragraph unless it is no_index; a second context marks the element shared.";
+fn note_use(uses: &RouteTable<StyleUse>, routes: &RouteTable<StyleRoute>, style: StyleRef, root: u32, serial: u32, structural: Bool, block: u32, paragraph: u32, owner: Bool) -> result: Result<unit, LayoutError> writes(uses), writes(routes) {
+  doc "Adds an explicit context, block or paragraph use to the element's list. Repeated reads by one paragraph share its route; contexts with the same supplier keep separate routes.";
   let element = use_element(style: style, root: root);
   let at = cvt::<u32, u64>(element);
-  if at < uses^.inner.len {
+  if at < item_ceiling {
   } else {
-    return unit;
+    return Ok<unit, LayoutError>(value: unit);
   }
-  let held = uses^.inner[at];
-  if held.serial == no_index {
-    set uses^.inner[at].serial = serial;
-    set uses^.inner[at].structural = structural;
-    set uses^.inner[at].block = block;
-    if paragraph != no_index {
-      set uses^.inner[at].first = paragraph;
-      set uses^.inner[at].end = paragraph +sat 1_u32;
-    }
-    return unit;
-  }
-  if held.serial != serial {
-    set uses^.inner[at].shared = True();
-    return unit;
-  }
-  set uses^.inner[at].structural = bor(held.structural, structural);
-  if block != no_index {
-    if held.block == no_index {
-      set uses^.inner[at].block = block;
-    } else if held.block != block {
-      set uses^.inner[at].structural = True();
-    }
-  }
+  let route_value_3 = route_read::<StyleUse>(table: uses, at: at);
+  let head = route_value_3.head;
   if paragraph != no_index {
-    let empty = held.first == held.end;
-    if empty {
-      set uses^.inner[at].first = paragraph;
-      set uses^.inner[at].end = paragraph +sat 1_u32;
-    } else {
-      set uses^.inner[at].first = imin(held.first, paragraph);
-      let after = paragraph +sat 1_u32;
-      set uses^.inner[at].end = imax(held.end, after);
+    let previous = cvt::<u32, u64>(head);
+    if previous < routes^.len {
+      let route_value_4 = route_read::<StyleRoute>(table: routes, at: previous);
+      let held = route_value_4;
+      let same_context = held.serial == serial;
+      let same_paragraph = held.paragraph == paragraph;
+      let duplicate = band(same_context, same_paragraph);
+      if duplicate {
+        return Ok<unit, LayoutError>(value: unit);
+      }
     }
   }
-  return unit;
+  let next = routes^.len;
+  if next < 4294967295_u64 {
+  } else {
+    return too_large::<unit>();
+  }
+  let route = StyleRoute(serial: serial, structural: structural, block: block, paragraph: paragraph, owner: owner, next: head);
+  let pushed = propagate route_push::<StyleRoute>(table: routes, value: route);
+  let route_head = cvt::<u64, u32>(next);
+  let updated_use = StyleUse(head: route_head);
+  route_write::<StyleUse>(table: uses, at: at, value: updated_use);
+  return Ok<unit, LayoutError>(value: unit);
 }
 
 fn piece_style(piece: Piece) -> style: StyleRef pure {
@@ -2819,92 +2962,84 @@ fn piece_style(piece: Piece) -> style: StyleRef pure {
   }
 }
 
-fn record_uses(context: &Context, serial: u32, uses: &Box<Array<StyleUse>>, root: u32) -> result: unit reads(context), writes(uses) {
-  doc "Records the uses of elements' styles by context serial: its own style as the owner's, its blocks', rows' and columns' as structural, and each paragraph's strut and pieces as that paragraph's; a child context's own style, which places it, is reached through that child's owner use, whose marking marks its parent.";
-  let own = use_element(style: context^.style, root: root);
-  let own_at = cvt::<u32, u64>(own);
-  if own_at < uses^.inner.len {
-    set uses^.inner[own_at].owner = serial;
-  }
+fn record_uses(context: &Context, serial: u32, block_base: u32, paragraph_base: u32, own: Bool, uses: &RouteTable<StyleUse>, routes: &RouteTable<StyleRoute>, root: u32) -> result: Result<unit, LayoutError> reads(context), writes(uses), writes(routes) {
+  doc "Records the uses of elements' styles by context serial: its own style as the owner's, its blocks', rows' and columns' as structural, and each paragraph's strut and pieces as that paragraph's; a child context's own style, which places it, is reached through that child's owner use, whose marking marks its parent. Consecutive pieces supplied by the same element already share the preceding paragraph route; no writer between them can change that element's head.";
   let yes = True();
   let no = False();
+  if own {
+    let owned = propagate note_use(uses: uses, routes: routes, style: context^.style, root: root, serial: serial, structural: yes, block: no_index, paragraph: no_index, owner: yes);
+  }
   let blocks = context^.blocks.inner.len;
   for (i in 0_u64..blocks) {
-    let narrow_block = cvt.wrap::<u64, u32>(i);
-    note_use(uses: uses, style: context^.blocks.inner[i].style, root: root, serial: serial, structural: no, block: narrow_block, paragraph: no_index);
+    let local_block = cvt.wrap::<u64, u32>(i);
+    let narrow_block = local_block +sat block_base;
+    let noted = propagate note_use(uses: uses, routes: routes, style: context^.blocks.inner[i].style, root: root, serial: serial, structural: no, block: narrow_block, paragraph: no_index, owner: no);
   }
   let rows = context^.rows.inner.len;
   for (i in 0_u64..rows) {
     let row = context^.rows.inner[i];
-    note_use(uses: uses, style: row.style, root: root, serial: serial, structural: yes, block: no_index, paragraph: no_index);
-    note_use(uses: uses, style: row.group, root: root, serial: serial, structural: yes, block: no_index, paragraph: no_index);
+    let noted = propagate note_use(uses: uses, routes: routes, style: row.style, root: root, serial: serial, structural: yes, block: no_index, paragraph: no_index, owner: no);
+    let group_noted = propagate note_use(uses: uses, routes: routes, style: row.group, root: root, serial: serial, structural: yes, block: no_index, paragraph: no_index, owner: no);
   }
   let columns = context^.columns.inner.len;
   for (i in 0_u64..columns) {
     let column = context^.columns.inner[i];
     if column.styled {
-      note_use(uses: uses, style: column.style, root: root, serial: serial, structural: yes, block: no_index, paragraph: no_index);
+      let noted = propagate note_use(uses: uses, routes: routes, style: column.style, root: root, serial: serial, structural: yes, block: no_index, paragraph: no_index, owner: no);
     }
-    note_use(uses: uses, style: column.group, root: root, serial: serial, structural: yes, block: no_index, paragraph: no_index);
+    let noted = propagate note_use(uses: uses, routes: routes, style: column.group, root: root, serial: serial, structural: yes, block: no_index, paragraph: no_index, owner: no);
   }
   let paragraphs = context^.paragraphs.inner.len;
-  let total = context^.pieces.inner.len;
   for (p in 0_u64..paragraphs) {
     let small = p < 4294967295_u64;
     if small {
-      let paragraph = cvt::<u64, u32>(p);
-      note_use(uses: uses, style: context^.paragraphs.inner[p].style, root: root, serial: serial, structural: no, block: no_index, paragraph: paragraph);
-      let first = context^.paragraphs.inner[p].first;
-      let count = context^.paragraphs.inner[p].count;
-      let end_raw = first +sat count;
-      let end = imin(end_raw, total);
-      for (k in first..end) {
-        let style = piece_style(piece: context^.pieces.inner[k]);
-        note_use(uses: uses, style: style, root: root, serial: serial, structural: no, block: no_index, paragraph: paragraph);
+      let local_paragraph = cvt::<u64, u32>(p);
+      let paragraph = local_paragraph +sat paragraph_base;
+      let noted = propagate note_use(uses: uses, routes: routes, style: context^.paragraphs.inner[p].style, root: root, serial: serial, structural: no, block: no_index, paragraph: paragraph, owner: no);
+      let previous_supplier = use_element(style: context^.paragraphs.inner[p].style, root: root);
+      let count = context^.paragraphs.inner[p].pieces.inner.len;
+      for (k in 0_u64..count) {
+        let style = piece_style(piece: context^.paragraphs.inner[p].pieces.inner[k]);
+        let supplier = use_element(style: style, root: root);
+        if supplier != previous_supplier {
+          let noted_piece = propagate note_use(uses: uses, routes: routes, style: style, root: root, serial: serial, structural: no, block: no_index, paragraph: paragraph, owner: no);
+        }
+        set previous_supplier = supplier;
       }
     }
   }
+  return Ok<unit, LayoutError>(value: unit);
+}
+
+fn record_skipped(walk: &Walk, listing: &RouteTable<TextUnit>) -> result: unit reads(walk), writes(listing) {
+  doc "Publishes the builder's exact skipped-text set through the shared targeted recorder.";
+  let count = walk^.skipped.inner.len;
+  record_skipped_nodes(nodes: &walk^.skipped.inner[0_u64..count], listing: listing);
   return unit;
 }
 
-fn record_skipped(walk: &Walk, listing: &Box<Array<TextUnit>>) -> result: unit reads(walk), writes(listing) {
-  doc "Gives each text node the walk met without making a piece of it, and that no paragraph reads, the serial skipped_text in listing.";
-  let count = walk^.skipped.inner.len;
-  let known = listing^.inner.len;
+fn record_skipped_nodes(nodes: &[u32], listing: &RouteTable<TextUnit>) -> result: unit reads(nodes), writes(listing) {
+  doc "Keeps skipped whitespace distinct from absent routes so a later topology-changing text edit refuses.";
+  let count = nodes^.len;
   for (k in 0_u64..count) {
-    let at = cvt::<u32, u64>(walk^.skipped.inner[k]);
-    if at < known {
-      if listing^.inner[at].serial == no_index {
-        set listing^.inner[at].serial = skipped_text;
-      }
+    let at = cvt::<u32, u64>(nodes^[k]);
+    let held = route_read::<TextUnit>(table: listing, at: at);
+    if held.serial == no_index {
+      set held.serial = skipped_text;
+      route_write::<TextUnit>(table: listing, at: at, value: held);
     }
   }
   return unit;
 }
 
 fn build_boxes(document: &Document, traversal: &Traversal, styles: &Styles, atoms: &AtomTable, viewport: Viewport) -> result: Result<Layout, LayoutError> reads(document), reads(traversal), reads(styles), reads(atoms) {
-  doc "Maps each element's node to its preorder index and walks the document from its root into the initial containing block, a flow context whose root element is a child context of it, since the root element's margins do not collapse with its children's (CSS 2.2 8.3.1); every paragraph keeps its pieces and none is prepared.";
+  doc "Uses the style stage's stable element map and walks the document from its root into the initial containing block, a flow context whose root element is a child context of it, since the root element's margins do not collapse with its children's (CSS 2.2 8.3.1); every paragraph keeps its pieces and none is prepared.";
   let nodes = document^.nodes.inner.len;
   if nodes <= item_ceiling {
   } else {
     return too_large::<Layout>();
   }
-  let order = box_array_filled::<u32>(count: nodes, value: unlisted);
   let count = traversal^.elements.inner.len;
-  if count < 4294967295_u64 {
-  } else {
-    return too_large::<Layout>();
-  }
-  for (position in 0_u64..count) {
-    let element = traversal^.elements.inner[position];
-    let at = cvt::<u32, u64>(element.index);
-    if at < nodes {
-      set order.inner[at] = cvt::<u64, u32>(position);
-    } else if element.index == unlisted {
-    } else {
-      return inconsistent::<Layout>();
-    }
-  }
   let word_n = list_item_word.len;
   let list_item_atom = atom_find(table: atoms, name: &list_item_word[0_u64..word_n]);
   let list_item = match list_item_atom {
@@ -2917,32 +3052,38 @@ fn build_boxes(document: &Document, traversal: &Traversal, styles: &Styles, atom
   }
   let counters = box_slots_new::<Counter>(capacity: 0_u64);
   let skipped = box_slots_new::<u32>(capacity: 0_u64);
-  let walk = Walk(order: move order, counters: move counters, quote_depth: 0_i32, depth: 0_u64, list_item: list_item, skipped: move skipped);
+  let walk = Walk(effects: 0_u64, counters: move counters, quote_depth: 0_i32, depth: 0_u64, list_item: list_item, skipped: move skipped);
   let root_style = element_ref(element: root_element);
   let style = anonymous_of(style: root_style);
   let initial = new_context(kind: ctx_flow, style: style);
-  let open = new_open(style: style, first: 0_u64);
+  let open = new_open(style: style);
   let root = NodeId(index: 0_u32);
   let walked = propagate walk_children(document: document, styles: styles, atoms: atoms, walk: &walk, parent: root, context: &initial, open: &open);
   let ended = propagate end_paragraph(context: &initial, open: &open);
+  finish_tree_sequences(context: &initial);
   let (contexts, paragraphs) = count_tree(context: &initial);
   let unreached = TextUnit(serial: no_index, piece: 0_u32, count: 0_u32, paragraph: no_index);
-  let listing = box_array_filled::<TextUnit>(count: nodes, value: unreached);
+  let listing = route_table::<TextUnit>(count: nodes, missing: unreached);
   let reserve = imin(contexts, item_ceiling);
-  let paths = box_slots_new::<ContextPath>(capacity: reserve);
+  let missing_paths = absent_context_path();
+  let paths = route_table::<ContextPath>(count: reserve, missing: missing_paths);
+  set paths.len = 0_u64;
+  let missing_routes = absent_style_route();
+  let routes = route_table::<StyleRoute>(count: 0_u64, missing: missing_routes);
+  let context_of = route_table::<u32>(count: nodes, missing: no_index);
   let unused = unused_style();
-  let uses = box_array_filled::<StyleUse>(count: nodes, value: unused);
+  let uses = route_table::<StyleUse>(count: nodes, missing: unused);
   let root_node = if count > 0_u64 {
     give traversal^.elements.inner[0_u64].index;
   } else {
     give no_index;
   }
-  let recorded = propagate record_tree(context: &initial, parent: no_index, child: 0_u32, paths: &paths, listing: &listing, uses: &uses, root: root_node);
+  let recorded = propagate record_tree(context: &initial, parent: no_index, child: 0_u32, paths: &paths, listing: &listing, uses: &uses, routes: &routes, context_of: &context_of, root: root_node);
   record_skipped(walk: &walk, listing: &listing);
   let clean = False();
   let none = no_updates();
   let unbuilt = StructureCounts(contexts: 0_u64, paragraphs: 0_u64, reused: 0_u64);
-  let made = Layout(root: move initial, viewport: viewport, paragraphs: paragraphs, contexts: contexts, text_units: move listing, uses: move uses, paths: move paths, dirty: clean, last_update: none, last_structure: unbuilt);
+  let made = Layout(root: move initial, viewport: viewport, paragraphs: paragraphs, contexts: contexts, text_units: move listing, uses: move uses, routes: move routes, context_of: move context_of, paths: move paths, dirty: clean, last_update: none, pending_structure: none, last_structure: unbuilt);
   return Ok<Layout, LayoutError>(value: move made);
 }
 
@@ -2964,6 +3105,6 @@ fn build_layout(document: &Document, traversal: &Traversal, styles: &Styles, ato
 }
 
 fn layout_counts(layout: &Layout) -> (contexts: u64, paragraphs: u64) reads(layout) {
-  doc "The counts build_boxes recorded.";
+  doc "The live counts established by build_boxes and maintained by replacement or splice deltas.";
   return layout^.contexts, layout^.paragraphs;
 }

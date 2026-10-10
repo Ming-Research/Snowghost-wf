@@ -412,11 +412,15 @@ fn class_restyle(store: &RuleStore, document: &Document, atoms: &AtomTable, trav
   let fine = band(usable, bounded);
   let whole = bnot(fine);
   let unbounded = bor(reached.full, whole);
-  let full = bor(unbounded, traversal^.stale);
+  let full = unbounded;
   if full {
     let everything = True();
     let made = RestyleSet(full: everything, elements: move elements, pseudos: everything, edited: node);
     return Ok<RestyleSet, StyleError>(value: move made);
+  }
+  if traversal^.stale {
+    let listed_stable = propagate stable_class_restyle(document: document, atoms: atoms, traversal: traversal, node: node, reached: move reached);
+    return Ok<RestyleSet, StyleError>(value: move listed_stable);
   }
   let depth = traversal^.depths.inner[position];
   let subtree_end = count;
@@ -488,6 +492,85 @@ fn class_restyle(store: &RuleStore, document: &Document, atoms: &AtomTable, trav
   }
   let partial = False();
   let made = RestyleSet(full: partial, elements: move elements, pseudos: reached.pseudos, edited: node);
+  return Ok<RestyleSet, StyleError>(value: move made);
+}
+
+fn stable_class_restyle(document: &Document, atoms: &AtomTable, traversal: &Traversal, node: NodeId, reached: Reached) -> result: Result<RestyleSet, StyleError> reads(document), reads(atoms), reads(traversal) {
+  doc "Applies the same bounded class reaches after stable slots cease to be preorder. Reuses the structural reach walker for the edited subtree and later sibling subtrees, then resolves only selected NodeIds to stable slots. DOM links order enumeration; the existing depth frontier orders inherited computation.";
+  let Reached(full: unbounded, pseudos: pseudos, self_reached: own, down_any: down_any, down: down_keys, across_any: across_any, across: across_keys, beyond_any: beyond_any, beyond: beyond_keys) = move reached;
+  let empty_keys = box_slots_new::<SubjectKey>(capacity: 0_u64);
+  let self_keys = SideKeys(any: own, keys: move empty_keys);
+  let descendants = SideKeys(any: down_any, keys: move down_keys);
+  let across = SideKeys(any: across_any, keys: move across_keys);
+  let beyond = SideKeys(any: beyond_any, keys: move beyond_keys);
+  let nodes = box_slots_new::<NodeId>(capacity: 0_u64);
+  let visited = propagate visit_child(document: document, atoms: atoms, child: node, near: &self_keys, deep: &descendants, nodes: &nodes);
+  let across_keyed = across.keys.inner.len > 0_u64;
+  let beyond_keyed = beyond.keys.inner.len > 0_u64;
+  let across_some = bor(across.any, across_keyed);
+  let beyond_some = bor(beyond.any, beyond_keyed);
+  let sideways = bor(across_some, beyond_some);
+  if sideways {
+    let cursor = match node_links(document: document, node: node) {
+      Some(value: links) => {
+        give links.next_sibling;
+      }
+      None() => {
+        give None<NodeId>();
+      }
+    }
+    let limit = document^.nodes.inner.len;
+    for (step in 0_u64..limit) {
+      let sibling = match cursor {
+        Some(value: found) => {
+          give found;
+        }
+        None() => {
+          break;
+        }
+      }
+      let element = is_element_node(document: document, node: sibling);
+      if element {
+        let visited_sibling = propagate visit_child(document: document, atoms: atoms, child: sibling, near: &across, deep: &beyond, nodes: &nodes);
+      }
+      let following = match node_links(document: document, node: sibling) {
+        Some(value: links) => {
+          give links.next_sibling;
+        }
+        None() => {
+          give None<NodeId>();
+        }
+      }
+      set cursor = following;
+    }
+  }
+  let count = nodes.inner.len;
+  let elements = box_slots_new::<u32>(capacity: count);
+  for (fill in 0_u64..count) {
+    if elements.inner.len < elements.inner.cap {
+      place_back(window: &elements.inner, value: 0_u32);
+    }
+  }
+  for (k in 0_u64..count) {
+    let at = cvt::<u32, u64>(nodes.inner[k].index);
+    if at < traversal^.order.inner.len {
+      let slot = traversal^.order.inner[at];
+      let wide = cvt::<u32, u64>(slot);
+      if wide < traversal^.elements.inner.len {
+        if k < elements.inner.len {
+          set elements.inner[k] = slot;
+        } else {
+          return inconsistent::<RestyleSet>();
+        }
+      } else {
+        return inconsistent::<RestyleSet>();
+      }
+    } else {
+      return inconsistent::<RestyleSet>();
+    }
+  }
+  let partial = False();
+  let made = RestyleSet(full: partial, elements: move elements, pseudos: pseudos, edited: node);
   return Ok<RestyleSet, StyleError>(value: move made);
 }
 

@@ -42,58 +42,6 @@ const flex_at_evenly: u8 = 7_u8;
 
 const flex_infinite: i32 = 2147483647_i32;
 
-struct FlexBox {
-  doc "What the flex container tells its items and the passes over them: its direction as the booleans row (the main axis is horizontal), reverse (the main axis runs against the writing direction) and wrapping and wrap_reverse (flex-wrap), its content width, the height its content box is known to have (unknown when indefinite), the gaps along the main and the cross axis, the alignment properties, and whether pkg::layout's update is updating the container (lay_out_child).";
-  row: Bool;
-  reverse: Bool;
-  wrapping: Bool;
-  wrap_reverse: Bool;
-  content_width: i32;
-  inner_height: i32;
-  main_gap: i32;
-  cross_gap: i32;
-  align_items: u8;
-  justify_content: u8;
-  align_content: u8;
-  updating: Bool;
-}
-
-struct FlexItem {
-  doc "One child context of a flex container as the flex algorithm sees it, in the container's main and cross axes: whether it is a flex item (an absolutely positioned child is not), its order, its margins (auto as zero, with which are auto), its paddings and borders, its flex factors, its border-box sizes (flex base, automatic or given minimum, maximum or unknown, hypothetical, target after flexing, and the main size of its natural layout), its cross-size limits, its alignment as a flex_at constant, the cross size it is stretched to or unknown, its baseline from its border-box top, and its border box's offsets along the main and the cross axis from the content box's start edges.";
-  child: u64;
-  active: Bool;
-  order: i32;
-  main_start: i32;
-  main_end: i32;
-  cross_start: i32;
-  cross_end: i32;
-  auto_main_start: Bool;
-  auto_main_end: Bool;
-  auto_cross_start: Bool;
-  auto_cross_end: Bool;
-  frame_main: i32;
-  frame_cross: i32;
-  grow: f64;
-  shrink: f64;
-  base: i32;
-  minimum: i32;
-  maximum: i32;
-  hypothetical: i32;
-  target: i32;
-  frozen: Bool;
-  cross_minimum: i32;
-  cross_maximum: i32;
-  cross_auto: Bool;
-  natural_main: i32;
-  natural_width: i32;
-  place: u8;
-  stretch_to: i32;
-  cross_size: i32;
-  baseline: i32;
-  main_position: i32;
-  cross_position: i32;
-}
-
 struct FlexLine {
   doc "One flex line over the ordered items first to end (end excluded): its cross size, the largest distance from its start edge to the baseline of an item aligned to baselines, its offset along the cross axis from the content box's start edge, and the sum of its items' hypothetical outer main sizes and gaps.";
   first: u64;
@@ -114,6 +62,64 @@ fn flex_blank_item() -> made: FlexItem pure {
   doc "An item that is no flex item and holds nothing.";
   let no = False();
   return FlexItem(child: 0_u64, active: no, order: 0_i32, main_start: 0_i32, main_end: 0_i32, cross_start: 0_i32, cross_end: 0_i32, auto_main_start: no, auto_main_end: no, auto_cross_start: no, auto_cross_end: no, frame_main: 0_i32, frame_cross: 0_i32, grow: 0.0_f64, shrink: 0.0_f64, base: 0_i32, minimum: 0_i32, maximum: unknown, hypothetical: 0_i32, target: 0_i32, frozen: no, cross_minimum: unknown, cross_maximum: unknown, cross_auto: no, natural_main: unknown, natural_width: unknown, place: flex_at_start, stretch_to: unknown, cross_size: 0_i32, baseline: 0_i32, main_position: 0_i32, cross_position: 0_i32);
+}
+
+fn flex_blank_cache() -> made: FlexCache pure {
+  doc "An invalid item preparation and pre-stretch result, populated only by flex_prepare and flex_final.";
+  let no = False();
+  let setup = FlexBox(row: no, reverse: no, wrapping: no, wrap_reverse: no, content_width: 0_i32, inner_height: unknown, main_gap: 0_i32, cross_gap: 0_i32, align_items: 0_u8, justify_content: 0_u8, align_content: 0_u8, updating: no);
+  let prepared = flex_blank_item();
+  let space = fresh_space();
+  return FlexCache(valid: no, setup: setup, prepared: prepared, final_space: space, final_cross: 0_i32, final_baseline: 0_i32, final_valid: no);
+}
+
+fn flex_forget(context: &Context) -> result: unit writes(context.flex_cache.valid), writes(context.flex_cache.final_valid) {
+  doc "Invalidates a flex item's content-dependent preparation and pre-stretch output before its content or style changes are consumed by an update.";
+  set context^.flex_cache.valid = False();
+  set context^.flex_cache.final_valid = False();
+  return unit;
+}
+
+fn flex_same_setup(first: FlexBox, second: FlexBox) -> same: Bool pure {
+  doc "Exact equality of the inputs to item preparation; updating selects reuse and is not a layout input.";
+  let row = first.row == second.row;
+  let reverse = first.reverse == second.reverse;
+  let wrapping = first.wrapping == second.wrapping;
+  let wrap_reverse = first.wrap_reverse == second.wrap_reverse;
+  let content_width = first.content_width == second.content_width;
+  let inner_height = first.inner_height == second.inner_height;
+  let main_gap = first.main_gap == second.main_gap;
+  let cross_gap = first.cross_gap == second.cross_gap;
+  let align_items = first.align_items == second.align_items;
+  let justify_content = first.justify_content == second.justify_content;
+  let align_content = first.align_content == second.align_content;
+  let axes = band(row, reverse);
+  let wrap_axes = band(wrapping, wrap_reverse);
+  let directions = band(axes, wrap_axes);
+  let sizes = band(content_width, inner_height);
+  let gaps = band(main_gap, cross_gap);
+  let spaces = band(sizes, gaps);
+  let alignment = band(align_items, justify_content);
+  let aligned = band(alignment, align_content);
+  let geometry = band(directions, spaces);
+  let made = band(geometry, aligned);
+  return made;
+}
+
+fn flex_final_space(item: FlexItem, setup: FlexBox) -> made: Space pure {
+  doc "The space used to obtain an item's pre-stretch cross size and baseline: a row's resolved width, or a column's natural width and resolved height unless that height is its natural main size.";
+  let no = False();
+  let yes = True();
+  let width = setup.content_width;
+  if setup.row {
+    return Space(available: width, basis_width: width, basis_height: setup.inner_height, forced_width: item.target, forced_height: unknown, shrink: no);
+  }
+  let height = if item.target == item.natural_main {
+    give unknown;
+  } else {
+    give item.target;
+  }
+  return Space(available: width, basis_width: width, basis_height: setup.inner_height, forced_width: item.natural_width, forced_height: height, shrink: yes);
 }
 
 fn flex_round(value: f64) -> raw: i32 pure {
@@ -281,7 +287,7 @@ fn flex_contribution(child: &Context, styles: &Styles, document: &Document, font
   return low, high;
 }
 
-fn intrinsic_flex(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> (minimum: i32, maximum: i32) reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+fn intrinsic_flex(context: &Context, events: &[Flow], styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> (minimum: i32, maximum: i32) reads(events), reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
   doc "The content's min-content and max-content widths of a flex container (CSS Flexbox 9.9.1): in a row, the sum of its items' contributions and the gaps between them for the max-content width and, when it does not wrap, the min-content width, and the largest min-content contribution when it wraps; in a column, the largest contribution.";
   let group = container_of(styles: styles, style: context^.style);
   let row = group.flex_direction < 2_u8;
@@ -292,12 +298,13 @@ fn intrinsic_flex(context: &Context, styles: &Styles, document: &Document, fonts
   let big_least = 0_i32;
   let big_most = 0_i32;
   let seen = 0_u64;
-  let flow_count = context^.flow.inner.len;
+  let flow_count = events^.len;
   for (k in 0_u64..flow_count) {
-    if k >= context^.flow.inner.len {
+    let flow_bound_297 = events^.len;
+    if k >= flow_bound_297 {
       break;
     }
-    let piece = context^.flow.inner[k];
+    let piece = events^[k];
     match piece {
       Child(context: c) => {
         let at = cvt::<u32, u64>(c);
@@ -398,18 +405,21 @@ fn flex_content_height(child: &Context, styles: &Styles) -> height: i32 reads(st
   let bottom = top_frame;
   let children = child^.children.inner.len;
   for (c in 0_u64..children) {
-    let below = child^.children.inner[c].y +sat child^.children.inner[c].height;
+    let geometry_read_1 = child_position(context: child, at: c);
+    let below = geometry_read_1.y +sat child^.children.inner[c].height;
     let edge = below +sat child^.children.inner[c].margin_bottom;
     set bottom = imax(bottom, edge);
   }
   let paragraphs = child^.paragraphs.inner.len;
   for (p in 0_u64..paragraphs) {
-    let edge = child^.paragraphs.inner[p].top +sat child^.paragraphs.inner[p].height;
+    let geometry_read_2 = paragraph_position(context: child, at: p);
+    let edge = geometry_read_2.y +sat child^.paragraphs.inner[p].height;
     set bottom = imax(bottom, edge);
   }
   let blocks = child^.blocks.inner.len;
   for (b in 0_u64..blocks) {
-    let edge = child^.blocks.inner[b].y +sat child^.blocks.inner[b].height;
+    let geometry_read_3 = block_position(context: child, at: b);
+    let edge = geometry_read_3.y +sat child^.blocks.inner[b].height;
     set bottom = imax(bottom, edge);
   }
   let inner = bottom -sat top_frame;
@@ -417,8 +427,9 @@ fn flex_content_height(child: &Context, styles: &Styles) -> height: i32 reads(st
   return made;
 }
 
-fn flex_prepare(child: &Context, item: &FlexItem, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, setup: FlexBox) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(child), writes(item) {
-  doc "Gives one child of a flex container its space and, for a flex item, everything the flex algorithm needs of it before flexing (CSS Flexbox 9.2 and 9.3): its margins, paddings, borders and flex factors in the container's axes, its flex base size from flex-basis, width or height, or its content (in a column by laying it out at its cross size, which is kept as its natural layout), its minimum and maximum main sizes with the automatic minimum of 4.5, its hypothetical main size, its cross limits and its alignment. It reads and writes only this child and this item, so a counted loop runs it for every child.";
+fn flex_prepare(child: &Context, item: &FlexItem, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, setup: FlexBox) -> counts: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(child), writes(item) {
+  doc "Gives one child of a flex container its space and, for a flex item, everything the flex algorithm needs of it before flexing (CSS Flexbox 9.2 and 9.3): its margins, paddings, borders and flex factors in the container's axes, its flex base size from flex-basis, width or height, or its content (in a column by laying it out at its cross size, which is kept as its natural layout), its minimum and maximum main sizes with the automatic minimum of 4.5, its hypothetical main size, its cross limits and its alignment. An unchanged item reuses the retained preparation only when every setup input is equal; a miss invalidates its pre-stretch result before preparation. It reads and writes only this child and this item, so a counted loop runs it for every child.";
+  let counted = no_updates();
   let style = child^.style;
   let width = setup.content_width;
   let yes = True();
@@ -428,8 +439,23 @@ fn flex_prepare(child: &Context, item: &FlexItem, styles: &Styles, document: &Do
   set child^.space = child_space(available: width, basis_width: width, basis_height: setup.inner_height, shrink: yes);
   if item^.active {
   } else {
-    return unit;
+    flex_forget(context: child);
+    return counted;
   }
+  let changed = bor(child^.dirty, child^.restyled);
+  let unchanged = bnot(changed);
+  let retained = band(child^.flex_cache.valid, unchanged);
+  let updating_retained = band(setup.updating, retained);
+  let matching = flex_same_setup(first: child^.flex_cache.setup, second: setup);
+  let reuse = band(updating_retained, matching);
+  if reuse {
+    let kept = child^.flex_cache.prepared;
+    set kept.child = item^.child;
+    set kept.order = item^.order;
+    set item^ = kept;
+    return counted;
+  }
+  flex_forget(context: child);
   let margins = margin_edges(styles: styles, style: style, basis: width);
   let (auto_left, auto_right, auto_top, auto_bottom) = margin_auto(styles: styles, style: style);
   let border = border_edges(styles: styles, style: style);
@@ -585,7 +611,8 @@ fn flex_prepare(child: &Context, item: &FlexItem, styles: &Styles, document: &Do
       set content_most = most;
     } else {
       set child^.space = Space(available: width, basis_width: width, basis_height: setup.inner_height, forced_width: natural_forced, forced_height: unknown, shrink: yes);
-      let counted = lay_out_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: setup.updating);
+      let laid_counts = lay_out_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: setup.updating);
+      set counted = laid_counts;
       set natural_main = child^.height;
       let content_height = if spec_known {
         give flex_content_height(child: child, styles: styles);
@@ -638,7 +665,10 @@ fn flex_prepare(child: &Context, item: &FlexItem, styles: &Styles, document: &Do
   let shrink_factor = cvt::<f32, f64>(group.shrink);
   let made = FlexItem(child: item^.child, active: yes, order: item^.order, main_start: main_start, main_end: main_end, cross_start: cross_start, cross_end: cross_end, auto_main_start: auto_main_start, auto_main_end: auto_main_end, auto_cross_start: auto_cross_start, auto_cross_end: auto_cross_end, frame_main: frame_main, frame_cross: frame_cross, grow: grow_factor, shrink: shrink_factor, base: base, minimum: minimum, maximum: main_max, hypothetical: hypothetical, target: hypothetical, frozen: no, cross_minimum: cross_min, cross_maximum: cross_max, cross_auto: cross_auto, natural_main: natural_main, natural_width: natural_forced, place: place, stretch_to: unknown, cross_size: 0_i32, baseline: 0_i32, main_position: 0_i32, cross_position: 0_i32);
   set item^ = made;
-  return unit;
+  set child^.flex_cache.setup = setup;
+  set child^.flex_cache.prepared = made;
+  set child^.flex_cache.valid = True();
+  return counted;
 }
 
 fn flex_order_of(items: &Box<Slots<FlexItem>>, at: u64) -> order: i32 reads(items) {
@@ -687,16 +717,17 @@ fn flex_sort(sequence: &Box<Slots<u64>>, items: &Box<Slots<FlexItem>>) -> result
   return unit;
 }
 
-fn flex_collect(context: &Context, styles: &Styles, items: &Box<Slots<FlexItem>>) -> sequence: Box<Slots<u64>> reads(context), reads(styles), writes(items) {
+fn flex_collect(context: &Context, events: &[Flow], styles: &Styles, items: &Box<Slots<FlexItem>>) -> sequence: Box<Slots<u64>> reads(context), reads(events), reads(styles), writes(items) {
   doc "Marks the flex items among the children of context, the ones its flow lists as Child, reads their order and returns their indexes sorted by order, then document order.";
   let sequence = box_slots_new::<u64>(capacity: 8_u64);
   let ordered = False();
-  let flow_count = context^.flow.inner.len;
+  let flow_count = events^.len;
   for (k in 0_u64..flow_count) {
-    if k >= context^.flow.inner.len {
+    let flow_bound_699 = events^.len;
+    if k >= flow_bound_699 {
       break;
     }
-    let piece = context^.flow.inner[k];
+    let piece = events^[k];
     match piece {
       Child(context: c) => {
         let at = cvt::<u32, u64>(c);
@@ -1239,29 +1270,46 @@ fn flex_place_lines(lines: &Box<Slots<FlexLine>>, wrapping: Bool, cross_size: i3
   return unit;
 }
 
-fn flex_final(child: &Context, item: &FlexItem, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, setup: FlexBox) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(child), writes(item) {
-  doc "Lays out one child at its final main size: a flex item at its target (a row's item at its width target, a column's item at its height target unless its natural layout already has that height) with its cross size its own; an absolutely positioned child in the space it was given, unless the update defers it to position_out_with (deferred_out). A flex item's cross size and baseline are recorded. It reads and writes only this child and this item.";
+fn flex_final(child: &Context, item: &FlexItem, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, setup: FlexBox) -> counts: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(child), writes(item) {
+  doc "Obtains one item's pre-stretch cross size and baseline in its final main-size space, reusing the retained result only for unchanged content and that exact space. Reuse does not overwrite a retained stretched interior; flex_stretch later materializes the final used space. An absolutely positioned child uses its assigned space unless deferred_out leaves it to positioning. Each invocation reads and writes only its own child and item.";
+  let counted = no_updates();
   if item^.active {
   } else {
     let deferred = deferred_out(child: child, styles: styles, updating: setup.updating);
     if deferred {
       resolve_margins(child: child, styles: styles);
     } else {
-      let counted = lay_out_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: setup.updating);
+      let laid_counts = lay_out_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: setup.updating);
+      set counted = laid_counts;
     }
-    return unit;
+    return counted;
   }
-  let width = setup.content_width;
-  let no = False();
-  let yes = True();
-  if setup.row {
-    let space = Space(available: width, basis_width: width, basis_height: setup.inner_height, forced_width: item^.target, forced_height: unknown, shrink: no);
-    set child^.space = space;
-    let counted = lay_out_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: setup.updating);
-  } else if item^.target != item^.natural_main {
-    let space = Space(available: width, basis_width: width, basis_height: setup.inner_height, forced_width: item^.natural_width, forced_height: item^.target, shrink: yes);
-    set child^.space = space;
-    let counted = lay_out_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: setup.updating);
+  let space = flex_final_space(item: item^, setup: setup);
+  let same = same_space(first: child^.flex_cache.final_space, second: space);
+  let reusable = band(child^.flex_cache.final_valid, setup.updating);
+  let reuse = band(reusable, same);
+  if reuse {
+    let provenance_kept = keep_height_proof(context: child, styles: styles);
+    set reuse = provenance_kept;
+  }
+  if reuse {
+    set item^.cross_size = child^.flex_cache.final_cross;
+    set item^.baseline = child^.flex_cache.final_baseline;
+    return counted;
+  }
+  let already = same_space(first: child^.laid, second: space);
+  let clean = bnot(child^.dirty);
+  let ready = band(already, clean);
+  set child^.space = space;
+  if ready {
+    let provenance_ready = keep_height_proof(context: child, styles: styles);
+    set ready = provenance_ready;
+  }
+  if ready {
+    resolve_margins(child: child, styles: styles);
+  } else {
+    let laid_counts = lay_out_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: setup.updating);
+    set counted = laid_counts;
   }
   let cross = if setup.row {
     give child^.height;
@@ -1269,37 +1317,54 @@ fn flex_final(child: &Context, item: &FlexItem, styles: &Styles, document: &Docu
     give child^.width;
   }
   set item^.cross_size = cross;
-  let baseline = if child^.has_baseline {
-    give child^.baseline;
+  let baseline = if child^.has_first_baseline {
+    give child^.first_baseline;
   } else {
     give child^.height;
   }
   set item^.baseline = baseline;
-  return unit;
+  set child^.flex_cache.final_space = space;
+  set child^.flex_cache.final_cross = cross;
+  set child^.flex_cache.final_baseline = baseline;
+  set child^.flex_cache.final_valid = True();
+  return counted;
 }
 
-fn flex_stretch(child: &Context, item: &FlexItem, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, setup: FlexBox) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(child), writes(item) {
-  doc "Lays a stretched flex item out again at the cross size its line gives it, when that differs from the cross size it has, keeping its main size. It reads and writes only this child and this item.";
+fn flex_stretch(child: &Context, item: &FlexItem, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, setup: FlexBox) -> counts: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(child), writes(item) {
+  doc "Materializes one item in its final used space after line alignment: stretch forces the cross size only when it differs from the pre-stretch result, as in full layout. A retained stretched interior stays intact when that space is unchanged; changed stretch, removal of stretch and changed main sizes use lay_out_child. Each invocation reads and writes only its own child and item.";
+  let counted = no_updates();
   if item^.active {
   } else {
-    return unit;
+    return counted;
   }
   let wanted = item^.stretch_to;
-  if wanted < 0_i32 {
-    return unit;
-  }
+  let stretching = wanted >= 0_i32;
+  let changed_cross = wanted != item^.cross_size;
+  let force_cross = band(stretching, changed_cross);
   let width = setup.content_width;
   let no = False();
-  if setup.row {
-    if child^.height != wanted {
-      let space = Space(available: width, basis_width: width, basis_height: setup.inner_height, forced_width: item^.target, forced_height: wanted, shrink: no);
-      set child^.space = space;
-      let counted = lay_out_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: setup.updating);
+  let space = if force_cross {
+    if setup.row {
+      give Space(available: width, basis_width: width, basis_height: setup.inner_height, forced_width: item^.target, forced_height: wanted, shrink: no);
+    } else {
+      give Space(available: width, basis_width: width, basis_height: setup.inner_height, forced_width: wanted, forced_height: item^.target, shrink: no);
     }
-  } else if child^.width != wanted {
-    let space = Space(available: width, basis_width: width, basis_height: setup.inner_height, forced_width: wanted, forced_height: item^.target, shrink: no);
-    set child^.space = space;
-    let counted = lay_out_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: setup.updating);
+  } else {
+    give flex_final_space(item: item^, setup: setup);
+  }
+  let same = same_space(first: child^.laid, second: space);
+  let clean = bnot(child^.dirty);
+  let kept = band(same, clean);
+  set child^.space = space;
+  if kept {
+    let provenance_kept = keep_height_proof(context: child, styles: styles);
+    set kept = provenance_kept;
+  }
+  if kept {
+    resolve_margins(child: child, styles: styles);
+  } else {
+    let laid_counts = lay_out_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: setup.updating);
+    set counted = laid_counts;
   }
   let cross = if setup.row {
     give child^.height;
@@ -1307,13 +1372,13 @@ fn flex_stretch(child: &Context, item: &FlexItem, styles: &Styles, document: &Do
     give child^.width;
   }
   set item^.cross_size = cross;
-  let baseline = if child^.has_baseline {
-    give child^.baseline;
+  let baseline = if child^.has_first_baseline {
+    give child^.first_baseline;
   } else {
     give child^.height;
   }
   set item^.baseline = baseline;
-  return unit;
+  return counted;
 }
 
 fn flex_shift(styles: &Styles, style: StyleRef, basis_width: i32, basis_height: i32) -> shift: FlexOffset reads(styles) {
@@ -1379,7 +1444,9 @@ fn flex_position(child: &Context, item: &FlexItem, styles: &Styles, setup: FlexB
   if item^.active {
   } else {
     let spot = flex_static(child: child, styles: styles, setup: setup, main_total: main_total, cross_total: cross_total);
+    set child^.normal_x = content_left +sat spot.dx;
     set child^.x = content_left +sat spot.dx;
+    set child^.normal_y = content_top +sat spot.dy;
     set child^.y = content_top +sat spot.dy;
     return unit;
   }
@@ -1404,14 +1471,98 @@ fn flex_position(child: &Context, item: &FlexItem, styles: &Styles, setup: FlexB
   let shift = flex_shift(styles: styles, style: child^.style, basis_width: setup.content_width, basis_height: setup.inner_height);
   let left = content_left +sat across;
   let top = content_top +sat down;
+  set child^.normal_x = left;
   set child^.x = left +sat shift.dx;
+  set child^.normal_y = top;
   set child^.y = top +sat shift.dy;
   return unit;
 }
 
-fn lay_out_flex(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+fn flex_baseline_member(lanes: &[FlexItem], reverse: Bool) -> child: u64 reads(lanes) {
+  doc "Balanced selection of a baseline-sharing item on one settled line. Auto cross margins suppress baseline participation; selection follows the line's physical start direction.";
+  let no_entry = 18446744073709551615_u64;
+  let count = lanes^.len;
+  if count == 0_u64 {
+    return no_entry;
+  }
+  if count == 1_u64 {
+    let item = lanes^[0_u64];
+    let automatic = bor(item.auto_cross_start, item.auto_cross_end);
+    let explicit = bnot(automatic);
+    let baseline = item.place == flex_at_baseline;
+    let shares = band(explicit, baseline);
+    if shares {
+      return item.child;
+    }
+    return no_entry;
+  }
+  let middle = count / 2_u64;
+  let left = flex_baseline_member(lanes: &lanes^[0_u64..middle], reverse: reverse);
+  let right = flex_baseline_member(lanes: &lanes^[middle..count], reverse: reverse);
+  if reverse {
+    if right != no_entry {
+      return right;
+    }
+    return left;
+  }
+  if left != no_entry {
+    return left;
+  }
+  return right;
+}
+
+fn flex_publish_first_baseline(context: &Context, lanes: &Box<Slots<FlexItem>>, lines: &Box<Slots<FlexLine>>, setup: FlexBox) -> result: unit reads(lanes), reads(lines), writes(context) {
+  doc "Exports the first alignment baseline from the startmost line and item after direction and wrapping, preferring a row line's shared baseline. The legacy export is independent.";
+  let no_entry = 18446744073709551615_u64;
+  set context^.first_baseline = 0_i32;
+  set context^.has_first_baseline = False();
+  let count = lines^.inner.len;
+  if count == 0_u64 {
+    return unit;
+  }
+  let line_at = if setup.wrap_reverse {
+    give count - 1_u64;
+  } else {
+    give 0_u64;
+  }
+  let line = lines^.inner[line_at];
+  let first = line.first;
+  let end = line.end;
+  if first >= end {
+    return unit;
+  }
+  if end > lanes^.inner.len {
+    return unit;
+  }
+  let start = if setup.reverse {
+    give end - 1_u64;
+  } else {
+    give first;
+  }
+  let child = lanes^.inner[start].child;
+  if setup.row {
+    let sharing = flex_baseline_member(lanes: &lanes^.inner[first..end], reverse: setup.reverse);
+    if sharing != no_entry {
+      set child = sharing;
+    }
+  }
+  if child < context^.children.inner.len {
+    let position = child_position(context: context, at: child);
+    let baseline = if context^.children.inner[child].has_first_baseline {
+      give context^.children.inner[child].first_baseline;
+    } else {
+      give context^.children.inner[child].height;
+    }
+    set context^.first_baseline = position.y +sat baseline;
+    set context^.has_first_baseline = True();
+  }
+  return unit;
+}
+
+fn lay_out_flex(context: &Context, events: &[Flow], styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: unit reads(events), reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
   doc "Lays out a flex container (CSS Flexbox 9): its width, then every flex item's flex base size and hypothetical main size in a counted loop whose iterations each write only their own child and item, the items sorted by order and collected into lines, each line's flexible lengths resolved and its items aligned along the main axis, every child laid out at its final main size in a second counted loop, the lines' cross sizes, alignment and stretch, the stretched items laid out again in a third, every child's offset set in a fourth, then the container's height and baseline and its absolutely positioned children. The sequential passes walk the items in order, which the freeze loop and the line breaking need.";
-  let width = used_width(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  layout_height_inputs(context: context);
+  let width = used_width(context: context, events: events, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
   set context^.width = width;
   let style = context^.style;
   let basis = context^.space.basis_width;
@@ -1469,17 +1620,20 @@ fn lay_out_flex(context: &Context, styles: &Styles, document: &Document, fonts: 
   let content_place = flex_place(value: content_value, reversed: wrap_reverse);
   let setup = FlexBox(row: row, reverse: reverse, wrapping: wrapping, wrap_reverse: wrap_reverse, content_width: content_width, inner_height: inner_height, main_gap: main_gap, cross_gap: cross_gap, align_items: group.align_items, justify_content: justify, align_content: content_place, updating: context^.dirty);
   let count = context^.children.inner.len;
+  let empty_counts = no_updates();
+  let results = box_array_filled::<UpdateCounts>(count: count, value: empty_counts);
   let items = box_slots_new::<FlexItem>(capacity: 8_u64);
   for (i in 0_u64..count) {
     let blank = flex_blank_item();
     set blank.child = i;
     let pushed = push_item::<FlexItem>(cell: &items, value: blank, ceiling: item_ceiling);
   }
-  let sequence = flex_collect(context: context, styles: styles, items: &items);
+  let sequence = flex_collect(context: context, events: events, styles: styles, items: &items);
   let prepared = count <= items.inner.len;
   if prepared {
     for (i in 0_u64..count) {
-      flex_prepare(child: &context^.children.inner[i], item: &items.inner[i], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, setup: setup);
+      let prepared_counts = flex_prepare(child: &context^.children.inner[i], item: &items.inner[i], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, setup: setup);
+      set results.inner[i] = prepared_counts;
     }
   }
   let lanes = flex_gather(items: &items, sequence: &sequence);
@@ -1531,7 +1685,9 @@ fn lay_out_flex(context: &Context, styles: &Styles, document: &Document, fonts: 
   let ready_final = count <= items.inner.len;
   if ready_final {
     for (i in 0_u64..count) {
-      flex_final(child: &context^.children.inner[i], item: &items.inner[i], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, setup: setup);
+      let final_counts = flex_final(child: &context^.children.inner[i], item: &items.inner[i], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, setup: setup);
+      let accumulated = add_counts(first: results.inner[i], second: final_counts);
+      set results.inner[i] = accumulated;
     }
   }
   flex_load(items: &items, lanes: &lanes);
@@ -1578,7 +1734,9 @@ fn lay_out_flex(context: &Context, styles: &Styles, document: &Document, fonts: 
   let ready_stretch = count <= items.inner.len;
   if ready_stretch {
     for (i in 0_u64..count) {
-      flex_stretch(child: &context^.children.inner[i], item: &items.inner[i], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, setup: setup);
+      let stretch_counts = flex_stretch(child: &context^.children.inner[i], item: &items.inner[i], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, setup: setup);
+      let accumulated = add_counts(first: results.inner[i], second: stretch_counts);
+      set results.inner[i] = accumulated;
     }
   }
   let ready_place = count <= items.inner.len;
@@ -1592,14 +1750,26 @@ fn lay_out_flex(context: &Context, styles: &Styles, document: &Document, fonts: 
     let first_child = sequence.inner[0_u64];
     if first_child < context^.children.inner.len {
       if first_child < items.inner.len {
-        let top = context^.children.inner[first_child].y;
-        let shown = top +sat items.inner[first_child].baseline;
-        set context^.baseline = shown;
+        let geometry_read_4 = child_position(context: context, at: first_child);
+        let top = geometry_read_4.y;
+        let legacy = if context^.children.inner[first_child].has_baseline {
+          give context^.children.inner[first_child].baseline;
+        } else {
+          give context^.children.inner[first_child].height;
+        }
+        set context^.baseline = top +sat legacy;
         set context^.has_baseline = True();
       }
     }
   }
-  let positioned_counts = position_out(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  flex_publish_first_baseline(context: context, lanes: &lanes, lines: &lines, setup: setup);
+  let positioned_counts = position_out(context: context, events: events, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
   add_own_fragment(context: context);
+  let children_counts = sum_counts(results: &results);
+  let with_positioned = add_counts(first: children_counts, second: positioned_counts);
+  let own_counts = one_context_count();
+  set own_counts.entries = events^.len;
+  let total_counts = add_counts(first: with_positioned, second: own_counts);
+  set context^.flex_counts = total_counts;
   return unit;
 }

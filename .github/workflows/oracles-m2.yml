@@ -1,0 +1,484 @@
+# Temporary, for M2's work branches: the identity and completeness oracles
+# of research/investigations/structure-edits on GitHub-hosted CI, so that no
+# renderer is compiled on the owner's machine. Removed before the last M2
+# branch is ready.
+name: oracles-m2
+
+on:
+  push:
+    branches: [research/m2-sync-main, research/structure-edits, research/m2-layout, research/m2-edit-cost, research/m2-frag-a, research/m2-frag-b, research/m2-q139, research/m2-apollo11-fix, research/m2-fallback-cost]
+  workflow_dispatch:
+
+jobs:
+  step5:
+    if: contains(github.event.head_commit.message, '[oracles]') || contains(github.event.head_commit.message, '[step5]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Driver and fonts
+        run: |
+          sudo sh -c 'printf "%s\n" https://archive.ubuntu.com/ubuntu > /etc/apt/apt-mirrors.txt'
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=30 update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          make -s toolchain compiler oracle-fonts
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          (cd renderer && "$wfc" --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_seq)
+      - name: Positioned and flex fixture identity
+        run: |
+          set -euo pipefail
+          s=research/investigations/incremental-layout/scripts
+          for kind in positioned positioned-isolated flex transfer edit-cost edit-baseline edit-height edit-cascade edit-reference-frame; do
+            html=${kind/edit-cost/transfer}
+            html=${html/edit-baseline/style}
+            html=${html/edit-height/style}
+            html=${html/edit-cascade/transfer}
+            html=${html/edit-reference-frame/transfer}
+            html=${html/positioned-isolated/positioned}
+            python3 "$s/splice-cases.py" build/layout_oracle_seq "$kind" "build/$kind-case.edits"
+            time build/layout_oracle_seq edit "build/$kind-case.edits" "$s/${html}-case.html" renderer/style/ua.css > "build/$kind-case.raw"
+            fixture_status=0
+            if python3 "$s/inctime.py" --check "build/$kind-case.edits" "build/$kind-case.raw"; then
+              if python3 "$s/splice-cases.py" --check-paths "build/$kind-case.edits.paths" "build/$kind-case.raw"; then
+                :
+              else
+                fixture_status=$?
+              fi
+            else
+              fixture_status=$?
+            fi
+            if [ "$fixture_status" -ne 0 ]; then
+              python3 - "$kind" <<'PYEOF' || true
+          import re
+          import sys
+          from pathlib import Path
+          kind = sys.argv[1]
+          raw = Path(f'build/{kind}-case.raw').read_text()
+          numbers = sorted(set(map(int, re.findall(r'^edit (\d+) hash [0-9a-f]{16} bytes \d+ inc DIFF$', raw, re.M))))
+          debug = Path(f'build/{kind}-case.debug.edits')
+          debug.unlink(missing_ok=True)
+          if numbers:
+              edits = Path(f'build/{kind}-case.edits').read_text()
+              debug.write_text(''.join(f'P {number}\n' for number in numbers) + edits)
+              print(kind, 'capture differing edits', numbers)
+          else:
+              print(kind, 'no inc DIFF rows; original raw preserves the failing paths or protocol')
+          PYEOF
+              if [ -f "build/$kind-case.debug.edits" ]; then
+                build/layout_oracle_seq edit "build/$kind-case.debug.edits" "$s/${html}-case.html" renderer/style/ua.css > "build/$kind-case.debug.raw" 2> "build/$kind-case.debug.err" || true
+              fi
+              exit "$fixture_status"
+            fi
+            grep -E 'structure path| inc (same|DIFF|refused)$' "build/$kind-case.raw"
+            if [ "$kind" = edit-baseline ]; then
+              build/layout_oracle_seq incremental "build/$kind-case.edits" "$s/${html}-case.html" renderer/style/ua.css > "build/$kind-case.counts.raw"
+            fi
+          done
+      - name: Small arithmetic fixture before the page batch
+        run: python3 research/investigations/incremental-layout/scripts/near-limit.py build/layout_oracle_seq build/near-limit-step5
+      - name: Structural path diagnostics
+        run: |
+          set -euo pipefail
+          s=research/investigations/incremental-layout/scripts
+          build/layout_oracle_seq edit "$s/block-case.edits" "$s/block-case.html" renderer/style/ua.css > build/block-case.raw
+          grep -E 'structure path| inc (same|DIFF|refused)$' build/block-case.raw
+          sh research/investigations/concurrency/run.sh fetch || true
+          sh research/investigations/incremental-layout/run.sh prepare ecma262 html5
+          for page in ecma262 html5; do
+            sh research/investigations/incremental-layout/run.sh inc seq "$page" block
+            cat "build/x5/scripts/$page-block.edits"
+            grep 'structure path' "build/x5/out/$page-block.seq.txt.raw"
+          done
+          sh "$s/checkpoint-case.sh" build/layout_oracle_seq build/checkpoint-case.edits
+          for pair in splice-route-case:block-case splice-style-case:block-case checkpoint-case:checkpoint-case; do
+            name=${pair%%:*} html=${pair#*:}
+            script="$s/$name.edits"
+            if [ "$name" = checkpoint-case ]; then script=build/checkpoint-case.edits; fi
+            build/layout_oracle_seq edit "$script" "$s/$html.html" renderer/style/ua.css > "build/$name.raw"
+            grep -E 'structure path| inc (same|DIFF|refused)$' "build/$name.raw"
+            python3 "$s/inctime.py" --check "$script" "build/$name.raw"
+          done
+          differs=$(grep -c ' inc DIFF$' build/block-case.raw || true)
+          refused=$(grep -c ' inc refused$' build/block-case.raw || true)
+          same=$(grep -c ' inc same$' build/block-case.raw || true)
+          echo "block-case: allowed 2 refusals, edits 5 and 6 insert/remove counter-incrementing paragraph 47 in box 27 and change the outgoing c state consumed by the following box; Q86 requires a full build"
+          test "$differs" -eq 0
+          test "$refused" -le 2
+          test "$same" -gt 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: step5-diagnostics
+          path: |
+            build/near-limit-step5/
+            build/block-case.raw
+            build/splice-route-case.raw
+            build/splice-style-case.raw
+            build/checkpoint-case.*
+            build/positioned-case.*
+            build/flex-case.*
+            build/transfer-case.*
+            build/edit-cost-case.*
+            build/edit-baseline-case.*
+            build/edit-height-case.*
+            build/edit-cascade-case.*
+            build/edit-reference-frame-case.*
+            build/positioned-isolated-case.*
+            build/*.trace.raw
+            build/*.semantic.*
+            build/x5/scripts/*-block.edits
+            build/x5/out/*-block.seq.txt.raw
+            build/x5/*.nodes
+  oracles:
+    # On the layout branch, only for a head commit that asks for it.
+    if: (github.ref != 'refs/heads/research/m2-layout' && github.ref != 'refs/heads/research/m2-edit-cost' && github.ref != 'refs/heads/research/m2-frag-a' && github.ref != 'refs/heads/research/m2-frag-b' && github.ref != 'refs/heads/research/m2-apollo11-fix' && github.ref != 'refs/heads/research/m2-fallback-cost') || contains(github.event.head_commit.message, '[oracles]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Toolchain and fonts
+        run: |
+          sudo sh -c 'printf "%s\n" https://archive.ubuntu.com/ubuntu > /etc/apt/apt-mirrors.txt'
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=30 update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          npm install --prefix build/reference playwright@1.56.1
+          build/reference/node_modules/.bin/playwright install --with-deps chromium
+          echo "PLAYWRIGHT=$GITHUB_WORKSPACE/build/reference/node_modules/playwright" >> "$GITHUB_ENV"
+          node -e 'console.log("CHROMIUM=" + require("./build/reference/node_modules/playwright").chromium.executablePath())' >> "$GITHUB_ENV"
+
+      - name: Drivers
+        run: |
+          set -euo pipefail
+          make -s toolchain compiler oracle-fonts
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          mkdir -p build/m1
+          (cd renderer && "$wfc" --graph modules.wfg --entry style_oracle -o ../build/m1/style_seq)
+          (cd renderer && "$wfc" --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_seq)
+          (cd renderer && "$wfc" --par --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_par)
+          echo "WFC=$wfc" >> "$GITHUB_ENV"
+
+      - name: Style fixtures (reach and structure)
+        run: |
+          set -euo pipefail
+          sh research/investigations/incremental-style/run.sh reach structure case full
+          sh research/investigations/incremental-style/run.sh reach sides case
+          sh research/investigations/incremental-style/run.sh reach ofclause case
+          sh research/investigations/incremental-style/run.sh structure structure case
+
+      - name: The of-clause case fails before its fix (falsifier)
+        run: |
+          set -euo pipefail
+          # These exact source adaptations only remove FN-1 unreachable tails
+          # and preserve uncancelled host I/O under the new API. Keep the old
+          # behavioral code, including the missing of-clause fix.
+          mkdir -p build/historical-compat
+          git show 8a586230aecb6cf4459775864ecfaec4fc3e88a1 --format= -- renderer > build/historical-compat/fn1.patch
+          git show d40c5718045d1107b86788594504da4536bb8613 --format= -- renderer/tools renderer/oracle/support > build/historical-compat/cancel.patch
+          git diff 736c71db8f2f02cf4f1b844385986f5ba9dba609 20bb84605c0c8e9e144768073b41ef787c10224c -- renderer/oracle/support > build/historical-compat/cancel-error.patch
+          git worktree add -q --detach build/before 8e69668
+          for patch in fn1 cancel cancel-error; do
+            git -C build/before apply --3way "$GITHUB_WORKSPACE/build/historical-compat/$patch.patch"
+          done
+          # v0.120 retires tag-only equality; preserve both operands in the control.
+          git -C build/before ls-files -z '*.wf' '*.wfm' | xargs -0 -I{} sed -i -E 's/\bee[q]\(([^,()]+), ([^,()]+)\)/\1 == \2/g; s/\bene\(([^,()]+), ([^,()]+)\)/\1 != \2/g' 'build/before/{}'
+          git -C build/before rev-parse HEAD > build/historical-compat/before.revision
+          git -C build/before diff HEAD > build/historical-compat/before.diff
+          (cd build/before/renderer && "$WFC" --graph modules.wfg --entry style_oracle -o "$GITHUB_WORKSPACE/build/m1/style_before")
+          if STYLE=build/m1/style_before sh research/investigations/incremental-style/run.sh reach ofclause case; then
+            echo "the reach check passed on 8e69668, which lacks the of-clause fix" >&2
+            exit 1
+          fi
+          grep -c 'missing [1-9]' build/m1/reach/ofclause-case.txt
+
+      - name: Pages
+        run: |
+          set -euo pipefail
+          sh research/investigations/concurrency/run.sh fetch || true
+          for f in ecma262.html ecma262-ecmarkup.css ecma262-print.css html5.html; do test -f "build/research/concurrency/$f"; done
+          tar -xzf tests/layout/fixtures/apollo11/inputs.tar.gz -C build/research/concurrency
+          sha256sum -c tests/layout/fixtures/apollo11/inputs.sha256
+          sh research/investigations/incremental-layout/run.sh prepare ecma262 html5 apollo11
+
+      - name: Full-build dumps against the base (layout branch)
+        if: contains(fromJSON('["refs/heads/research/m2-sync-main","refs/heads/research/m2-layout","refs/heads/research/m2-edit-cost","refs/heads/research/m2-frag-a","refs/heads/research/m2-frag-b","refs/heads/research/m2-apollo11-fix","refs/heads/research/m2-fallback-cost"]'), github.ref)
+        run: |
+          set -euo pipefail
+          base=$(git merge-base HEAD origin/research/structure-edits)
+          git worktree add -q --detach build/base "$base"
+          for patch in fn1 cancel cancel-error; do
+            git -C build/base apply --3way "$GITHUB_WORKSPACE/build/historical-compat/$patch.patch"
+          done
+          # v0.120 retires tag-only equality; preserve both operands in the control.
+          git -C build/base ls-files -z '*.wf' '*.wfm' | xargs -0 -I{} sed -i -E 's/\bee[q]\(([^,()]+), ([^,()]+)\)/\1 == \2/g; s/\bene\(([^,()]+), ([^,()]+)\)/\1 != \2/g' 'build/base/{}'
+          git -C build/base rev-parse HEAD > build/historical-compat/base.revision
+          git -C build/base diff HEAD > build/historical-compat/base.diff
+          (cd build/base/renderer && "$WFC" --graph modules.wfg --entry layout_oracle -o "$GITHUB_WORKSPACE/build/layout_oracle_base")
+          echo "base $(git rev-parse --short "$base")"
+          sh research/investigations/incremental-layout/run.sh dumps build/layout_oracle_base ecma262 html5
+          for page in ecma262 html5; do
+            sheets=(renderer/style/ua.css)
+            if [ "$page" = ecma262 ]; then
+              sheets+=(assets/css/ecmarkup.css=build/research/concurrency/ecma262-ecmarkup.css assets/css/print.css=build/research/concurrency/ecma262-print.css)
+            fi
+            WF_WORKERS=4 build/layout_oracle_par dump 1 "build/research/concurrency/$page.html" "${sheets[@]}" > "build/$page.par.dump"
+            cmp "build/x5/$page.dump" "build/$page.par.dump"
+            echo "$page: full seq/par dumps byte-identical"
+          done
+          for case in tests/layout/*-cases.html research/investigations/structure-edits/scripts/saturation-case.html; do
+            build/layout_oracle_base dump 1 "$case" renderer/style/ua.css > build/case.base.dump
+            build/layout_oracle_seq dump 1 "$case" renderer/style/ua.css > build/case.seq.dump
+            WF_WORKERS=4 build/layout_oracle_par dump 1 "$case" renderer/style/ua.css > build/case.par.dump
+            if [ "$case" = tests/layout/percentage-height-cases.html ]; then
+              # Q139 deliberately repaired the historical context-wide basis.
+              # Its independent Chromium fixture, refreshed by q139.yml, owns
+              # the new expectation. The old control must fail this oracle.
+              cp build/case.base.dump build/historical-compat/percentage.before.dump
+              cp build/case.seq.dump build/historical-compat/percentage.after.dump
+              set +e
+              node tests/layout/layout_oracle.mjs compare tests/layout/percentage-height-cases.chromium.tsv build/case.base.dump
+              old_status=$?
+              set -e
+              test "$old_status" -eq 1
+              node tests/layout/layout_oracle.mjs compare tests/layout/percentage-height-cases.chromium.tsv build/case.seq.dump
+              echo "$case: historical defect detected; current output meets the Q139 oracle"
+            elif [ "$case" = tests/layout/grid-final-space-cases.html ]; then
+              # Q140 repaired natural/final grid constraints after the old
+              # comparison base. Preserve that defect as a negative control
+              # against fresh Chromium geometry, as q140.yml does.
+              cp build/case.base.dump build/historical-compat/grid-final-space.before.dump
+              cp build/case.seq.dump build/historical-compat/grid-final-space.after.dump
+              node tests/layout/layout_oracle.mjs dump "$case" > build/historical-compat/grid-final-space.chromium.tsv
+              set +e
+              node tests/layout/layout_oracle.mjs compare build/historical-compat/grid-final-space.chromium.tsv build/case.base.dump
+              old_status=$?
+              set -e
+              test "$old_status" -eq 1
+              node tests/layout/layout_oracle.mjs compare build/historical-compat/grid-final-space.chromium.tsv build/case.seq.dump
+              echo "$case: historical defect detected; current output meets the Q140 oracle"
+            else
+              cmp build/case.base.dump build/case.seq.dump
+              echo "$case: identical to the base"
+            fi
+            cmp build/case.seq.dump build/case.par.dump
+            echo "$case: seq and par identical ($(wc -c < build/case.seq.dump) bytes)"
+          done
+
+      - name: Style on the pages' block edits
+        run: |
+          set -euo pipefail
+          for page in ecma262 html5; do
+            sh research/investigations/incremental-style/run.sh reach "$page" block
+            sh research/investigations/incremental-style/run.sh structure "$page" block
+          done
+
+      - name: X5's case pages, seq and par
+        run: |
+          set -euo pipefail
+          s=research/investigations/incremental-layout/scripts
+          sh "$s/checkpoint-case.sh" build/layout_oracle_seq build/checkpoint-case.edits
+          for build in seq par; do
+            for pair in splice-route-case:block-case splice-style-case:block-case checkpoint-case:checkpoint-case sentence-convergence-case:sentence-convergence-case sibling-margin-case:sibling-margin-case sibling-context-case:sibling-margin-case; do
+              name=${pair%%:*} html=${pair#*:}
+              script="$s/$name.edits"
+              if [ "$name" = checkpoint-case ]; then script=build/checkpoint-case.edits; fi
+              WF_WORKERS=4 build/layout_oracle_$build edit "$script" "$s/$html.html" renderer/style/ua.css > "build/$name.$build.raw"
+              python3 "$s/inctime.py" --check "$script" "build/$name.$build.raw"
+              if [ "$name" = sibling-margin-case ] || [ "$name" = sibling-context-case ]; then
+                python3 "$s/splice-cases.py" --check-paths "$script.paths" "build/$name.$build.raw"
+              fi
+              echo "$name ($build): every edit matches its full rebuild"
+              grep -E 'structure path| inc (same|DIFF|refused)$' "build/$name.$build.raw"
+            done
+          done
+          for build in seq par; do
+            WF_WORKERS=4 python3 "$s/near-limit.py" build/layout_oracle_$build "build/near-limit-$build"
+            WF_WORKERS=4 python3 "$s/split-limit.py" build/layout_oracle_$build "build/split-limit-$build"
+            WF_WORKERS=4 python3 "$s/fragment-topology.py" build/layout_oracle_$build "build/fragment-topology-$build"
+            WF_WORKERS=4 python3 "$s/dirty-frontier.py" build/layout_oracle_$build "build/dirty-frontier-$build"
+            WF_WORKERS=4 python3 "$s/range-displacement.py" build/layout_oracle_$build "build/range-displacement-$build"
+          done
+          for case in block-case:2 style-case:6; do
+            name=${case%%:*} allowed=${case#*:}
+            for build in seq par; do
+              build/layout_oracle_$build edit "research/investigations/incremental-layout/scripts/$name.edits" "research/investigations/incremental-layout/scripts/$name.html" renderer/style/ua.css > "build/$name.$build.raw"
+              same=$(grep -c ' inc same$' "build/$name.$build.raw" || true)
+              differs=$(grep -c ' inc DIFF$' "build/$name.$build.raw" || true)
+              refused=$(grep -c ' inc refused$' "build/$name.$build.raw" || true)
+              echo "$name ($build): inc same $same, DIFF $differs, refused $refused (at most $allowed allowed)"
+              if [ "$name" = block-case ]; then
+                echo "Allowed 2 refusals: edits 5 and 6 insert/remove counter-incrementing paragraph 47 in box 27 and change the outgoing c state consumed by the following box; Q86 requires a full build"
+              fi
+              grep -o 'structure path [0-9]* splice [01] reason [0-9]*' "build/$name.$build.raw" | tr '\n' ';' | sed 's/structure path //g; s/;$/\n/' || true
+              grep ' inc refused$' "build/$name.$build.raw" || true
+              test "$differs" -eq 0
+              test "$refused" -le "$allowed"
+              test "$same" -gt 0
+            done
+          done
+          for build in seq par; do
+            WF_WORKERS=4 build/layout_oracle_$build edit research/investigations/incremental-layout/scripts/boundary-case.edits research/investigations/incremental-layout/scripts/block-case.html renderer/style/ua.css > "build/boundary-case.$build.raw"
+            python3 research/investigations/incremental-layout/scripts/inctime.py --check research/investigations/incremental-layout/scripts/boundary-case.edits "build/boundary-case.$build.raw"
+          done
+          s=research/investigations/incremental-layout/scripts
+          build/layout_oracle_seq nodes 0 $s/boundary-baseline-case.html renderer/style/ua.css | head -30
+          for build in seq par; do
+            WF_WORKERS=4 build/layout_oracle_$build edit $s/boundary-baseline-case.edits $s/boundary-baseline-case.html renderer/style/ua.css > "build/boundary-baseline-case.$build.raw"
+            python3 $s/inctime.py --check $s/boundary-baseline-case.edits "build/boundary-baseline-case.$build.raw"
+            grep -E 'inc (same|DIFF|refused)$|boundary_fallbacks' "build/boundary-baseline-case.$build.raw" | sed 's/.*\(boundary_fallbacks [0-9]* boundary_reason [0-9]*\).*/\1/'
+            same=$(grep -c ' inc same$' "build/boundary-baseline-case.$build.raw" || true)
+            differs=$(grep -c ' inc DIFF$' "build/boundary-baseline-case.$build.raw" || true)
+            echo "boundary-baseline-case ($build): inc same $same, DIFF $differs"
+            test "$differs" -eq 0
+            test "$same" -eq 8
+          done
+      - name: Positioned and flex fixture identity, seq and par
+        run: |
+          set -euo pipefail
+          s=research/investigations/incremental-layout/scripts
+          for kind in positioned positioned-isolated flex transfer edit-cost edit-baseline edit-height edit-cascade edit-reference-frame; do
+            html=${kind/edit-cost/transfer}
+            html=${html/edit-baseline/style}
+            html=${html/edit-height/style}
+            html=${html/edit-cascade/transfer}
+            html=${html/edit-reference-frame/transfer}
+            html=${html/positioned-isolated/positioned}
+            python3 "$s/splice-cases.py" build/layout_oracle_seq "$kind" "build/$kind-case.edits"
+            for build in seq par; do
+              WF_WORKERS=4 build/layout_oracle_$build edit "build/$kind-case.edits" "$s/${html}-case.html" renderer/style/ua.css > "build/$kind-case.$build.raw"
+              python3 "$s/inctime.py" --check "build/$kind-case.edits" "build/$kind-case.$build.raw"
+              python3 "$s/splice-cases.py" --check-paths "build/$kind-case.edits.paths" "build/$kind-case.$build.raw"
+              grep -E 'structure path| inc (same|DIFF|refused)$' "build/$kind-case.$build.raw"
+            done
+          done
+      - name: Retained frontier through legacy style marking
+        run: |
+          set -euo pipefail
+          git worktree add -q --detach build/frontier-legacy HEAD
+          python3 - <<'PYEOF'
+          from pathlib import Path
+          path = Path('build/frontier-legacy/renderer/oracle/layout/edit.wf')
+          source = path.read_text()
+          old = '  let marked = marks_after(started: started, layout: &kept^.layout, traversal: &page^.traversal, changed: &done.changed.inner[0_u64..count]);'
+          new = '''  let legacy_removed = None<NodeId>();
+            let legacy_changed = propagate structure_flags(started: started, page: page, done: &done, removed: legacy_removed);
+            let legacy_count = legacy_changed.inner.len;
+            let legacy_attributes = slots_new::<AttributeChange, 0>();
+            let marked = styles_changed(layout: &kept^.layout, old: &kept^.state.styles, new: &kept^.state.styles, traversal: &page^.traversal, changed: &legacy_changed.inner[0_u64..legacy_count], attributes: &legacy_attributes[0_u64..0_u64]);'''
+          assert source.count(old) == 1
+          path.write_text(source.replace(old, new))
+          PYEOF
+          (cd build/frontier-legacy/renderer && "$WFC" --graph modules.wfg --entry layout_oracle -o "$GITHUB_WORKSPACE/build/layout_frontier_legacy")
+          python3 research/investigations/incremental-layout/scripts/dirty-frontier.py build/layout_frontier_legacy build/dirty-frontier-legacy --legacy-marks
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: page-identity-inputs
+          compression-level: 1
+          path: |
+            build/layout_oracle_seq
+            build/layout_oracle_par
+            build/fonts/
+            build/research/concurrency/
+            build/x5/scripts/
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: m2-arithmetic-oracles
+          path: |
+            build/historical-compat/
+            build/near-limit-*/
+            build/split-limit-*/
+            build/fragment-topology-*/
+            build/dirty-frontier-*/
+            build/range-displacement-*/
+            build/*.raw
+            build/x5/out/*.raw
+
+  page-identity:
+    needs: oracles
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        page: [ecma262, html5]
+        kind: [word, sentence, colour, fontsize, rootfont, block]
+        include:
+          - {page: apollo11, kind: word}
+          - {page: apollo11, kind: sentence}
+          - {page: apollo11, kind: colour}
+          - {page: apollo11, kind: fontsize}
+          - {page: apollo11, kind: rootfont}
+          - {page: apollo11, kind: block}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: page-identity-inputs
+          path: build
+      - name: Layout identity and sequential/parallel equality
+        env:
+          PAGE: ${{ matrix.page }}
+          KIND: ${{ matrix.kind }}
+        run: |
+          set -euo pipefail
+          chmod +x build/layout_oracle_seq build/layout_oracle_par
+          sh research/investigations/incremental-layout/run.sh inc seq "$PAGE" "$KIND"
+          WF_WORKERS=4 sh research/investigations/incremental-layout/run.sh inc par "$PAGE" "$KIND"
+          sh research/investigations/incremental-layout/run.sh same "$PAGE" "$KIND"
+      - name: Apollo11 fallback identity and the edit after each fallback
+        if: matrix.page == 'apollo11' && matrix.kind == 'block'
+        run: |
+          set -euo pipefail
+          s=research/investigations/incremental-layout/scripts/fallback-followup.py
+          python3 "$s" --self-test
+          for mode in seq par; do
+            WF_WORKERS=4 python3 "$s" "build/layout_oracle_$mode" "build/fallback-$mode"
+            WF_WORKERS=4 python3 "$s" "build/layout_oracle_$mode" "build/apollo-followup-$mode" --apollo
+          done
+      - uses: actions/upload-artifact@v4
+        if: always() && matrix.page == 'apollo11' && matrix.kind == 'block'
+        with:
+          name: apollo11-fallback-followups
+          path: |
+            build/fallback-*/
+            build/apollo-followup-*/
+      - name: Page block edits require zero fallbacks
+        if: matrix.kind == 'block' && matrix.page != 'apollo11'
+        run: |
+          set -euo pipefail
+          for page in "${{ matrix.page }}"; do
+            for build in seq par; do
+              python3 - "build/x5/out/$page-block.$build.txt.raw" <<'PYEOF'
+          import re
+          import sys
+          from pathlib import Path
+          def require_local(source):
+              paths = re.findall(r'^structure path (\d+) splice ([01]) reason (\d+)$', source, re.M)
+              assert paths and all(local == '1' and reason == '0' for _, local, reason in paths), paths
+              return paths
+          require_local('structure path 1 splice 1 reason 0\n')
+          for bad in ('', 'structure path 1 splice 0 reason 0\n', 'structure path 1 splice 1 reason 7\n'):
+              try:
+                  require_local(bad)
+              except AssertionError:
+                  pass
+              else:
+                  raise AssertionError('zero-fallback assertion accepted a deliberate fault')
+          print('detected missing paths, a nonlocal path and a nonzero reason', flush=True)
+          paths = require_local(Path(sys.argv[1]).read_text())
+          print(sys.argv[1], len(paths), 'local splices, zero fallbacks')
+          PYEOF
+            done
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: identity-${{ matrix.page }}-${{ matrix.kind }}
+          path: build/x5/out/

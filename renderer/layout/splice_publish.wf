@@ -1,0 +1,399 @@
+alias Document = pkg::dom::Document;
+alias NodeId = pkg::dom::NodeId;
+
+struct RoutePatch {
+  doc "Unpublished directory records for an inserted subtree, using final serials and payload slots. Only touched NodeIds and the appended serial intervals are committed.";
+  listing: RouteTable<TextUnit>;
+  uses: RouteTable<StyleUse>;
+  routes: RouteTable<StyleRoute>;
+  paths: RouteTable<ContextPath>;
+  context_of: RouteTable<u32>;
+  nodes: Box<Slots<u32>>;
+  route_base: u64;
+  path_base: u64;
+}
+
+fn sparse_routes<T: copy>(length: u64, missing: T) -> made: RouteTable<T> pure {
+  doc "Reserves identities without allocating or initializing a dense prefix.";
+  let pages = SlotPages<T>::Vacant();
+  let made = RouteTable<T>(pages: move pages, len: length, span: 1073741824_u32, missing: missing);
+  return move made;
+}
+
+fn splice_dom_nodes(document: &Document, node: NodeId, nodes: &Box<Slots<u32>>) -> result: Result<unit, LayoutError> reads(document), writes(nodes) {
+  doc "Enumerates only the edited subtree, including detached text, for targeted route publication or tombstoning. Sibling traversal follows DOM links.";
+  let at = cvt::<u32, u64>(node.index);
+  if at < document^.nodes.inner.len {
+  } else {
+    return inconsistent::<unit>();
+  }
+  let pushed = propagate push_or_fail::<u32>(cell: nodes, value: node.index);
+  let cursor = document^.nodes.inner[at].links.first_child;
+  let limit = document^.nodes.inner.len;
+  for (step in 0_u64..limit) {
+    let child = match cursor {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return Ok<unit, LayoutError>(value: unit);
+      }
+    }
+    let child_at = cvt::<u32, u64>(child.index);
+    if child_at < document^.nodes.inner.len {
+    } else {
+      return inconsistent::<unit>();
+    }
+    set cursor = document^.nodes.inner[child_at].links.next_sibling;
+    let below = propagate splice_dom_nodes(document: document, node: child, nodes: nodes);
+  }
+  return inconsistent::<unit>();
+}
+
+fn splice_routes(fresh: &Context, input: SpliceInput, serial: u32, document: &Document, node: Option<NodeId>, root: u32, route_base: u64, path_base: u64, skipped: &[u32]) -> result: Result<RoutePatch, LayoutError> reads(document), reads(skipped), writes(fresh) {
+  doc "Constructs all new route and use records privately before retained payloads or index links change.";
+  let absent_text = absent_text_unit();
+  let absent_use = unused_style();
+  let absent_route = absent_style_route();
+  let absent_path = absent_context_path();
+  let length = document^.nodes.inner.len;
+  let listing = sparse_routes::<TextUnit>(length: length, missing: absent_text);
+  let uses = sparse_routes::<StyleUse>(length: length, missing: absent_use);
+  let routes = sparse_routes::<StyleRoute>(length: route_base, missing: absent_route);
+  let paths = sparse_routes::<ContextPath>(length: path_base, missing: absent_path);
+  let context_of = sparse_routes::<u32>(length: length, missing: no_index);
+  let nodes = box_slots_new::<u32>(capacity: 0_u64);
+  match node {
+    Some(value: inserted) => {
+      let listed = propagate splice_dom_nodes(document: document, node: inserted, nodes: &nodes);
+    }
+    None() => {
+    }
+  }
+  record_units(context: fresh, serial: serial, paragraph_base: input.paragraphs, listing: &listing);
+  let no = False();
+  let recorded = propagate record_uses(context: fresh, serial: serial, block_base: input.blocks, paragraph_base: input.paragraphs, own: no, uses: &uses, routes: &routes, root: root);
+  let children = fresh^.children.inner.len;
+  for (at in 0_u64..children) {
+    let local = cvt.wrap::<u64, u32>(at);
+    let child = local +sat input.children;
+    let done = propagate record_tree(context: &fresh^.children.inner[at], parent: serial, child: child, paths: &paths, listing: &listing, uses: &uses, routes: &routes, context_of: &context_of, root: root);
+  }
+  record_skipped_nodes(nodes: skipped, listing: &listing);
+  let patch = RoutePatch(listing: move listing, uses: move uses, routes: move routes, paths: move paths, context_of: move context_of, nodes: move nodes, route_base: route_base, path_base: path_base);
+  return Ok<RoutePatch, LayoutError>(value: move patch);
+}
+
+fn publish_splice_routes(layout: &Layout, patch: &RoutePatch, removed_nodes: &[u32]) -> result: unit reads(patch), reads(removed_nodes), writes(layout.text_units), writes(layout.uses), writes(layout.routes), writes(layout.context_of), writes(layout.paths) {
+  doc "Publishes only the edited NodeIds and new directory intervals. No retained prefix is copied or scanned and removed identities remain tombstones.";
+  let absent_text = absent_text_unit();
+  let absent_use = unused_style();
+  let removed_count = removed_nodes^.len;
+  for (k in 0_u64..removed_count) {
+    let at = cvt::<u32, u64>(removed_nodes^[k]);
+    route_write::<TextUnit>(table: &layout^.text_units, at: at, value: absent_text);
+    route_write::<StyleUse>(table: &layout^.uses, at: at, value: absent_use);
+    route_write::<u32>(table: &layout^.context_of, at: at, value: no_index);
+  }
+  let nodes = patch^.nodes.inner.len;
+  for (k in 0_u64..nodes) {
+    let at = cvt::<u32, u64>(patch^.nodes.inner[k]);
+    let text = route_read::<TextUnit>(table: &patch^.listing, at: at);
+    let uses = route_read::<StyleUse>(table: &patch^.uses, at: at);
+    let context_slot = route_read::<u32>(table: &patch^.context_of, at: at);
+    route_write::<TextUnit>(table: &layout^.text_units, at: at, value: text);
+    route_write::<StyleUse>(table: &layout^.uses, at: at, value: uses);
+    route_write::<u32>(table: &layout^.context_of, at: at, value: context_slot);
+  }
+  let route_end = patch^.routes.len;
+  for (at in patch^.route_base..route_end) {
+    let route = route_read::<StyleRoute>(table: &patch^.routes, at: at);
+    route_write::<StyleRoute>(table: &layout^.routes, at: at, value: route);
+  }
+  let path_end = patch^.paths.len;
+  for (at in patch^.path_base..path_end) {
+    let path = route_read::<ContextPath>(table: &patch^.paths, at: at);
+    route_write::<ContextPath>(table: &layout^.paths, at: at, value: path);
+  }
+  return unit;
+}
+
+fn relocate_splice(fresh: &Context, input: SpliceInput, y: i64) -> result: unit writes(fresh) {
+  doc "Rebases private payloads once into final stable slots. Independent paragraphs, blocks and child contexts retain their internal origins; only the inserted root anchor receives its owner's offset.";
+  let blocks = fresh^.blocks.inner.len;
+  for (at in 0_u64..blocks) {
+    let block = &fresh^.blocks.inner[at];
+    relocate_payloads(pages: &block^.entries.payloads, blocks: input.blocks, paragraphs: input.paragraphs, children: input.children);
+    relocate_nodes(pages: &block^.entries.nodes, blocks: input.blocks, owner: input.owner, slot: input.allocated);
+    let output = relocate_output(output: block^.boundary, block_base: input.blocks, owner: input.owner, slot: input.allocated);
+    set block^.boundary = output;
+    relocate_height_record(record: &block^.height_proof, input: input);
+    set block^.inner_x = block^.inner_x +sat input.left;
+    set block^.avail_left = block^.avail_left +sat input.left;
+    set block^.content_left = block^.content_left +sat input.left;
+    if block^.parent == no_index {
+      set block^.parent = input.owner;
+      set block^.entry_slot = input.allocated;
+      set block^.x = block^.x +sat input.local_left;
+      let shift = y -sat block^.y;
+      let moved = shift_motion(output: block^.boundary, delta: shift);
+      set block^.boundary = moved;
+      set block^.output.offset = y;
+      set block^.y = y;
+    } else {
+      set block^.parent = block^.parent +sat input.blocks;
+    }
+  }
+  let paragraphs = fresh^.paragraphs.inner.len;
+  for (at in 0_u64..paragraphs) {
+    let paragraph = &fresh^.paragraphs.inner[at];
+    if paragraph^.block == no_index {
+      set paragraph^.block = input.owner;
+    } else {
+      set paragraph^.block = paragraph^.block +sat input.blocks;
+    }
+    set paragraph^.left = paragraph^.left +sat input.left;
+    set paragraph^.broken_left = paragraph^.broken_left +sat input.left;
+    let pieces = paragraph^.pieces.inner.len;
+    for (k in 0_u64..pieces) {
+      let held = paragraph^.pieces.inner[k];
+      match held {
+        Object(context: child, style: style_held) => {
+          let rebased = child +sat input.children;
+          set paragraph^.pieces.inner[k] = Piece::Object(context: rebased, style: style_held);
+        }
+        Bytes(..) => {
+        }
+        Generated(..) => {
+        }
+        Scalar(..) => {
+        }
+        Begin(..) => {
+        }
+        End(..) => {
+        }
+      }
+    }
+    let marks = paragraph^.marks.inner.len;
+    for (k in 0_u64..marks) {
+      let held = paragraph^.marks.inner[k];
+      match held {
+        Atomic(at: position, context: child) => {
+          let rebased = child +sat input.children;
+          set paragraph^.marks.inner[k] = Mark::Atomic(at: position, context: rebased);
+        }
+        Open(..) => {
+        }
+        Close(..) => {
+        }
+        Node(..) => {
+        }
+      }
+    }
+    let atomics = paragraph^.atomics.inner.len;
+    for (k in 0_u64..atomics) {
+      set paragraph^.atomics.inner[k].context = paragraph^.atomics.inner[k].context +sat input.children;
+    }
+  }
+  let children = fresh^.children.inner.len;
+  for (at in 0_u64..children) {
+    let child = &fresh^.children.inner[at];
+    if child^.placement_paragraph != no_index {
+      set child^.placement_paragraph = child^.placement_paragraph +sat input.paragraphs;
+    }
+    relocate_height_record(record: &child^.height_proof, input: input);
+    set child^.height_input.context = input.serial;
+    if child^.height_input.owner == no_index {
+      set child^.height_input.owner = input.owner;
+      set child^.height_input.element = input.height_proof.source_element;
+    } else {
+      set child^.height_input.owner = child^.height_input.owner +sat input.blocks;
+    }
+    if child^.block == no_index {
+      set child^.block = input.owner;
+      set child^.entry_slot = input.allocated;
+      set child^.anchor.x = child^.anchor.x +sat input.local_left;
+      set child^.anchor.y = y;
+    } else {
+      set child^.block = child^.block +sat input.blocks;
+    }
+  }
+  return unit;
+}
+
+fn vacant_paragraph(style: StyleRef) -> made: Paragraph pure {
+  doc "An empty retired stable paragraph slot, preserving all other pool identities.";
+  let pieces = box_slots_new::<Piece>(capacity: 0_u64);
+  let paragraph = new_paragraph(style: style, pieces: move pieces, reserve: 0_u64);
+  set paragraph.retired = True();
+  return move paragraph;
+}
+
+fn publish_splice_payloads(context: &Context, fresh: &Context) -> result: unit writes(context.blocks), writes(context.paragraphs), writes(context.children), writes(context.definite_free), writes(context.has_out), writes(fresh) {
+  doc "Appends preflighted payloads to the existing context-wide stable pools. The Slots append boundary orders publication only; subtree preparation has already completed independently.";
+  let definite_free = band(context^.definite_free, fresh^.definite_free);
+  set context^.definite_free = definite_free;
+  let has_out = bor(context^.has_out, fresh^.has_out);
+  set context^.has_out = has_out;
+  let blocks = fresh^.blocks.inner.len;
+  let paragraphs = fresh^.paragraphs.inner.len;
+  let children = fresh^.children.inner.len;
+  let style = fresh^.style;
+  let no = False();
+  for (at in 0_u64..blocks) {
+    if at < fresh^.blocks.inner.len {
+      let taken = new_block(style: style, marker: no);
+      swap(first: &taken, second: &fresh^.blocks.inner[at]);
+      let pushed = push_item::<Block>(cell: &context^.blocks, value: move taken, ceiling: item_ceiling);
+    }
+  }
+  for (at in 0_u64..paragraphs) {
+    if at < fresh^.paragraphs.inner.len {
+      let taken = vacant_paragraph(style: style);
+      swap(first: &taken, second: &fresh^.paragraphs.inner[at]);
+      let pushed = push_item::<Paragraph>(cell: &context^.paragraphs, value: move taken, ceiling: item_ceiling);
+    }
+  }
+  for (at in 0_u64..children) {
+    if at < fresh^.children.inner.len {
+      let taken = new_context(kind: ctx_flow, style: style);
+      swap(first: &taken, second: &fresh^.children.inner[at]);
+      let pushed = push_item::<Context>(cell: &context^.children, value: move taken, ceiling: item_ceiling);
+    }
+  }
+  return unit;
+}
+
+fn removed_entries(context: &Context, item: Flow, items: &Box<Slots<Flow>>, visits: &BoundaryVisits) -> result: unit reads(context.blocks.inner), writes(items), writes(visits) {
+  doc "Collects only a removed entry's owned flow subtree. Child contexts are retired as whole owned trees, so their payload slots need no rebasing.";
+  let pushed = push_item::<Flow>(cell: items, value: item, ceiling: item_ceiling);
+  set visits^.entries = visits^.entries +sat 1_u64;
+  match item {
+    Open(block: b) => {
+      let at = cvt::<u32, u64>(b);
+      if at < context^.blocks.inner.len {
+        set visits^.blocks = visits^.blocks +sat 1_u64;
+        let sequence = &context^.blocks.inner[at].entries;
+        let handles = box_slots_new::<EntryHandle>(capacity: 0_u64);
+        later_handles(sequence: sequence, root: sequence^.root, skip: 0_u64, owner: b, handles: &handles, visits: visits);
+        let count = handles.inner.len;
+        for (k in 0_u64..count) {
+          let nested = splice_payload(sequence: sequence, slot: handles.inner[k].slot, visits: visits);
+          removed_entries(context: context, item: nested, items: items, visits: visits);
+        }
+      }
+    }
+    Text(..) => {
+    }
+    Child(..) => {
+    }
+    Float(..) => {
+    }
+    Out(..) => {
+    }
+    Close(..) => {
+    }
+  }
+  return unit;
+}
+
+fn retire_splice_child(child: &Context, paths: &RouteTable<ContextPath>) -> (contexts: u64, paragraphs: u64) writes(child), writes(paths) {
+  doc "Retires one owned context subtree, tombstones its routes and replaces its stable slot with a vacant context. Counts describe only the removed live subtree.";
+  if child^.retired {
+    return 0_u64, 0_u64;
+  }
+  let (contexts, paragraphs) = count_tree(context: child);
+  retire_tree(context: child, paths: paths);
+  let style = child^.style;
+  let empty = new_context(kind: ctx_flow, style: style);
+  set empty.retired = True();
+  set child^ = move empty;
+  return contexts, paragraphs;
+}
+
+fn retire_splice_atomics(paragraph: &Paragraph, children: &[Context], paths: &RouteTable<ContextPath>) -> (contexts: u64, paragraphs: u64) reads(paragraph), writes(children), writes(paths) {
+  doc "Retires the atomic contexts owned by a removed paragraph before its marks are dropped. add_object creates one child and one Object piece, and preparation emits one Atomic mark for that piece; these children have no separate flow entry.";
+  let contexts = 0_u64;
+  let paragraphs = 0_u64;
+  let marks = paragraph^.marks.inner.len;
+  for (m in 0_u64..marks) {
+    let mark = paragraph^.marks.inner[m];
+    match mark {
+      Atomic(context: c, ..) => {
+        let at = cvt::<u32, u64>(c);
+        if at < children^.len {
+          let (removed_contexts, removed_paragraphs) = retire_splice_child(child: &children^[at], paths: paths);
+          set contexts = contexts +sat removed_contexts;
+          set paragraphs = paragraphs +sat removed_paragraphs;
+        }
+      }
+      Open(..) => {
+      }
+      Close(..) => {
+      }
+      Node(..) => {
+      }
+    }
+  }
+  return contexts, paragraphs;
+}
+
+fn retire_splice_payloads(context: &Context, items: &[Flow], paths: &RouteTable<ContextPath>) -> (contexts: u64, paragraphs: u64) reads(items), writes(context.blocks.inner), writes(context.paragraphs.inner), writes(context.children.inner), writes(paths) {
+  doc "Drops only removed payloads and tombstones their context routes, including positioned, floated and paragraph-owned atomic contexts. Counts are subtree deltas, never a retained-root census.";
+  let contexts = 0_u64;
+  let paragraphs = 0_u64;
+  let count = items^.len;
+  for (k in 0_u64..count) {
+    let item = items^[k];
+    match item {
+      Open(block: b) => {
+        let at = cvt::<u32, u64>(b);
+        if at < context^.blocks.inner.len {
+          let sequence = new_sequence();
+          set context^.blocks.inner[at].entries = move sequence;
+          set context^.blocks.inner[at].entry_slot = no_index;
+        }
+      }
+      Text(paragraph: p) => {
+        let at = cvt::<u32, u64>(p);
+        if at < context^.paragraphs.inner.len {
+          let children = context^.children.inner.len;
+          let (removed_contexts, removed_paragraphs) = retire_splice_atomics(paragraph: &context^.paragraphs.inner[at], children: &context^.children.inner[0_u64..children], paths: paths);
+          set contexts = contexts +sat removed_contexts;
+          set paragraphs = paragraphs +sat removed_paragraphs;
+          let style = context^.paragraphs.inner[at].style;
+          let empty = vacant_paragraph(style: style);
+          set context^.paragraphs.inner[at] = move empty;
+          set paragraphs = paragraphs +sat 1_u64;
+        }
+      }
+      Child(context: c) => {
+        let at = cvt::<u32, u64>(c);
+        if at < context^.children.inner.len {
+          let (removed_contexts, removed_paragraphs) = retire_splice_child(child: &context^.children.inner[at], paths: paths);
+          set contexts = contexts +sat removed_contexts;
+          set paragraphs = paragraphs +sat removed_paragraphs;
+        }
+      }
+      Close(..) => {
+      }
+      Float(context: c) => {
+        let at = cvt::<u32, u64>(c);
+        if at < context^.children.inner.len {
+          let (removed_contexts, removed_paragraphs) = retire_splice_child(child: &context^.children.inner[at], paths: paths);
+          set contexts = contexts +sat removed_contexts;
+          set paragraphs = paragraphs +sat removed_paragraphs;
+        }
+      }
+      Out(context: c) => {
+        let at = cvt::<u32, u64>(c);
+        if at < context^.children.inner.len {
+          let (removed_contexts, removed_paragraphs) = retire_splice_child(child: &context^.children.inner[at], paths: paths);
+          set contexts = contexts +sat removed_contexts;
+          set paragraphs = paragraphs +sat removed_paragraphs;
+        }
+      }
+    }
+  }
+  return contexts, paragraphs;
+}
