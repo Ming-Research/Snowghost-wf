@@ -90,6 +90,11 @@ for path,name,stage in [('renderer/layout/update.wf','update_flow_inner',1),('re
     p=Path(path); s=p.read_text(); old=function(s,name); lines=old.splitlines(keepends=True)
     lines.insert(2,f'  font_probe_record(context: context, styles: styles, stage: {stage}_u32);\n')
     p.write_text(replace_once(s,old,''.join(lines)))
+# Observe admission after earlier probes, separately from update entry.
+p = Path('renderer/layout/update.wf'); s = p.read_text()
+anchor = '    let column_ready = column_replay_ready(context: context, styles: styles, frame: frame, unasked: unasked);'
+s = replace_once(s, anchor, '    font_probe_record(context: context, styles: styles, stage: 4_u32);\n' + anchor + '\n    if column_ready {\n      font_probe_record(context: context, styles: styles, stage: 5_u32);\n    }')
+p.write_text(s)
 # Refusal reasons do not need style inputs, and survive in each context's buffer.
 p=Path('renderer/layout/boundary.wf'); s=p.read_text(); old=function(s,'boundary_refusal'); lines=old.splitlines(keepends=True)
 lines.insert(2,'  font_probe_text(buffer: &context^.font_probe, text: &font_probe_label[0_u64..font_probe_label.len]);\n  font_probe_u32(buffer: &context^.font_probe, value: reason);\n  font_probe_byte(buffer: &context^.font_probe, value: 10_u8);\n')

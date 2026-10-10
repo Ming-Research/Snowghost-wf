@@ -167,6 +167,12 @@ def column_fixtures():
                         ('column-two', ''),
                         ('column-three', 'section{width:580px;column-count:3}')]:
         yield name, source(extra=extra), target_pairs
+    def line_presence_pairs(tree):
+        node = text(tree, 'Column target.')['node']
+        return [f'D {node} 0 14', f'T {node} 0 Column target.',
+                f'D {node} 0 14', f'T {node} 0 Column target.']
+    yield 'column-line-presence', source(), line_presence_pairs
+    yield 'column-empty', source(body='<p><span class="glyph">Column target.</span></p>'), line_presence_pairs
     yield 'column-float', source(body=rows.replace('<p><span class="glyph">Column target.',
           '<aside style="float:left;width:70px;height:100px"></aside><p><span class="glyph">Column target.')), target_pairs
     yield 'column-split', source(body='<span style="font:16px/1 monospace">Split head.<div>Bridge.</div>Split tail.</span>' + rows,

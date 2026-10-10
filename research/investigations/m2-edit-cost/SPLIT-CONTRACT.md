@@ -3223,7 +3223,8 @@ publication follows the ordinary scope and its exact suffix proof rather than
 rebuilding unrelated retained summaries. There is no new cache or representation.
 
 The fixtures must cover one and multiple columns, a font change that moves a
-column boundary, negative margins, floats, atomic inline and split fragments,
+column boundary, lined/lineless transitions and an empty unit stream, negative
+margins, floats, atomic inline and split fragments,
 repeated edits and source reconstruction, plus changed column shape, containing
 width, own style, block style, child and percentage inputs that keep full replay.
 Mutations must detect omitted rebalancing, wrong content height, omitted scoped
@@ -3243,3 +3244,164 @@ particular height-basis change alone changes current pixels. The earlier
 marked-child omission mutation is retired: `restack_entry` independently rejects
 the same mixed mark, so removing just the new guard cannot change admission.
 The child fixture remains as a full-identity case.
+
+### Font-size attribution evidence
+
+The common-compiler historical comparison in hosted run
+[38017678473](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38017678473)
+uses wf-41f46e60030c, LLVM 22.1.8, the committed Apollo11 capture and its 60
+font-size edits. One Ubuntu 24.04.5 runner, AMD EPYC 9V74, four virtual CPUs
+(two cores with two threads each), executes every cohort sequentially and with
+four workers in forward/reverse interleaved rounds. Values below are upper
+median edit microseconds, round one / round two, excluding style time.
+
+| Source | Sequential | Four workers |
+|---|---:|---:|
+| Main bb98d4371d0e148775e232e4d2938ddb9aec3be6 | 227 / 232 | 460 / 451 |
+| Independent main twin | 231 / 229 | 453 / 455 |
+| Pre-merge 8f973e691e18f7322c39e2adbb2a8d4647865079 | 757 / 760 | 1120 / 1113 |
+| Merge 4528e007bcc7559d91725cc81fb0a075ff6c1efe | 805 / 820 | 1223 / 1198 |
+| Handoff 4df6176736b5a4d31d70a20996417c724ba617d4 | 817 / 811 | 1219 / 1219 |
+| Independent handoff twin | 811 / 817 | 1213 / 1210 |
+
+The extra 530 / 528 sequential microseconds are already present before the
+grid merge. The merge adds 48 / 60 microseconds in these rounds. The
+merge and handoff ranges overlap across rounds (805–820 versus 811–817 us),
+so these two rounds do not isolate the later commits' cost. This localizes
+most cost before the merge, without identifying an earliest introducing
+commit. The requested layout control b0d1b717561b75325f22916a56bf0ccec5e5ed4d,
+with only its missing `Cancelled` arm, still fails the changed `write_once`
+cancellation signature. Its exact patch and GRAM-11 diagnostic are archived
+in [38016495734](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38016495734).
+Broader adaptation awaits the owner; this cohort has no measured value. The
+merge's only adaptations are the two explicit two-result return forwarders;
+all other measured source diffs are empty. Every binary records compiler
+SHA-256 ee3abc1d9bbb562b18a44893f973272b1768acb69273bfa93742e0880ef06921.
+
+The isolated instruction/call-count capture in
+[38019938037](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38019938037)
+uses the same archived binaries on an AMD EPYC 7763 hosted runner. Collection
+starts enabled; `--dump-before=wf_layout.update` records initialization, and
+`--dump-after=wf_layout.update` records only the first layout update in part
+2. The part's summed function self costs equal its instruction summary.
+Earlier toggled profiles gave valid edit instruction costs but included
+startup in call counts; those call counts are not evidence. Counts below
+normalize recursive Callgrind function suffixes and count emitted calls;
+inlined operations are represented in their caller's instructions.
+
+| First edit | Main | Handoff | Frame/motion repair c1257be |
+|---|---:|---:|---:|
+| Update instructions | 2,123,186 | 6,439,777 | 5,427,355 |
+| `prepare_paragraph` / `break_paragraph` / `finish_lines` calls, each | 1 | 1 | 1 |
+| `lay_out_context` calls | 2 | 2 | 2 |
+| `update_held` calls | 10 | 10 | 10 |
+| `grid_size` calls | 6 | 6 | 6 |
+| `grid_measure_item` / `grid_finish_child` calls, each | 8 | 8 | 8 |
+| `full_reference_publication` calls | 0 | 2 | 2 |
+| `prepare_boundary_entry` (or `_at`) calls | 0 | 1,211 | 1,211 |
+| `reduce_sequence` calls | 0 | 2,090 | 2,090 |
+| `flow_frame` calls | 18 | 981 | 94 |
+| `lift_block_output` calls | 0 | 637 | 322 |
+| `join_output` calls | 0 | 3,323 | 2,691 |
+
+The large full publication costs 2,988,835 inclusive instructions, about 69%
+of the 4,316,591-instruction first-edit difference; the second tiny publication
+costs 13,617. Inclusive ancestor costs overlap and are not summed. Main already
+runs normal-flow preparation and finishing for this edit. The candidate adds
+retained summaries, range/geometry maintenance and repeated frame/motion
+composition to that replay. The existing driver counts one prepared paragraph
+and three affected paragraphs in both sources; its seven versus eleven context
+counts include additional grid accounting and are not a count of four new
+relayout calls. All 60 edit updates together cost 261,599,558 instructions in
+main, 386,021,887 in the handoff and 357,009,427 after the frame/motion repair.
+No absolute timing is compared across hosted machines.
+
+The independent input trace in
+[38018484884](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38018484884)
+retains incremental/full identity for the first font-size toggle and inverse.
+Each records eight boundary fallbacks: reason 6 four times, reason 7 once,
+reason 8 once and reason 9 twice, with zero stationary-frontier refusals.
+Reason 6 is the changed/empty frontier on smaller parent-driven flow updates;
+reason 7 is intrinsic demand; reason 8 is the large active-column barrier;
+reason 9 is certificate or already-probed reference refusal. The column
+context has 1,190 events, one marked paragraph and equal completed inputs;
+its height changes from 752,724 to 755,566 layout units and back. A separate
+three-event grid-content wrapper needs full publication when its natural and
+forced height spaces alternate. The trace's per-context stages and reason
+records distinguish these dependencies; no diagnostic buffer enters a timing
+binary.
+
+### Which extra work is necessary
+
+A font-size edit changes shaping, advances and potentially line metrics of its
+actual inline consumers. Their paragraph must be prepared and broken; changed
+normal geometry must propagate through margins, floats, baselines, heights and
+column units. A column balancer reads the complete unit stream, so even one
+resolved column requires fresh balancing and placement. Grid row sizing also
+has genuine intrinsic and final-space dependencies; the six sizing calls in
+both sources do not explain the regression and are preserved.
+
+This matches the dependency structure in Chromium revision
+4b47de55fa514cf90042b65c634b6ac10502d42b:
+[`LayoutText::StyleDidChange`](https://chromium.googlesource.com/chromium/src/+/4b47de55fa514cf90042b65c634b6ac10502d42b/third_party/blink/renderer/core/layout/layout_text.cc)
+invalidates layout/intrinsic or inline collection as the style difference
+requires; [`InlineNode::PrepareLayoutIfNeeded`](https://chromium.googlesource.com/chromium/src/+/4b47de55fa514cf90042b65c634b6ac10502d42b/third_party/blink/renderer/core/layout/inline/inline_node.cc)
+collects, segments and shapes invalidated inline content. The
+[layout reuse checks](https://chromium.googlesource.com/chromium/src/+/4b47de55fa514cf90042b65c634b6ac10502d42b/third_party/blink/renderer/core/layout/layout_utils.cc)
+inspect effective constraint-space geometry, percentages and definiteness,
+not just equal outer dimensions. Grid's
+[measurement/final constraint-space construction](https://chromium.googlesource.com/chromium/src/+/4b47de55fa514cf90042b65c634b6ac10502d42b/third_party/blink/renderer/core/layout/grid/grid_layout_algorithm.cc)
+distinguishes intrinsic row measurement from settled final block sizes.
+Chromium's [column layout algorithm](https://chromium.googlesource.com/chromium/src/+/4b47de55fa514cf90042b65c634b6ac10502d42b/third_party/blink/renderer/core/layout/column_layout_algorithm.cc)
+first obtains content-based column height from an unfragmented strip, then
+checks actual breaks and can increase height by the measured shortage and
+retry. That dependency remains even when the requested count is unchanged.
+Snowghost's supported column algorithm instead consumes its complete updated
+normal-flow unit stream; the repair keeps that consumer and its shortage
+iteration intact. This is an algorithm/dependency comparison, not a Chromium
+performance measurement.
+
+M2 additionally requires current retained summaries for subsequent edits.
+They cannot simply be omitted, but their existing exact prefix/suffix contracts
+can preserve unchanged entries. Recomputing the same frame for every entry,
+repeating motion-independent block joins, preparing unchanged containing
+inputs and rebuilding unrelated normal-flow summaries are not required by the
+current edit. The proposed repair preserves the invalidated paragraph and
+complete column/grid consumers, and reuses only state justified by those
+contracts. No evidence here shows that main avoids the cost through a wrong
+result or a whole-page rebuild: its first edit is incremental, with the same
+base dump and paragraph work. Final repaired identity and acceptance remain
+separate required evidence.
+
+
+### First scoped-column result and remaining attribution
+
+The initial scoped-column repair is insufficient under its prior rejection
+criterion. Hosted [38020777328](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38020777328),
+AMD EPYC 9V45 with the same compiler and archived controls, measures repaired
+sequential twins at 409/475 and 482/477 us versus main 157/162 and 158/159 us;
+four-worker twins are 702/686 and 719/699 versus main 329/286 and 318/327 us.
+All eight paired comparisons still fail. The run is noisy (maximum repaired
+sequential twin spread 1.178, main four-worker spread 1.143), but no noise
+exception changes a failed cell to a pass. The first update does drop from
+6,439,777 to 1,842,693 instructions, below main's 2,123,186; all 60 updates drop
+from 386,021,887 to 316,606,383, still above main's 261,599,558. Thus the first
+sample is not a sufficient explanation of the remaining median.
+
+The raw rows identify the distinction: edits 1/2, 11/12, 43/44, 49/50, 57/58
+and 59/60 reduce held entries from 1,321 to 132, while edits 3/4, 7/8, 19/20,
+33/34, 37/38, 47/48 and 53/54 retain the full 1,321. Before changing another
+admission rule, trace the complete script and the state at the actual column
+admission, and isolate instruction/call counters for every update. A dirty
+block/child, changed consumed input or earlier speculative invalidation must
+be explained, not bypassed. The current proposal remains an insufficient
+experimental repair, not an accepted result.
+
+The one/two/three-column, atomic, split and source-followup fixtures each
+prepare one paragraph and replay one held entry; the float fixture replays 19.
+All focused edits match full layout in both modes. The old c1257be control
+matches full layout but fails the intended one-versus-192 replay-count
+observation. Changed block/child/frame/height/shape cases still take their
+conservative paths. These results support the bounded path already exercised,
+not completion of the performance criterion or the later incoming-space and
+line-presence fixtures.
