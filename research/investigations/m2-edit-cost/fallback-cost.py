@@ -379,13 +379,21 @@ def summarize():
         print(row)
 
 
+def constructor_cost(edges, function):
+    import re
+    def normalized(symbol):
+        return re.sub(r"(?:\.body\.llvm\.[0-9]+|'[0-9]+)+$", '', symbol)
+    costs = [value for (caller, callee), value in edges.items()
+             if normalized(callee) == 'wf_layout.' + function
+             and normalized(caller) == 'wf_layout.structure_changed']
+    return sum(costs) if costs else None
+
+
 def construction_summary(ids):
     import re
     names = ('candidate', 'serialroutes', 'oldpaths', 'oldunits', 'oldcontexts', 'noreserve')
     functions = ('retain_routes', 'copy_retained_paths', 'copy_retained_units', 'copy_retained_contexts', 'record_tree', 'reconstruction_route_bound')
     rows = []
-    def normalized(symbol):
-        return re.sub(r"(?:\.body\.llvm\.[0-9]+|'[0-9]+)$", '', symbol)
     for name in names:
         if not (OUT / f'profile-{name}-full.callgrind.2').exists():
             continue
@@ -394,10 +402,10 @@ def construction_summary(ids):
             for function in functions:
                 # Only the constructor's outer call belongs here, not its
                 # recursive or outlined internal calls a second time.
-                cost = sum(value for (caller, callee), value in edges.items()
-                           if normalized(callee) == 'wf_layout.' + function
-                           and normalized(caller) == 'wf_layout.structure_changed')
-                rows.append(dict(cohort=name, edit=edit, constructor=function, inclusive_instructions=cost))
+                cost = constructor_cost(edges, function)
+                rows.append(dict(cohort=name, edit=edit, constructor=function,
+                                 status='observed' if cost is not None else 'unverified-boundary',
+                                 inclusive_instructions=cost if cost is not None else ''))
     if rows:
         with (OUT / 'constructions.csv').open('w') as f:
             writer = csv.DictWriter(f, fieldnames=rows[0])
@@ -453,7 +461,13 @@ fn=(4) bookkeeping
             pass
         else:
             raise AssertionError('accepted incorrect RSS evidence')
-    print('instruction-accounting and RSS controls: pass')
+    edges = {('wf_layout.structure_changed.body.llvm.3', 'wf_layout.retain_routes'): 100,
+             ('wf_layout.retain_routes', "wf_layout.retain_routes'2"): 90}
+    assert constructor_cost(edges, 'retain_routes') == 100
+    assert constructor_cost(edges, 'copy_retained_paths') is None
+    assert constructor_cost({}, 'retain_routes') is None
+    assert constructor_cost({('wf_layout.structure_changed', 'wf_layout.retain_routes'): 0}, 'retain_routes') == 0
+    print('instruction-accounting, constructor-boundary and RSS controls: pass')
 
 
 if __name__ == '__main__':
