@@ -778,7 +778,7 @@ fn count_retained_routes(layout: &Layout, paths: &RouteTable<ContextPath>, count
   let head = route_read::<StyleUse>(table: &layout^.uses, at: supplier);
   let cursor = head.head;
   let own = 0_u64;
-  let valid = band(left_valid, right_valid);
+  let own_valid = True();
   let limit = layout^.routes.len;
   for (step in 0_u64..limit) {
     if cursor == no_index {
@@ -786,7 +786,7 @@ fn count_retained_routes(layout: &Layout, paths: &RouteTable<ContextPath>, count
     }
     let at = cvt::<u32, u64>(cursor);
     if at >= limit {
-      set valid = False();
+      set own_valid = False();
       break;
     }
     let held = route_read::<StyleRoute>(table: &layout^.routes, at: at);
@@ -797,11 +797,13 @@ fn count_retained_routes(layout: &Layout, paths: &RouteTable<ContextPath>, count
     set cursor = held.next;
   }
   if cursor != no_index {
-    set valid = False();
+    set own_valid = False();
   }
   let prefix = left_total +sat own;
   let total = prefix +sat right_total;
   set counts^[middle] = RetainedRouteCount(own: own, total: total);
+  let sides_valid = band(left_valid, right_valid);
+  let valid = band(sides_valid, own_valid);
   return total, valid;
 }
 
@@ -813,6 +815,37 @@ fn retained_route_total(counts: &[RetainedRouteCount]) -> total: u64 reads(count
     return counts^[middle].total;
   }
   return 0_u64;
+}
+
+fn fill_retained_supplier(layout: &Layout, paths: &RouteTable<ContextPath>, supplier: u64, route_base: u64, destination: &[StyleRoute]) -> head: u32 reads(layout), reads(paths), writes(destination) {
+  doc "Fills one supplier's pre-sized interval in old-chain order; only its next pointer and preceding output link impose order.";
+  let original = route_read::<StyleUse>(table: &layout^.uses, at: supplier);
+  let cursor = original.head;
+  let head = no_index;
+  let written = 0_u64;
+  let count = destination^.len;
+  let limit = layout^.routes.len;
+  for (step in 0_u64..limit) {
+    if cursor == no_index {
+      break;
+    }
+    let at = cvt::<u32, u64>(cursor);
+    let held = route_read::<StyleRoute>(table: &layout^.routes, at: at);
+    let live = live_context(paths: paths, serial: held.serial);
+    if live {
+      if written < count {
+        let route = StyleRoute(serial: held.serial, structural: held.structural, block: held.block, paragraph: held.paragraph, owner: held.owner, next: head);
+        set destination^[written] = route;
+        let next = route_base +sat written;
+        if next < item_ceiling {
+          set head = cvt::<u64, u32>(next);
+        }
+        set written = written +sat 1_u64;
+      }
+    }
+    set cursor = held.next;
+  }
+  return head;
 }
 
 fn fill_retained_routes(layout: &Layout, paths: &RouteTable<ContextPath>, counts: &[RetainedRouteCount], uses: &[StyleUse], routes: &[StyleRoute], supplier_base: u64, route_base: u64) -> result: unit reads(layout), reads(paths), reads(counts), writes(uses), writes(routes) {
@@ -845,35 +878,7 @@ fn fill_retained_routes(layout: &Layout, paths: &RouteTable<ContextPath>, counts
   let next_base = route_base +sat after;
   fill_retained_routes(layout: layout, paths: paths, counts: &counts^[0_u64..middle], uses: &uses^[0_u64..middle], routes: &routes^[0_u64..before], supplier_base: supplier_base, route_base: route_base);
   fill_retained_routes(layout: layout, paths: paths, counts: &counts^[following..size], uses: &uses^[following..size], routes: &routes^[after..route_count], supplier_base: next_supplier, route_base: next_base);
-  let original = route_read::<StyleUse>(table: &layout^.uses, at: supplier);
-  let cursor = original.head;
-  let head = no_index;
-  let written = before;
-  let limit = layout^.routes.len;
-  for (
-    step in 0_u64..limit,
-    invariant written_prefix: written >= before
-  ) {
-    if cursor == no_index {
-      break;
-    }
-    let at = cvt::<u32, u64>(cursor);
-    let held = route_read::<StyleRoute>(table: &layout^.routes, at: at);
-    let live = live_context(paths: paths, serial: held.serial);
-    if live {
-      if written < after {
-        let route = StyleRoute(serial: held.serial, structural: held.structural, block: held.block, paragraph: held.paragraph, owner: held.owner, next: head);
-        set routes^[written] = route;
-        let offset = written - before;
-        let next = own_base +sat offset;
-        if next < item_ceiling {
-          set head = cvt::<u64, u32>(next);
-        }
-        set written = written +sat 1_u64;
-      }
-    }
-    set cursor = held.next;
-  }
+  let head = fill_retained_supplier(layout: layout, paths: paths, supplier: supplier, route_base: own_base, destination: &routes^[before..after]);
   set uses^[middle] = StyleUse(head: head);
   return unit;
 }
