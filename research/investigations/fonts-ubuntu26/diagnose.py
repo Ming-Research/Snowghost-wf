@@ -8,7 +8,7 @@ import struct
 import subprocess
 import urllib.request
 
-from fontTools.ttLib import TTFont, TTCollection
+from fontTools.ttLib import TTFont
 
 results = Path('results')
 text = Path('Makefile').read_text()
@@ -126,6 +126,15 @@ for face in offenders:
             fmt = struct.unpack_from('>H', header)[0]
             length = struct.unpack_from('>I', header, 4)[0] if fmt in (8, 10, 12, 13) else struct.unpack_from('>H', header, 2)[0]
             print(f'CMAP_RECORD {version} {source.name} record={record} platform={platform} encoding={encoding} offset={offset} format={fmt} length={length} header={header.hex()}', flush=True)
+            if fmt == 4:
+                seg_count = struct.unpack_from('>H', raw_cmap, offset + 6)[0] // 2
+                padding = struct.unpack_from('>H', raw_cmap, offset + 14 + seg_count * 2)[0]
+                fields = []
+                for segment in range(seg_count):
+                    values = [struct.unpack_from('>H', raw_cmap, offset + at + segment * 2)[0]
+                              for at in (14, 16 + seg_count * 2, 16 + seg_count * 4, 16 + seg_count * 6)]
+                    fields.append(dict(zip(('endCode', 'startCode', 'idDelta', 'idRangeOffset'), values)))
+                print(f'CMAP_FORMAT4 {version} {source.name} segCount={seg_count} reservedPad={padding} segments={json.dumps(fields)}', flush=True)
         try:
             font.ensureDecompiled(recurse=True)
         except AssertionError as problem:
@@ -155,8 +164,12 @@ for face in offenders:
 (results / 'offenders.json').write_text(json.dumps(offenders, indent=2))
 
 # Diagnostic only: preserve the existing error variant and exit status.
+interface = Path('renderer/oracle/fonts/module.wfm')
+interface_source = interface.read_text()
+assert interface_source.count('(face: u64)') == 2
+interface.write_text(interface_source.replace('(face: u64)', '(public face: u64)'))
 driver.write_text(driver_source.replace(old, new) + '\nconst diagnostic_refused: Array<u8, 14> = " Refused face=";\n\nconst diagnostic_unreadable: Array<u8, 17> = " Unreadable face=";\n')
-(results / 'diagnostic.patch').write_text(subprocess.check_output(['git', 'diff', '--', str(driver)], text=True))
+(results / 'diagnostic.patch').write_text(subprocess.check_output(['git', 'diff', '--', str(driver), str(interface)], text=True))
 wfc = next(Path('build/whitefoot').glob('*/whitefootc')).resolve()
 subprocess.run([str(wfc), '--cache', str(Path('build/wf-cache').resolve()), '--fragments', 'function', '--graph', 'modules.wfg', '--entry', 'layout_oracle', '-o', '../build/layout_oracle_seq'], cwd='renderer', check=True)
 fonts('26.04')
