@@ -64,7 +64,7 @@ def native(names, controls, rounds):
                     wall = []
                     for repeat in range(2):
                         dest = OUT / f'pilot-{name}-{page}-{kind}-{mode}-{repeat}.raw'
-                        wall.append(run([driver(name, mode), 'edittime', str(sample), *args_for(page)], dest))
+                        wall.append(run([driver(name, mode), 'edittime', str(sample.relative_to(ROOT)), *args_for(page)], dest))
                         inctime.read(dest, inctime.script_operations(sample))
                     print('pilot', name, page, kind, mode, wall, 'wall spread', max(wall) / min(wall), flush=True)
                     if max(wall) > 30:
@@ -78,7 +78,7 @@ def native(names, controls, rounds):
                 for mode in ('seq', 'par'):
                     for name in ordered:
                         dest = OUT / f'{name}-{page}-{kind}-{mode}-r{round_number}.raw'
-                        seconds = run([driver(name, mode), 'edittime', str(source), *args_for(page)], dest)
+                        seconds = run([driver(name, mode), 'edittime', str(source.relative_to(ROOT)), *args_for(page)], dest)
                         timed, other, styled, built = inctime.read(dest, operations)
                         if other:
                             raise ValueError('nonincremental result')
@@ -119,7 +119,7 @@ def profile(names):
                 options = ['--collect-atstart=yes', '--dump-before=wf_oracle.layout.apply_structure_edit', '--dump-after=wf_oracle.layout.apply_structure_edit']
             seconds = run(['valgrind', '--tool=callgrind', *options,
                            '--callgrind-out-file=' + str(prefix) + '.callgrind',
-                           driver(name, 'seq'), 'edittime', str(script), *args_for('apollo11')],
+                           driver(name, 'seq'), 'edittime', str(script.relative_to(ROOT)), *args_for('apollo11')],
                           Path(str(prefix) + '.raw'), timeout=300)
             print('profile', name, size, seconds, flush=True)
             if size != 'full':
@@ -135,15 +135,164 @@ def profile(names):
                     raise ValueError(('missing edit dumps', len(parts), len(edits)))
 
 
+def callgrind(path):
+    """Read Ir self costs and call edges from one independent dump part."""
+    import re
+    from collections import Counter
+    identifiers, own, calls, edges = {}, Counter(), Counter(), Counter()
+    caller, callee, pending = None, None, False
+    summary = None
+    positions, events = 1, 1
+    def symbol(text):
+        match = re.fullmatch(r'\((\d+)\)(?: (.*))?', text)
+        if not match:
+            return text
+        index, name = match.groups()
+        if name is not None:
+            identifiers[index] = name
+        return identifiers[index]
+    for line in Path(path).read_text().splitlines():
+        if line.startswith('positions: '):
+            positions = len(line.split()) - 1
+        elif line.startswith('events: '):
+            names = line.split()[1:]
+            if names[0] != 'Ir':
+                raise ValueError('unexpected callgrind events')
+            events = len(names)
+        elif line.startswith('summary: '):
+            summary = int(line.split()[1])
+        elif line.startswith('fn='):
+            caller = symbol(line[3:])
+            pending = False
+        elif line.startswith('cfn='):
+            callee = symbol(line[4:])
+        elif line.startswith('calls='):
+            calls[callee] += int(line[6:].split()[0])
+            pending = True
+        elif line and line[0] in '*+-0123456789':
+            parts = line.split()
+            if len(parts) != positions + events:
+                raise ValueError(('unexpected cost row', line))
+            cost = int(parts[positions])
+            if pending:
+                edges[caller, callee] += cost
+                pending = False
+            else:
+                own[caller] += cost
+    if summary is None or sum(own.values()) != summary:
+        raise ValueError(('instruction accounting does not reconcile', path, summary, sum(own.values())))
+    return summary, own, calls, edges
+
+
+def summarize():
+    from collections import Counter
+    import re
+    rows = list(csv.DictReader((OUT / 'native.csv').open()))
+    selected = {}
+    for mode in ('seq', 'par'):
+        inventory = [r for r in rows if r['cohort'] == 'candidate' and r['page'] == 'apollo11' and r['kind'] == 'block' and r['mode'] == mode and r['round'] == '1']
+        distribution = Counter((int(r['splice']), int(r['reason'])) for r in inventory)
+        expected = Counter({(1, 0): 38, (0, 9): 18, (0, 7): 2, (0, 3): 2})
+        if distribution != expected:
+            raise ValueError(('changed block admission', mode, distribution))
+        selected[mode] = {int(r['edit']) for r in inventory if r['splice'] == '0'}
+    if selected['seq'] != selected['par']:
+        raise ValueError('sequential and parallel fallback IDs differ')
+    ids = selected['seq']
+    (OUT / 'fallback-ids.json').write_text(json.dumps(sorted(ids)) + '\n')
+    grouped = {}
+    for row in rows:
+        if row['page'] == 'apollo11' and row['kind'] == 'block' and int(row['edit']) not in ids:
+            continue
+        key = (row['cohort'], row['page'], row['kind'], row['mode'], row['round'])
+        grouped.setdefault(key, []).append(int(row['total_us']))
+    summary_rows = [dict(cohort=k[0], page=k[1], kind=k[2], mode=k[3], round=k[4], edits=len(v), median_us=statistics.median(v)) for k, v in grouped.items()]
+    with (OUT / 'native-summary.csv').open('w') as f:
+        writer = csv.DictWriter(f, fieldnames=summary_rows[0]); writer.writeheader(); writer.writerows(summary_rows)
+    totals, counts, functions, breakdown = {}, {}, {}, []
+    for name in ('main', 'candidate'):
+        total, own, calls = 0, Counter(), Counter()
+        for edit in sorted(ids):
+            path = OUT / f'profile-{name}-full.callgrind.{2 * edit}'
+            cost, self_cost, incoming, edges = callgrind(path)
+            rebuild = sum(v for (caller, callee), v in edges.items() if callee == 'wf_layout.structure_changed')
+            layout = sum(v for (caller, callee), v in edges.items() if callee == 'wf_layout.update')
+            if not rebuild or not layout or cost < rebuild + layout:
+                raise ValueError(('invalid phase decomposition', name, edit, cost, rebuild, layout))
+            breakdown.append(dict(cohort=name, edit=edit, instructions=cost, structural_rebuild=rebuild, layout=layout, bookkeeping=cost-rebuild-layout))
+            total += cost
+            for symbol, amount in self_cost.items():
+                own[re.sub(r'\$instance\$[0-9a-f]+', '<all>', symbol)] += amount
+            for symbol, amount in incoming.items():
+                calls[re.sub(r'\$instance\$[0-9a-f]+', '<all>', symbol)] += amount
+        totals[name], counts[name], functions[name] = total, calls, own
+    with (OUT / 'instruction-breakdown.csv').open('w') as f:
+        writer = csv.DictWriter(f, fieldnames=breakdown[0]); writer.writeheader(); writer.writerows(breakdown)
+    symbols = set(functions['main']) | set(functions['candidate'])
+    attribution = [dict(function=s, main_calls=counts['main'][s], candidate_calls=counts['candidate'][s], main_self=functions['main'][s], candidate_self=functions['candidate'][s], difference=functions['candidate'][s]-functions['main'][s]) for s in symbols]
+    attribution.sort(key=lambda row: row['difference'], reverse=True)
+    with (OUT / 'attribution.csv').open('w') as f:
+        writer = csv.DictWriter(f, fieldnames=attribution[0]); writer.writeheader(); writer.writerows(attribution)
+    print('fallback instruction totals', totals)
+    for row in attribution[:25]:
+        print(row)
+
+
+def controls():
+    # Instruction conservation is required evidence: neither a missing event
+    # nor an inclusive call cost may silently become exclusive work.
+    import tempfile
+    content = """positions: line
+events: Ir
+summary: 21
+fn=(1) outer
+1 3
+cfn=(2) wf_layout.structure_changed
+calls=1 0
+* 4
+cfn=(3) wf_layout.update
+calls=1 0
+* 5
+fn=(2)
+1 4
+fn=(3)
+1 5
+fn=(4) bookkeeping
+1 9
+"""
+    with tempfile.TemporaryDirectory() as temporary:
+        path = Path(temporary) / 'part'
+        path.write_text(content)
+        total, own, calls, edges = callgrind(path)
+        assert total == 21 and own['outer'] == 3
+        assert calls['wf_layout.structure_changed'] == 1
+        assert edges['outer', 'wf_layout.update'] == 5
+        for wrong in (content.replace('summary: 21', 'summary: 22'),
+                      content.replace('events: Ir', 'events: Dr'),
+                      content.replace('1 9\n', '')):
+            path.write_text(wrong)
+            try:
+                callgrind(path)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError('accepted incorrect instruction evidence')
+    print('instruction-accounting controls: pass')
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=('native', 'profile'))
-    parser.add_argument('--names', nargs='+', required=True)
+    parser.add_argument('action', choices=('native', 'profile', 'summarize', 'self-test'))
+    parser.add_argument('--names', nargs='+')
     parser.add_argument('--controls', action='store_true')
     parser.add_argument('--rounds', type=int, default=3)
     opts = parser.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
     if opts.action == 'native':
         native(opts.names, opts.controls, opts.rounds)
-    else:
+    elif opts.action == 'profile':
         profile(opts.names)
+    elif opts.action == 'summarize':
+        summarize()
+    else:
+        controls()
