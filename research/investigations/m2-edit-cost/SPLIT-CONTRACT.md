@@ -3347,6 +3347,43 @@ forced height spaces alternate. The trace's per-context stages and reason
 records distinguish these dependencies; no diagnostic buffer enters a timing
 binary.
 
+### Complete edit-only instruction counts
+
+Hosted [38022223156](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38022223156)
+on AMD EPYC 7763 records separate before/after dumps for every one of the 60
+updates. Each even-numbered part is an update, each self sum equals its summary,
+and the sum exactly equals the independently toggled full-script count. The
+same archived binaries and compiler give the following emitted calls; inlined
+work remains in its caller. The last column is the paragraph-only repair
+faa1d75, not the later block extension.
+
+| All 60 font-size edits | Main | Handoff | Paragraph-only repair |
+|---|---:|---:|---:|
+| Update instructions | 261,599,558 | 386,021,887 | 316,606,383 |
+| `prepare_paragraph` | 156 | 156 | 156 |
+| `break_paragraph` / `finish_lines`, each | 2,182 | 2,182 | 2,182 |
+| `lay_out_context` | 1,556 | 1,556 | 1,556 |
+| `update_held` | 636 | 637 | 637 |
+| `grid_size` | 296 | 296 | 296 |
+| `grid_measure_item` / `grid_finish_child`, each | 368 | 368 | 368 |
+| `full_reference_publication` | 0 | 146 | 134 |
+| `prepare_boundary_entry` or `_at` | 0 | 36,286 | 22,030 |
+| `reduce_sequence` | 0 | 63,218 | 38,222 |
+| `flow_frame` | 2,292 | 33,887 | 9,173 |
+| `lift_block_output` | 0 | 19,700 | 6,494 |
+| `join_output` | 0 | 108,164 | 60,920 |
+
+The handoff's full publication accounts for 80,223,112 inclusive instructions,
+64.5% of the 124,422,329-instruction total difference. These calls do not nest
+inside each other; their enclosing publisher costs are not added again. The
+largest exclusive increases are transfer joins (13,081,922), sequence reductions
+(10,599,032), memory copies (9,835,512), frame resolution (5,422,339), counted
+block origins (4,552,404) and block-output lifting (4,142,594). The first scoped
+repair removes twelve full publications but leaves all fourteen large-column
+block restyles, each still costing about 4.87–5.59 million instructions versus
+main's 1.76–2.11 million. This localizes the remaining repair more precisely
+than the first edit alone.
+
 ### Which extra work is necessary
 
 A font-size edit changes shaping, advances and potentially line metrics of its
@@ -3453,3 +3490,14 @@ scoped one entry, so the fixture did not establish its intended premise. The
 ancestor now establishes its own flow context to make the changed definite
 height cross an actual context edge. The original full/scoped expectation and
 input-key mutation remain unchanged and require new execution evidence.
+
+
+The first line-presence and empty-unit fixtures deleted the complete text
+source. `patch_pieces` deliberately refuses empty data or a changed whitespace
+classification because those change box construction, so these edits never
+reached column replay. The fixtures now use the established nonempty-whitespace
+text edit: insert/remove a newline in a pre-line tab source. The source stays
+whitespace-only while its paragraph gains/loses a line; the single-paragraph
+case crosses an empty column-unit stream. The required incremental/full
+identity is unchanged. Extending text-edit construction admission is not part
+of the font-size dependency repair, and its explicit existing refusal remains.

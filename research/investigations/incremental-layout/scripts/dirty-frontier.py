@@ -168,11 +168,14 @@ def column_fixtures():
                         ('column-three', 'section{width:580px;column-count:3}')]:
         yield name, source(extra=extra), target_pairs
     def line_presence_pairs(tree):
-        node = text(tree, 'Column target.')['node']
-        return [f'D {node} 0 14', f'T {node} 0 Column target.',
-                f'D {node} 0 14', f'T {node} 0 Column target.']
-    yield 'column-line-presence', source(), line_presence_pairs
-    yield 'column-empty', source(body='<p><span class="glyph">Column target.</span></p>'), line_presence_pairs
+        node = text(tree, '\t\t')['node']
+        return [f'T {node} 0 \\n', f'D {node} 0 1'] * 2
+    # Keep a nonempty, whitespace-only text source: becoming empty or changing
+    # the whitespace classification would require box-tree reconstruction and
+    # is deliberately refused by text_changed before reaching column replay.
+    whitespace = rows.replace('Column target.', '\t\t')
+    yield 'column-line-presence', source(body=whitespace, extra='.glyph{white-space:pre-line}'), line_presence_pairs
+    yield 'column-empty', source(body='<span class="glyph">\t\t</span>', extra='.glyph{white-space:pre-line}'), line_presence_pairs
     yield 'column-float', source(body=rows.replace('<p><span class="glyph">Column target.',
           '<aside style="float:left;width:70px;height:100px"></aside><p><span class="glyph">Column target.')), target_pairs
     yield 'column-split', source(body='<span style="font:16px/1 monospace">Split head.<div>Bridge.</div>Split tail.</span>' + rows,
