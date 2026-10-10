@@ -4547,3 +4547,62 @@ The temporary fallback-cost workflow compiles and runs this smallest case
 on a hosted runner and archives its ledger; retain the source until the
 owning Whitefoot session incorporates the regression, then replace it with
 that upstream reference. Proposed handoff key: `sg-wf-bulk-multiple-results`.
+
+Hosted witness [38060646678](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38060646678)
+on `85c079acabebe23ae0e68fdf8555a1c5446bc547` compiled with the pinned compiler
+and exited successfully for total four. The archived ledger says `family
+emitted for 0 of 1 cyclic components` and `component(count) excluded: count
+has no sequential clone`; it records no permitted recursive call pair.
+The reduced permission gap is therefore reproduced without layout storage.
+This does not by itself prove the compiler's internal cause: the
+ordered-result diagnosis also relies on the renderer's explicit statement
+classification. No runtime performance or universal multi-result limitation
+is inferred from this tiny witness. Supplier sizing's intended shorter
+parallel chain remains unverified until an upstream correction supplies the
+missing permission; disjoint filling and page-copy permission are separately
+observed and do not close that gap.
+
+#### Bulk construction correctness evidence
+
+On `85c079acabebe23ae0e68fdf8555a1c5446bc547`, hosted
+[check 38060646679](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38060646679),
+[layout-check 38060646667](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38060646667),
+[Q139 38060650231](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38060650231)
+and [Q140 38060650190](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38060650190)
+passed. [oracles-m2 38058844549](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38058844549)
+passed all 20 jobs on `8c1646c843a064eb1826b2cd77ba142a56331892`; its renderer
+and compiler pin are identical to 85c079a, with renderer tree
+`89f7c5d33a0b75e1090e2a462824831744b96905`. The downloaded Apollo11 evidence
+contains, in each sequential/four-worker mode, 60 matching original edits,
+104 matching expanded edits with a splice and undo after every fallback,
+and 20 matching focused lifetime edits. These results establish the tested
+identity and admission observations, not the construction-cost or 1x
+performance criterion. Builds, checks, executable witnesses and measurements
+ran only on GitHub-hosted runners.
+
+The complete [falsify-m2 run 38058778686](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38058778686)
+on `67fcf391bb99f43d58e11cafa6f3d7b127f235f5` ran 168 jobs: 167 passed;
+the context-path omission patch alone failed compilation because deleting
+its statement left a noncanonical blank line. That failure is not mutation
+detection. Removing the statement's newline too preserved the intended
+fault, and the [focused retry 38060442299](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38060442299)
+on `ecaa041e376b18f5902053f4cc7d18f6c68b9900` passed the shared baseline and
+machinery plus all six fallback mutations in both modes. Together they
+cover every matrix row: 99 M2 mutations, 37 Q139 mutations, 22 Q140 mutations
+and six fallback mutations, plus the baseline, machinery, numeric-suffix
+and Q140 fixture jobs. Their renderer and pin are identical to 85c079a;
+the only failed row was repaired and rerun, not waived. The optional
+fallback-only retry leaves the complete default matrix unchanged.
+
+| New retained-state omission | First fallback | Intended later observation, in both modes |
+| --- | --- | --- |
+| Supplier heads | Identical result, reason 3 | A required local splice becomes a reconstruction fallback, reason 1, with identical geometry |
+| Text units | Identical result, reason 3 | The retained-text edit yields `inc DIFF` because its geometry is stale |
+| Establishing-context lookup | Identical result, reason 3 | The following required reconstruction is refused, reason 3 |
+| Historical path copy | Identical result, reason 3 | The following structural edit is refused, reason 1 |
+
+Each unmutated two-edit witness passes its independent full-layout comparison
+and required admission. The original style-route and text-route omissions
+also remain detected by their established post-fallback consumers. No
+compilation failure, earlier unrelated error or changed expected result is
+counted as detection.
