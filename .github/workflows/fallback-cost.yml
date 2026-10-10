@@ -5,6 +5,13 @@ on:
     branches: [research/m2-fallback-cost]
   workflow_dispatch:
     inputs:
+      driver_run:
+        description: Reuse these exact-source driver artifacts for harness-only work
+        default: ''
+      fixtures_only:
+        description: Run the fallback lifetime pilot and sequences only
+        type: boolean
+        default: false
       candidate:
         description: Candidate revision (empty selects this workflow revision)
         default: ''
@@ -17,7 +24,7 @@ permissions:
   actions: read
 jobs:
   build:
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[fallback]')
+    if: inputs.driver_run == '' && (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[fallback]'))
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
@@ -74,6 +81,7 @@ jobs:
           path: build/driver/
   measure:
     needs: build
+    if: always() && (needs.build.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.driver_run != ''))
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -82,8 +90,19 @@ jobs:
           submodules: true
       - uses: actions/download-artifact@v4
         with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.driver_run || github.run_id }}
           pattern: driver-*
           path: build/drivers
+      - name: Require unchanged renderer for archived candidates
+        if: inputs.driver_run != ''
+        run: |
+          set -euo pipefail
+          for name in candidate candidatetwin; do
+            source=$(head -n 1 build/drivers/driver-$name/revision.txt)
+            git fetch origin $source
+            git diff --exit-code $source HEAD -- renderer whitefoot.pin
+          done
       - name: Fonts, profiler and machine record
         run: |
           sudo apt-get -o Acquire::Retries=3 update
@@ -109,6 +128,7 @@ jobs:
           sh research/investigations/incremental-layout/run.sh prepare $pages
           sha256sum build/x5/scripts/* build/research/concurrency/* renderer/style/ua.css > build/fallback-cost/inputs.sha256
       - name: Native pilot and interleaved rounds
+        if: inputs.fixtures_only != true
         env:
           CONTROLS: ${{ inputs.controls }}
         run: |
@@ -117,7 +137,22 @@ jobs:
           if [ "$CONTROLS" = true ]; then flag=--controls; fi
           python3 research/investigations/m2-edit-cost/fallback-cost.py native --names main maintwin candidate candidatetwin $flag
       - name: Isolated instruction profiles with zero-edit control
+        if: inputs.fixtures_only != true
         run: python3 research/investigations/m2-edit-cost/fallback-cost.py profile --names main candidate
+      - name: Fallback lifetime pilot and both modes
+        if: inputs.fixtures_only == true
+        run: |
+          set -euo pipefail
+          s=research/investigations/incremental-layout/scripts/fallback-followup.py
+          python3 "$s" --self-test
+          for repeat in 1 2; do
+            WF_WORKERS=4 /usr/bin/time -p python3 "$s" build/drivers/driver-candidate/layout_oracle_seq "build/fallback-cost/fixture-pilot-$repeat"
+          done
+          for mode in seq par; do
+            WF_WORKERS=4 python3 "$s" "build/drivers/driver-candidate/layout_oracle_$mode" "build/fallback-cost/fixture-$mode"
+            WF_WORKERS=4 "build/drivers/driver-candidate/layout_oracle_$mode" edittime build/x5/scripts/apollo11-block.edits build/research/concurrency/apollo11.html renderer/style/ua.css 'wikibase.client.init&only=styles&skin=vector-2022=build/research/concurrency/apollo11-modules.css' 'modules=site.styles&only=styles&skin=vector-2022=build/research/concurrency/apollo11-site.css' > "build/fallback-cost/apollo-before-$mode.raw"
+            WF_WORKERS=4 python3 "$s" "build/drivers/driver-candidate/layout_oracle_$mode" "build/fallback-cost/apollo-followup-$mode" --apollo-before "build/fallback-cost/apollo-before-$mode.raw"
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
