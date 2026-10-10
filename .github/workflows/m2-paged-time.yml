@@ -1,0 +1,91 @@
+# Temporary hosted comparison for the storage-only adoption; remove before ready.
+name: m2-paged-time
+on:
+  workflow_dispatch:
+    inputs:
+      phase:
+        type: choice
+        options: [sample, matrix]
+        default: sample
+      sample_run:
+        type: string
+        description: Successful sample artifact on this exact revision
+      repetitions:
+        type: string
+        default: '3'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  time:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Toolchain and identical fonts
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          make -s toolchain compiler oracle-fonts
+      - name: Independent builds and initial duration samples
+        if: inputs.phase == 'sample'
+        run: |
+          set -euo pipefail
+          mkdir -p build/m2-paged-time/drivers
+          wfc=$(realpath build/whitefoot/wf-78223721f77d/whitefootc)
+          for cohort in base base-twin candidate candidate-twin; do
+            revision=030e4dd4081c9c15699363bdfa0e57c53a7f761d
+            if [[ "$cohort" == candidate* ]]; then revision=$GITHUB_SHA; fi
+            tree=build/m2-paged-time/trees/$cohort
+            git worktree add --detach "$tree" "$revision"
+            cmp whitefoot.pin "$tree/whitefoot.pin"
+            git -C "$tree" rev-parse HEAD > "build/m2-paged-time/drivers/$cohort.revision"
+            # Each invocation is an independent build: no compiler cache or copied twin.
+            for entry in style layout; do
+              for mode in seq par4; do
+                flags=()
+                if [ "$mode" = par4 ]; then flags+=(--par); fi
+                destination="$GITHUB_WORKSPACE/build/m2-paged-time/drivers/$cohort-$entry-$mode"
+                (cd "$tree/renderer" && /usr/bin/time -p "$wfc" "${flags[@]}" --graph modules.wfg --entry "${entry}_oracle" -o "$destination") 2> "$destination.build.log"
+              done
+            done
+          done
+      - uses: actions/download-artifact@v4
+        if: inputs.phase == 'matrix'
+        with:
+          name: m2-paged-time-sample
+          run-id: ${{ inputs.sample_run }}
+          github-token: ${{ github.token }}
+          path: build/m2-paged-time
+      - name: Fixed inputs and full X5 scripts
+        if: inputs.phase == 'sample'
+        run: |
+          set -euo pipefail
+          sh research/investigations/concurrency/run.sh fetch || true
+          for f in ecma262.html ecma262-ecmarkup.css ecma262-print.css html5.html; do test -s "build/research/concurrency/$f"; done
+          tar -xzf tests/layout/fixtures/apollo11/inputs.tar.gz -C build/research/concurrency
+          sha256sum -c tests/layout/fixtures/apollo11/inputs.sha256
+          cp build/m2-paged-time/drivers/base-layout-seq build/layout_oracle_seq
+          sh research/investigations/incremental-layout/run.sh prepare ecma262 html5 apollo11
+          cp -R build/research/concurrency build/m2-paged-time/inputs
+          cp -R build/x5/scripts build/m2-paged-time/scripts
+      - name: Restore executable modes and require exact sample revision
+        run: |
+          set -euo pipefail
+          test "$(cat build/m2-paged-time/drivers/candidate.revision)" = "$GITHUB_SHA"
+          chmod +x build/m2-paged-time/drivers/*-seq build/m2-paged-time/drivers/*-par4
+      - name: Measure and retain every process result
+        env:
+          PHASE: ${{ inputs.phase }}
+          REPETITIONS: ${{ inputs.repetitions }}
+        run: python3 research/investigations/m2-paged/measure.py "$PHASE" "$REPETITIONS"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: m2-paged-time-${{ inputs.phase }}
+          path: build/m2-paged-time/
+          compression-level: 1

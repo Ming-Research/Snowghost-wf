@@ -338,3 +338,10 @@ that representation is not required for the owner sequences and remains the
 proposed sg-paged-sparse-routes decision. No status board is changed in this run.
 The implementation and all final-head gates and timing remain unverified until
 hosted execution supplies evidence.
+
+Empty sequences start with zero-capacity built-in stores, so they allocate no
+payload pages before first insertion or sealing. The first insertion reserves
+four logical slots and subsequent growth preserves the existing doubling rule.
+The mutation inventory addresses semantic helpers rather than the removed
+recursive leaf bodies; its existing range/transfer mutations retain their
+faults and exact-match assertions. No mutation is removed or weakened.
