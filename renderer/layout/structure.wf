@@ -950,13 +950,33 @@ fn reconstruction_route_bound(context: &Context) -> count: u64 reads(context) {
   return local_uses +sat descendants;
 }
 
-fn copy_retained_units(source: &RouteTable<TextUnit>, paths: &RouteTable<ContextPath>, destination: &RouteTable<TextUnit>) -> result: unit reads(source), reads(paths), writes(destination.pages) {
+fn copy_retained_paths(source: &RouteTable<ContextPath>, count: u64) -> result: Result<RouteTable<ContextPath>, LayoutError> reads(source) contract {
+  requires count <= 1073741824_u64;
+} {
+  doc "Copies historical path identities and tombstones without per-record publication; the existing storage ceiling is checked before publishing the high-water mark.";
+  let missing = absent_context_path();
+  let made = route_table::<ContextPath>(count: count, missing: missing);
+  let destination = &made;
+  if source^.len > item_ceiling {
+    return too_large::<RouteTable<ContextPath>>();
+  }
+  copy_route_table::<ContextPath>(source: source, destination: destination);
+  set destination^.len = source^.len;
+  return Ok<RouteTable<ContextPath>, LayoutError>(value: move made);
+}
+
+fn copy_retained_units(source: &RouteTable<TextUnit>, paths: &RouteTable<ContextPath>, count: u64) -> made: RouteTable<TextUnit> reads(source), reads(paths) contract {
+  requires count <= 1073741824_u64;
+} {
   doc "Bulk-copies the old text directory, then filters independent final cells by context lifetime, preserving the skipped-text sentinel.";
+  let vacant = absent_text_unit();
+  let made = route_table::<TextUnit>(count: count, missing: vacant);
+  let destination = &made;
   copy_route_table::<TextUnit>(source: source, destination: destination);
   match destination^.pages {
     Page(values: page) => {
-      let count = imin(source^.len, page^.inner.len);
-      for (at in 0_u64..count) {
+      let existing = imin(source^.len, page^.inner.len);
+      for (at in 0_u64..existing) {
         let held = page^.inner[at];
         let live = live_context(paths: paths, serial: held.serial);
         let skipped = held.serial == skipped_text;
@@ -973,16 +993,21 @@ fn copy_retained_units(source: &RouteTable<TextUnit>, paths: &RouteTable<Context
     Fork(..) => {
     }
   }
-  return unit;
+  return move made;
 }
 
-fn copy_retained_contexts(source: &RouteTable<u32>, paths: &RouteTable<ContextPath>, destination: &RouteTable<u32>) -> result: unit reads(source), reads(paths), writes(destination.pages) {
+fn copy_retained_contexts(source: &RouteTable<u32>, paths: &RouteTable<ContextPath>, count: u64) -> made: RouteTable<u32> reads(source), reads(paths) contract {
+  requires count <= 1073741824_u64;
+} {
   doc "Bulk-copies establishing-element identities and filters final cells independently by retirement; no live identity is renumbered.";
+  let vacant = no_index;
+  let made = route_table::<u32>(count: count, missing: vacant);
+  let destination = &made;
   copy_route_table::<u32>(source: source, destination: destination);
   match destination^.pages {
     Page(values: page) => {
-      let count = imin(source^.len, page^.inner.len);
-      for (at in 0_u64..count) {
+      let existing = imin(source^.len, page^.inner.len);
+      for (at in 0_u64..existing) {
         let held = page^.inner[at];
         let live = live_context(paths: paths, serial: held);
         if live {
@@ -996,7 +1021,7 @@ fn copy_retained_contexts(source: &RouteTable<u32>, paths: &RouteTable<ContextPa
     Fork(..) => {
     }
   }
-  return unit;
+  return move made;
 }
 
 fn structure_changed(layout: &Layout, document: &Document, old: &Styles, new: &Styles, traversal: &Traversal, atoms: &AtomTable, changed: &[Bool], parent: NodeId) -> result: Result<unit, LayoutError> reads(document), reads(old), reads(new), reads(traversal), reads(atoms), reads(changed), writes(layout) {
@@ -1090,16 +1115,11 @@ fn structure_changed(layout: &Layout, document: &Document, old: &Styles, new: &S
   } else {
     return too_large::<unit>();
   }
-  let missing_paths = absent_context_path();
-  let paths = route_table::<ContextPath>(count: directory_size, missing: missing_paths);
-  copy_route_table::<ContextPath>(source: &layout^.paths, destination: &paths);
-  set paths.len = layout^.paths.len;
+  let paths = propagate copy_retained_paths(source: &layout^.paths, count: directory_size);
   let retired = propagate retire_at(context: &layout^.root, steps: &base.inner[0_u64..base_count], depth: 0_u64, paths: &paths);
   let unreached = TextUnit(serial: no_index, piece: 0_u32, count: 0_u32, paragraph: no_index);
-  let listing = route_table::<TextUnit>(count: nodes, missing: unreached);
-  let context_of = route_table::<u32>(count: nodes, missing: no_index);
-  copy_retained_units(source: &layout^.text_units, paths: &paths, destination: &listing);
-  copy_retained_contexts(source: &layout^.context_of, paths: &paths, destination: &context_of);
+  let listing = copy_retained_units(source: &layout^.text_units, paths: &paths, count: nodes);
+  let context_of = copy_retained_contexts(source: &layout^.context_of, paths: &paths, count: nodes);
   let unused = unused_style();
   let uses = route_table::<StyleUse>(count: nodes, missing: unused);
   let missing_routes = absent_style_route();

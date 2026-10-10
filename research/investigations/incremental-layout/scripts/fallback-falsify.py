@@ -20,9 +20,9 @@ def apply(name):
     replacements = {
         'omit-bulk-retained-heads': ('  set uses^[middle] = StyleUse(head: head);',
                                      '  set uses^[middle] = StyleUse(head: no_index);'),
-        'omit-bulk-retained-units': ('  copy_retained_units(source: &layout^.text_units, paths: &paths, destination: &listing);', ''),
-        'omit-bulk-retained-contexts': ('  copy_retained_contexts(source: &layout^.context_of, paths: &paths, destination: &context_of);', ''),
-        'omit-bulk-path-copy': ('  copy_route_table::<ContextPath>(source: &layout^.paths, destination: &paths);', ''),
+        'omit-bulk-retained-units': ('  let listing = copy_retained_units(source: &layout^.text_units, paths: &paths, count: nodes);', '  let listing = route_table::<TextUnit>(count: nodes, missing: unreached);'),
+        'omit-bulk-retained-contexts': ('  let context_of = copy_retained_contexts(source: &layout^.context_of, paths: &paths, count: nodes);', '  let context_of = route_table::<u32>(count: nodes, missing: no_index);'),
+        'omit-bulk-path-copy': ('  copy_route_table::<ContextPath>(source: source, destination: destination);', ''),
     }
     if name in replacements:
         needle, fault = replacements[name]

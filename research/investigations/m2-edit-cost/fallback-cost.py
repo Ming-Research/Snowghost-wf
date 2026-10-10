@@ -135,6 +135,66 @@ def profile(names):
                     raise ValueError(('missing edit dumps', len(parts), len(edits)))
 
 
+def construction_variant(tree, name):
+    """Private same-source ablations; archived source.diff records each one."""
+    path = tree / 'renderer/layout/structure.wf'
+    source = path.read_text()
+    before = subprocess.run(['git', 'show', '941e51d478f13ae38e5d714e45c01903356a04ba:renderer/layout/structure.wf'],
+                            check=True, capture_output=True, text=True).stdout
+    def replace(needle, replacement):
+        nonlocal source
+        if source.count(needle) != 1:
+            raise ValueError(('construction site changed', name, needle))
+        source = source.replace(needle, replacement)
+    if name == 'noreserve':
+        replace('let fresh_routes = reconstruction_route_bound(context: &built);', 'let fresh_routes = 0_u64;')
+        replace('let route_bound = layout^.routes.len +sat fresh_routes;', 'let route_bound = fresh_routes;')
+    elif name == 'serialroutes':
+        start = source.index('fn retain_routes(')
+        end = source.index('\nfn reconstruction_route_bound(', start)
+        old_start = before.index('fn retain_routes(')
+        old_end = before.index('\nfn reconstruction_route_bound(', old_start)
+        restored = before[old_start:old_end].replace('routes: &RouteTable<StyleRoute>)', 'routes: &RouteTable<StyleRoute>, reserve: u64)')
+        marker = '  let nodes = uses^.len;'
+        allocation = ('  if reserve > item_ceiling {\n    return too_large::<unit>();\n  }\n'
+                      '  let missing = absent_style_route();\n'
+                      '  let allocated = route_table::<StyleRoute>(count: reserve, missing: missing);\n'
+                      '  set routes^ = move allocated;\n  set routes^.len = 0_u64;\n')
+        restored = restored.replace(marker, allocation + marker)
+        source = source[:start] + restored + source[end:]
+    elif name == 'oldpaths':
+        old_start = before.index('  set paths.len = 0_u64;', before.index('fn structure_changed('))
+        old_end = before.index('  let retired =', old_start)
+        body = before[old_start:old_end].replace('too_large::<unit>()', 'too_large::<RouteTable<ContextPath>>()').replace('layout^.paths.len', 'source^.len').replace('&layout^.paths', 'source').replace('paths.len', 'destination^.len').replace('&paths', 'destination')
+        start = source.index('  if source^.len > item_ceiling {', source.index('fn copy_retained_paths('))
+        end = source.index('  return Ok<RouteTable<ContextPath>, LayoutError>(value: move made);', start)
+        source = source[:start] + body + source[end:]
+    elif name in ('oldunits', 'oldcontexts'):
+        old_start = before.index('  for (k in 0_u64..nodes) {', before.index('  let context_of =', before.index('fn structure_changed(')))
+        old_end = before.index('  let unused = unused_style();', old_start)
+        loop = before[old_start:old_end]
+        split = loop.index('    if k < layout^.context_of.len')
+        if name == 'oldunits':
+            body = loop[:split] + '  }\n'
+            body = body.replace('layout^.text_units.len', 'source^.len').replace('&layout^.text_units', 'source').replace('&paths', 'paths').replace('&listing', 'destination')
+            function = 'copy_retained_units'
+            next_function = 'copy_retained_contexts'
+        else:
+            body = '  for (k in 0_u64..nodes) {\n' + loop[split:]
+            body = body.replace('layout^.context_of.len', 'source^.len').replace('&layout^.context_of', 'source').replace('&paths', 'paths').replace('&context_of', 'destination')
+            function = 'copy_retained_contexts'
+            next_function = 'structure_changed'
+        start = source.index('fn ' + function + '(')
+        end = source.index('\nfn ' + next_function + '(', start)
+        body_start = source.index('  copy_route_table', start)
+        prefix = source[start:body_start]
+        replacement = prefix + '  let nodes = count;\n' + body + '  return move made;\n}\n'
+        source = source[:start] + replacement + source[end:]
+    else:
+        raise ValueError(('unknown construction variant', name))
+    path.write_text(source)
+
+
 def memory_record(text):
     import re
     rss = re.findall(r'^\s*Maximum resident set size \(kbytes\): (\d+)$', text, re.M)
@@ -310,9 +370,36 @@ def summarize():
     attribution.sort(key=lambda row: row['difference'], reverse=True)
     with (OUT / 'attribution.csv').open('w') as f:
         writer = csv.DictWriter(f, fieldnames=attribution[0]); writer.writeheader(); writer.writerows(attribution)
+    construction_summary(ids)
     print('fallback instruction totals', totals)
     for row in attribution[:25]:
         print(row)
+
+
+def construction_summary(ids):
+    import re
+    names = ('candidate', 'serialroutes', 'oldpaths', 'oldunits', 'oldcontexts', 'noreserve')
+    functions = ('retain_routes', 'copy_retained_paths', 'copy_retained_units', 'copy_retained_contexts', 'record_tree', 'reconstruction_route_bound')
+    rows = []
+    def normalized(symbol):
+        return re.sub(r"(?:\.body\.llvm\.[0-9]+|'[0-9]+)$", '', symbol)
+    for name in names:
+        if not (OUT / f'profile-{name}-full.callgrind.2').exists():
+            continue
+        for edit in sorted(ids):
+            total, own, calls, edges = callgrind(OUT / f'profile-{name}-full.callgrind.{2 * edit}')
+            for function in functions:
+                # Only the constructor's outer call belongs here, not its
+                # recursive or outlined internal calls a second time.
+                cost = sum(value for (caller, callee), value in edges.items()
+                           if normalized(callee) == 'wf_layout.' + function
+                           and normalized(caller) == 'wf_layout.structure_changed')
+                rows.append(dict(cohort=name, edit=edit, constructor=function, inclusive_instructions=cost))
+    if rows:
+        with (OUT / 'constructions.csv').open('w') as f:
+            writer = csv.DictWriter(f, fieldnames=rows[0])
+            writer.writeheader()
+            writer.writerows(rows)
 
 
 def controls():
@@ -368,13 +455,17 @@ fn=(4) bookkeeping
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=('native', 'profile', 'memory', 'summarize', 'self-test'))
+    parser.add_argument('action', choices=('native', 'profile', 'memory', 'variant', 'summarize', 'self-test'))
     parser.add_argument('--names', nargs='+')
+    parser.add_argument('--tree', type=Path)
+    parser.add_argument('--variant')
     parser.add_argument('--controls', action='store_true')
     parser.add_argument('--rounds', type=int, default=3)
     opts = parser.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
-    if opts.action == 'native':
+    if opts.action == 'variant':
+        construction_variant(opts.tree, opts.variant)
+    elif opts.action == 'native':
         native(opts.names, opts.controls, opts.rounds)
     elif opts.action == 'memory':
         memory(opts.names, opts.rounds)

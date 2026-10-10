@@ -4494,3 +4494,15 @@ new bulk publication, including missing supplier heads/routes and retained
 text/path publication where changed. A compilation failure is never a
 mutation detection. Preserve the prior allocation proposal without a log
 entry; any new surviving material choice is proposed in the layout tree.
+
+The per-construction comparison uses additional private builds that restore
+one 941e51d constructor at a time: `serialroutes`, `oldpaths`, `oldunits`
+and `oldcontexts`. Directory allocation and publication are included inside
+both constructors' common function boundary; the original loop bodies are
+extracted from 941e51d, and each private patch is archived. This isolates
+construction from unrelated unchanged reconstruction and layout work; these
+variants do not replace the exact-source main/before/candidate timing
+cohorts. `noreserve` removes only the producer-bound reservation/counting.
+Inclusive constructor costs count only calls from `structure_changed`, not
+recursive or outlined internal calls twice. Missing emitted boundaries are
+reported as unverified attribution, never treated as zero-cost construction.
