@@ -1,0 +1,204 @@
+# Temporary Apollo11 font-size attribution; remove after recording the evidence.
+name: font-attribution
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/m2-frag-a]
+permissions:
+  contents: read
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[font-attribution]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    continue-on-error: ${{ matrix.optional }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: main
+            source: bb98d4371d0e148775e232e4d2938ddb9aec3be6
+            optional: false
+          - name: maintwin
+            source: bb98d4371d0e148775e232e4d2938ddb9aec3be6
+            optional: false
+          - name: a
+            source: 4df6176736b5a4d31d70a20996417c724ba617d4
+            optional: false
+          - name: atwin
+            source: 4df6176736b5a4d31d70a20996417c724ba617d4
+            optional: false
+          - name: layout
+            source: b0d1b717561b75325f22916a56bf0ccec5e5ed4d
+            optional: false
+          - name: premerge
+            source: 8f973e691e18f7322c39e2adbb2a8d4647865079
+            optional: false
+          - name: merge
+            source: 4528e00
+            optional: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: LLVM 22 and fonts
+        run: |
+          set -euo pipefail
+          sudo sh -c 'printf "%s\n" https://archive.ubuntu.com/ubuntu > /etc/apt/apt-mirrors.txt'
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=30 update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          curl -fsSL --retry 3 -o /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          sudo bash /tmp/llvm.sh 22 >/dev/null
+          sudo ln -sf /usr/bin/clang-22 /usr/bin/clang
+          sudo ln -sf /usr/bin/ld.lld-22 /usr/bin/ld.lld
+          clang --version | head -1
+      - name: Build the exact source with the common release
+        env:
+          SOURCE: ${{ matrix.source }}
+          BUILD_NAME: ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/driver
+          git worktree add -q --detach build/tree "$SOURCE"
+          echo 'release = wf-41f46e60030c' > build/timing.pin
+          make -s compiler PIN="$PWD/build/timing.pin"
+          wfc=$(realpath build/whitefoot/wf-41f46e60030c/whitefootc)
+          git -C build/tree rev-parse HEAD > build/driver/revision.txt
+          cat build/timing.pin >> build/driver/revision.txt
+          sha256sum "$wfc" >> build/driver/revision.txt
+          clang --version >> build/driver/revision.txt
+          cp build/whitefoot/wf-41f46e60030c/whitefoot-release.json build/driver/
+          # Only the previously established compile-only adaptations. The
+          # complete patch remains beside the original revision in the artifact.
+          python3 - <<'PYEOF'
+          from pathlib import Path
+          p = Path('build/tree/renderer/oracle/support/support.wf')
+          s = p.read_text()
+          if '    Cancelled() => {' not in s:
+              s = s.replace('    BrokenPipe(code: host_code, origin: host_origin) => {', '    Cancelled() => {\n      return 0_u32;\n    }\n    BrokenPipe(code: host_code, origin: host_origin) => {')
+              p.write_text(s)
+          p = Path('build/tree/renderer/layout/geometry.wf')
+          s = p.read_text()
+          for call in ('counted_owned_block_origin(context: context, block: block)', 'counted_retained_block_origin(context: context, block: block, previous: previous)'):
+              s = s.replace('return ' + call + ';', 'let (origin, opened) = ' + call + ';\n    return origin, opened;')
+          p.write_text(s)
+          PYEOF
+          git -C build/tree diff HEAD > build/driver/source.diff
+          for mode in seq par; do
+            flag=''
+            if [ "$mode" = par ]; then flag=--par; fi
+            status=0
+            (cd build/tree/renderer && /usr/bin/time -p "$wfc" --cache "$RUNNER_TEMP/wf-cache" --fragments function $flag --graph modules.wfg --entry layout_oracle -o "$GITHUB_WORKSPACE/build/driver/layout_oracle_$mode") > "build/driver/$mode-build.log" 2>&1 || status=$?
+            cat "build/driver/$mode-build.log"
+            echo "$status" > "build/driver/$mode-build.status"
+            if [ "$status" -ne 0 ]; then exit "$status"; fi
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: driver-${{ matrix.name }}
+          path: build/driver/
+  measure:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: driver-*
+          path: build/drivers
+      - name: Fonts
+        run: |
+          set -euo pipefail
+          sudo sh -c 'printf "%s\n" https://archive.ubuntu.com/ubuntu > /etc/apt/apt-mirrors.txt'
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=30 update
+          sudo apt-get install -y --no-install-recommends valgrind fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          chmod +x build/drivers/driver-*/layout_oracle_*
+          uname -a | tee build/machine.txt
+          lscpu | tee -a build/machine.txt
+          cat /etc/os-release >> build/machine.txt
+      - name: Shared pages and scripts
+        run: |
+          set -euo pipefail
+          mkdir -p build/research/concurrency
+          tar -xzf tests/layout/fixtures/apollo11/inputs.tar.gz -C build/research/concurrency
+          sha256sum -c tests/layout/fixtures/apollo11/inputs.sha256
+          for file in apollo11.html apollo11-modules.css apollo11-site.css; do
+            test -s "build/research/concurrency/$file"
+          done
+          make -s oracle-fonts
+          cp build/drivers/driver-main/layout_oracle_seq build/layout_oracle_seq
+          sh research/investigations/incremental-layout/run.sh prepare apollo11
+          mkdir -p build/evidence
+          sha256sum build/x5/scripts/* build/research/concurrency/*.html renderer/style/ua.css > build/evidence/inputs.sha256
+      - name: Bounded samples followed by two interleaved font-size rounds
+        run: |
+          set -euo pipefail
+          names='main maintwin layout premerge merge a atwin'
+          args=(build/research/concurrency/apollo11.html renderer/style/ua.css 'wikibase.client.init&only=styles&skin=vector-2022=build/research/concurrency/apollo11-modules.css' 'modules=site.styles&only=styles&skin=vector-2022=build/research/concurrency/apollo11-site.css')
+          head -n 2 build/x5/scripts/apollo11-fontsize.edits > build/evidence/sample.edits
+          for sample in 1 2; do
+            WF_WORKERS=4 /usr/bin/time -p -o build/evidence/sample-$sample.time build/drivers/driver-main/layout_oracle_seq edittime build/evidence/sample.edits "${args[@]}" > build/evidence/sample-$sample.raw
+          done
+          python3 - <<'PYEOF'
+          from pathlib import Path
+          values = [float(p.read_text().splitlines()[0].split()[1]) for p in Path('build/evidence').glob('sample-*.time')]
+          assert len(values) == 2 and max(values) < 30, values
+          print('one-edit wall seconds:', values, '; two rounds of the 60-edit script admitted')
+          PYEOF
+          for round in 1 2; do
+            if [ "$round" = 2 ]; then names='atwin a merge premerge layout maintwin main'; fi
+            for mode in seq par; do
+              for name in $names; do
+                cp build/drivers/driver-$name/layout_oracle_* build/
+                rm -rf build/x5/time
+                ALONE=1 WF_WORKERS=4 /usr/bin/time -p sh research/investigations/incremental-layout/run.sh time "$mode" apollo11 fontsize 1 > build/evidence/$name-apollo11-fontsize-$mode-r$round.summary
+                cat build/evidence/$name-apollo11-fontsize-$mode-r$round.summary
+                cp build/x5/time/*.txt build/evidence/$name-apollo11-fontsize-$mode-r$round.raw
+              done
+            done
+          done
+      - name: Sequential edit-only instruction profiles
+        run: |
+          set -euo pipefail
+          args=(build/research/concurrency/apollo11.html renderer/style/ua.css 'wikibase.client.init&only=styles&skin=vector-2022=build/research/concurrency/apollo11-modules.css' 'modules=site.styles&only=styles&skin=vector-2022=build/research/concurrency/apollo11-site.css')
+          # Collection toggles at the public update entry, after style/marking
+          # and before preparation/layout. The initial layout never calls it.
+          # First time one edit, then use the complete unchanged 60-edit script.
+          for name in main a; do
+            nm build/drivers/driver-$name/layout_oracle_seq > build/evidence/$name-symbols.txt
+            grep -F ' wf_layout.update' build/evidence/$name-symbols.txt
+            for size in sample full; do
+              script=build/evidence/sample.edits
+              if [ "$size" = full ]; then script=build/x5/scripts/apollo11-fontsize.edits; fi
+              prefix=build/evidence/profile-$name-$size
+              WF_WORKERS=4 /usr/bin/time -p -o "$prefix.time" valgrind --tool=callgrind --collect-atstart=no --toggle-collect=wf_layout.update --callgrind-out-file="$prefix.callgrind" build/drivers/driver-$name/layout_oracle_seq edittime "$script" "${args[@]}" > "$prefix.raw" 2> "$prefix.stderr"
+              callgrind_annotate --auto=no --inclusive=no --threshold=100 "$prefix.callgrind" > "$prefix.self.txt"
+              callgrind_annotate --auto=no --inclusive=yes --threshold=100 "$prefix.callgrind" > "$prefix.inclusive.txt"
+              python3 - "$prefix.time" "$prefix.callgrind" <<'PYEOF'
+          from pathlib import Path
+          import re, sys
+          seconds = float(Path(sys.argv[1]).read_text().splitlines()[0].split()[1])
+          total = int(re.search(r'^summary: (\d+)', Path(sys.argv[2]).read_text(), re.M)[1])
+          assert seconds < 120 and total > 0, (seconds, total)
+          print(sys.argv[1], seconds, 'seconds,', total, 'instructions')
+          PYEOF
+            done
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: font-attribution-evidence
+          path: |
+            build/machine.txt
+            build/evidence/
+            build/x5/scripts/
+            build/drivers/driver-*/revision.txt
+            build/drivers/driver-*/source.diff
+            build/drivers/driver-*/whitefoot-release.json
+            build/drivers/driver-*/*-build.status
+            build/drivers/driver-*/*-build.log

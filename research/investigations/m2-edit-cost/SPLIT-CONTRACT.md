@@ -3113,3 +3113,27 @@ geometry comparison with status 1, the current output to pass, and current
 sequential/parallel dumps to remain byte-identical. Every other historical
 comparison is unchanged. Failure of either independent expectation rejects
 the adaptation; no renderer change or new geometry decision is introduced.
+
+
+### Apollo11 font-size attribution: prior comparison
+
+The 2026-10-09 continuation investigates the only failed cells of common-compiler
+acceptance run 38012168129 before adoption. Compare main bb98d4371, layout
+b0d1b71, pre-merge 8f973e6, merge 4528e00 and handoff 4df6176 under
+wf-41f46e60030c and LLVM 22. The historical sources receive only the missing
+Cancelled error arm or explicit two-result forwarding, where needed; retain
+every patch. Two independent builds of main and handoff bound native noise.
+Two one-edit wall samples precede the full 60-edit Apollo11 font-size script,
+sequentially and with four workers, in forward/reverse cohort order on one
+GitHub-hosted runner. No local or self-hosted execution is permitted.
+
+Per-function Callgrind collection toggles only inside layout.update on the
+sequential main and handoff drivers, excluding initialization, style and full
+comparators. Start with one edit before the complete script. Compare calls to
+preparation, line breaking, child layout, track sizing and refusal paths with
+the native driver counters. A timing interval alone does not attribute a
+function's cost; required work must be identified from its consumed inputs
+and the M2/Chromium dependency contract. Reject a proposed duplicate-work
+explanation if its same-source elimination does not remove the corresponding
+instructions, or if any required identity/fixture/mutation gate fails. The
+complete common-compiler acceptance remains required after a repair.
