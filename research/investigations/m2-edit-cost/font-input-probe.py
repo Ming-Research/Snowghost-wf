@@ -83,7 +83,7 @@ fn font_probe_drain(layout: &Layout, buffer: &Box<Slots<u8>>) -> result: unit wr
 }
 '''
 # Layout uses pop-back for bounded owned scratch retirement.
-body=body.replace('  truncate(cell: &context^.font_probe, length: 0_u64);','  for (step in 0_u64..count) {\n    let dropped = take_back(window: &context^.font_probe.inner);\n  }')
+body=body.replace('  truncate(cell: &context^.font_probe, length: 0_u64);','  for (\n    step in 0_u64..count,\n    invariant remaining: context^.font_probe.inner.len == count - step\n  ) {\n    let dropped = take_back(window: &context^.font_probe.inner);\n  }')
 Path('renderer/layout/font_probe.wf').write_text(body+'\n'+formatters)
 module.write_text(module.read_text()+'\npublic fn font_probe_drain(layout: &Layout, buffer: &Box<Slots<u8>>) -> result: unit writes(layout), writes(buffer) doc "Drains temporary hosted diagnostic buffers without changing any layout field.";\n')
 for path,name,stage in [('renderer/layout/update.wf','update_flow_inner',1),('renderer/layout/update.wf','update_flow_reference_full',2),('renderer/layout/reference.wf','full_reference_publication',3)]:
