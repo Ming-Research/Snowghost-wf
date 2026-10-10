@@ -67,6 +67,7 @@ def main():
                    compiler=Path('whitefoot.pin').read_text().strip(), revision=os.environ['GITHUB_SHA'],
                    rounds=0 if phase == 'sample' else 3, repetitions=repetitions,
                    hashes={str(p): digest(p) for folder in ('drivers', 'inputs', 'scripts') for p in (ROOT / folder).glob('*') if p.is_file()})
+    machine['font_hashes'] = {str(p): digest(p) for p in Path('build/fonts').rglob('*') if p.is_file()}
     for tool in ('/usr/bin/clang', 'ld.lld'):
         machine[tool] = subprocess.check_output([tool, '--version'], text=True)
     compiler_dir = Path('build/whitefoot/wf-78223721f77d')

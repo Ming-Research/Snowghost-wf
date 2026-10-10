@@ -345,3 +345,36 @@ four logical slots and subsequent growth preserves the existing doubling rule.
 The mutation inventory addresses semantic helpers rather than the removed
 recursive leaf bodies; its existing range/transfer mutations retain their
 faults and exact-match assertions. No mutation is removed or weakened.
+
+#### Pending sparse-route representation decision
+
+**Should sparse high-water route domains also move to built-in Paged?**
+
+**Background.** `sparse_routes(length, missing)` owns a Vacant directory with
+`len = length`, and materializes only touched paths. A later route at a high
+identity can exist while all earlier identities are absent. Paged instead
+requires every index below its length initialized. The owner-sequence port
+preserves append-only dense stable identities and does not require this change.
+
+**Options.** A (recommended): retain sparse routes for this storage-only round,
+under proposed deferral `sg-paged-sparse-routes` (P2). This preserves their
+construction work and keeps the owner-sequence comparison attributable; some
+hand-written page storage remains. B: authorize dense Paged routes and measure
+high-water sparse construction and peak RSS. This removes the directory but
+adds work and initialized storage proportional to the absent prefix, risking
+splice and fallback regressions. C: ask the owning language session for a
+sparse built-in representation. This preserves absent-prefix semantics but
+requires a separate language design and postpones route adoption.
+
+**Confidence 4/5.** The two storage domains differ structurally; source
+inspection establishes the added initialization under B, but its workload
+cost is unmeasured. Measured small high-water gaps could make B acceptable.
+No route representation change is selected; A is the continuation recommendation.
+
+Before the first timing sample, the hosted reporter fixes an edit-kind cell as
+the arithmetic mean over every timed ordinal of that script, with `style_us`
+reported separately from layout/update microseconds. Full-stage cells subtract
+T(0) from T(repetitions), divided by repetitions. Per-round values are retained;
+paired-ratio medians and both independent twins determine the original noise
+rule. A cell whose round classifications disagree is unverified. RSS is the
+maximum process high-water mark across rounds, never a subtraction of peaks.
