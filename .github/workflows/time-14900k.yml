@@ -77,9 +77,23 @@ jobs:
           fonts="fonts-dejavu-core fonts-dejavu-mono fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol"
           libs="libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 libatspi2.0-0t64 libcairo2 libcups2t64 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0t64 libnspr4 libnss3 libpango-1.0-0 libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxkbcommon0 libxrandr2 libfontconfig1 libfreetype6"
           wanted=$(apt-cache depends --recurse --no-recommends --no-suggests --no-conflicts --no-breaks --no-replaces --no-enhances $libs | grep -E '^[a-z0-9]' | sort -u)
-          for p in $fonts; do
-            ls "${p}"_*.deb >/dev/null 2>&1 || apt-get download "$p" >/dev/null 2>&1 || echo "not downloadable: $p"
-          done
+          # Fonts come from Ubuntu 24.04 (noble) whatever the host runs, so every
+          # measurement lays text out with the same faces as earlier 14900K runs
+          # and the hosted runners; Ubuntu 26.04's fonts-unifont 16.0.04 ships an
+          # unifont_upper_sample.otf with a malformed cmap that the font loader
+          # rightly refuses (research/investigations/fonts-ubuntu26). A private
+          # apt state reads the noble indexes without root, checked against the
+          # system's Ubuntu archive key.
+          noble=$deps/apt-noble
+          mkdir -p "$noble/lists/partial" "$noble/cache/archives/partial" "$noble/sources.list.d" "$deps/fonts-noble"
+          printf 'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] http://archive.ubuntu.com/ubuntu noble main universe\ndeb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] http://archive.ubuntu.com/ubuntu noble-updates main universe\n' > "$noble/sources.list"
+          apt_noble="-o Dir::Etc::SourceList=$noble/sources.list -o Dir::Etc::SourceParts=$noble/sources.list.d -o Dir::State::Lists=$noble/lists -o Dir::Cache=$noble/cache -o APT::Architecture=amd64"
+          apt-get $apt_noble update > /dev/null
+          ( cd "$deps/fonts-noble"
+            rm -f ./*.deb
+            for p in $fonts; do apt-get $apt_noble download "$p" > /dev/null; done
+            for d in ./*.deb; do dpkg-deb -f "$d" Package Version | paste -sd' '; dpkg -x "$d" "$deps/fonts-noble/root"; done )
+          echo "FONT_ROOT=$deps/fonts-noble/root" >> "$GITHUB_ENV"
           for p in $wanted; do
             if dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q 'install ok installed'; then continue; fi
             ls "${p}"_*.deb >/dev/null 2>&1 || apt-get download "$p" >/dev/null 2>&1 || echo "not downloadable: $p"
@@ -162,7 +176,7 @@ jobs:
         if: env.TIME == '1'
         run: |
           set -euo pipefail
-          make -s oracle-fonts FONT_ROOT="$DEPS/root"
+          make -s oracle-fonts FONT_ROOT="$FONT_ROOT"
           ls build/fonts | wc -l
           first=${BUILDS%% *}; first=${first%%=*}
           cp "build/drivers/$first-seq" build/layout_oracle_seq
