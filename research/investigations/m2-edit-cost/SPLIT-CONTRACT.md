@@ -5110,3 +5110,121 @@ at most 5%. Report every round alongside the earlier observation. A crossing
 rejects acceptance from the earlier passing run and requires an explicit
 allocation disposition; do not rerun until a favorable sample appears.
 No timing or instruction conclusion will be drawn from this RSS-only batch.
+
+
+### Final tighter construction: replicated memory and verdict
+
+The selected renderer at `be0fe994cd4cb6536d83c57d9256eb56c9644ecc` is
+`067fa011d425aae6c0a294744020ac98ccc42d88`, exactly the source measured and
+validated at 2a524d9. The proposed design now uses the tighter capacity
+bound; no criterion, admission, compiler pin or submodule changes.
+
+[RSS replication 38082236052](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38082236052)
+passes on an AMD EPYC 7763 hosted runner, four logical CPUs, Ubuntu 24.04.5,
+Linux 6.17.0-1022-azure, with the same archived compiler and exact-source
+drivers. It collects all 70 expected observations: two zero-edit and two
+two-edit pilots, then three full-script rounds for five cohorts and two
+modes. This repeats memory only; complete six-cohort timings and phase
+profiles remain the source-identical run 38068824377, not a substituted
+wide-bound result. [All replicated RSS observations](q141-bulk-tight-memory-repeat.csv)
+are preserved alongside the first tighter run.
+
+Maximum process RSS in KiB across the replicated full-script rounds:
+
+| Mode | Main | 941e51d | Final tighter | No reservation | Wide control |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Sequential | 82,744 | 103,184 | 98,868 | 99,820 | 101,064 |
+| Four workers | 85,092 | 108,064 | 106,064 | 103,888 | 108,956 |
+
+Paired final/no-reservation increases are 0.76%, 1.02%, -1.16% sequentially
+and 2.53%, 0.11%, 0.59% with four workers. All six pass 5%, as do all six
+from the earlier tighter-source run (worst 3.08%). The wide control again
+crosses 5%, at 5.41% in parallel round 3. This supports the allocation
+disposition without erasing the earlier wide control's passing observation
+or claiming a bound on other machines or workloads. Cohort maxima can
+occur in different rounds; acceptance uses every paired round.
+
+**Final local verdict:** all three directory constructions pass 10%; the
+tighter reservation saves 45.64% of common publication instructions and
+passes every paired RSS observation in both tighter-source batches. Keep
+these local improvements. Reject balanced supplier construction and wide
+reservation under their original conditions. The current proposed Decision
+supersedes the wide-bound selection after its memory premise failed; the
+extra sizing work is required by the admissible alternative demonstrated
+here. No alternate supplier implementation conceals the compiler witness.
+
+**M2 verdict: unmet.** The complete final-source comparison still fails all
+12 fallback medians at 1.2631-1.3963x main, with only 379,271 fewer total
+instructions than 941e51d. All 216 controls pass, worst 1.7696x. These are
+local experimental improvements, not completion of the 1x objective or
+evidence that the remaining overhead is irreducible.
+
+For the final tighter renderer, fallback medians from 38068824377 are below,
+in microseconds, ordinary / independent twin. Machine: AMD EPYC 7763, four
+logical CPUs; compiler `wf-41f46e60030c`, checksum above, Clang 22.1.8; main
+bb98d43, before exact 941e51d, final renderer exact 2a524d9. Three
+forward/reverse/forward rounds, sequential and `WF_WORKERS=4`.
+
+| Mode / round | Main / twin | 941e51d / twin | Final tighter / twin |
+| --- | ---: | ---: | ---: |
+| seq 1 | 24,928.5 / 26,293.5 | 35,057.5 / 35,484.5 | 34,806.5 / 35,217.5 |
+| seq 2 | 24,553.0 / 24,548.5 | 32,780.5 / 31,506.5 | 31,089.0 / 32,793.5 |
+| seq 3 | 25,246.5 / 25,328.0 | 32,639.5 / 32,814.5 | 33,342.0 / 32,238.0 |
+| par 1 | 30,082.5 / 29,220.5 | 39,324.5 / 39,999.5 | 40,497.5 / 39,419.0 |
+| par 2 | 26,804.5 / 26,747.0 | 34,357.0 / 34,973.5 | 33,985.0 / 33,785.0 |
+| par 3 | 26,477.5 / 26,689.5 | 35,877.0 / 36,176.0 | 35,259.5 / 35,044.0 |
+
+Every final X5 control follows: ranges of six medians, in order
+main -> 941e51d -> final tighter, followed by the largest paired final/main
+ratio. [Individual medians](q141-bulk-tight-native.csv) and
+[all paired verdicts](q141-bulk-tight-acceptance.csv) preserve exact rounds.
+
+| Page / edit | Sequential microseconds; worst ratio | Four-worker microseconds; worst ratio |
+| --- | --- | --- |
+| ecma262 / word | 90.0–96.0 → 97.0–104.0 → 97.0–102.5; 1.1389x | 146.0–154.0 → 161.0–183.0 → 160.5–180.5; 1.1759x |
+| ecma262 / sentence | 215.0–237.0 → 126.0–137.5 → 125.5–134.0; 0.6233x | 288.0–309.0 → 201.0–217.5 → 198.5–216.5; 0.7205x |
+| ecma262 / colour | 14.5–15.5 → 14.0–16.0 → 14.0–16.0; 1.0667x | 17.5–19.5 → 20.0–37.0 → 19.5–25.5; 1.4571x |
+| ecma262 / fontsize | 1,546.0–1,802.5 → 916.0–1,003.0 → 911.5–1,040.0; 0.6426x | 2,023.5–2,169.5 → 1,350.5–1,411.0 → 1,347.0–1,377.5; 0.6721x |
+| ecma262 / rootfont | 31,883.0–34,152.5 → 3,665.0–4,076.0 → 3,638.5–4,134.0; 0.1210x | 51,355.5–54,675.0 → 4,572.0–4,871.5 → 4,452.0–4,986.5; 0.0912x |
+| ecma262 / block | 490,949.0–507,923.0 → 143.0–152.0 → 140.5–155.5; 0.0003x | 447,766.0–465,168.0 → 206.5–232.0 → 202.0–229.0; 0.0005x |
+| html5 / word | 66.0–67.5 → 76.0–78.0 → 74.0–77.0; 1.1579x | 111.5–115.5 → 122.0–127.5 → 122.0–127.0; 1.1390x |
+| html5 / sentence | 202.0–208.0 → 258.0–270.0 → 259.5–292.5; 1.4130x | 297.0–314.5 → 301.5–325.0 → 298.5–321.0; 1.0808x |
+| html5 / colour | 14.5–15.5 → 14.5–16.0 → 14.5–16.0; 1.0667x | 22.5–25.5 → 25.5–29.0 → 25.0–30.5; 1.2449x |
+| html5 / fontsize | 754.0–818.5 → 994.0–1,091.0 → 1,000.5–1,078.0; 1.3813x | 805.5–896.5 → 1,394.5–1,482.0 → 1,379.5–1,470.5; 1.7696x |
+| html5 / rootfont | 898,857.0–913,298.5 → 1,083,737.5–1,093,424.0 → 1,083,326.0–1,128,478.0; 1.2445x | 542,836.0–561,584.0 → 684,059.5–713,714.0 → 688,024.5–710,347.5; 1.2909x |
+| html5 / block | 477,251.5–499,613.0 → 447.0–465.0 → 441.5–458.0; 0.0009x | 435,768.5–482,793.0 → 433.0–442.0 → 432.5–447.5; 0.0010x |
+| apollo11 / word | 198.0–201.5 → 221.5–228.0 → 218.5–230.0; 1.1587x | 333.5–344.5 → 380.5–391.5 → 380.5–390.5; 1.1709x |
+| apollo11 / sentence | 232.5–237.0 → 303.0–314.0 → 304.0–317.0; 1.3605x | 400.0–411.5 → 558.0–572.0 → 555.5–576.0; 1.4263x |
+| apollo11 / colour | 23.5–28.0 → 24.5–28.0 → 24.5–28.5; 1.0426x | 35.0–37.5 → 42.0–52.0 → 37.5–52.0; 1.4247x |
+| apollo11 / fontsize | 273.5–293.0 → 329.5–353.0 → 328.0–361.5; 1.3074x | 553.5–576.0 → 552.0–626.5 → 569.0–580.0; 1.0479x |
+| apollo11 / rootfont | 78,433.5–79,546.0 → 87,223.5–88,702.0 → 87,674.5–89,225.0; 1.1217x | 70,572.0–71,336.0 → 66,353.5–67,135.0 → 66,834.5–67,601.5; 0.9565x |
+| apollo11 / block | 24,489.5–25,650.5 → 5,543.0–5,858.5 → 5,569.0–5,888.0; 0.2358x | 26,444.0–29,700.5 → 6,417.5–7,062.0 → 6,408.0–7,099.5; 0.2503x |
+
+
+The final phase totals and inclusive constructor values remain those in
+[Tighter-bound result](#tighter-bound-result-and-simpler-reservation-selection),
+with the same renderer and drivers; the later rejection of wide allocation
+supersedes that section's selection, not its source-specific measurements.
+The current source's earlier complete gates at 2a524d9 pass all 20 oracle
+and 168 mutation jobs, including 104 expanded edits and all 44 admitted
+post-fallback splice/undo paths in both modes. The final exact-revision
+gates and reviewed remote head are recorded in
+[the Draft pull request](https://github.com/Ming-Research/Snowghost-wf/pull/58).
+
+The separate read-only review covers the complete continuation from
+941e51d, all checklist groups A/D/C/T/R/M/V and design checks G1-G3/DC1-DC4,
+with focused supplements after each source restoration. Findings fixed:
+missing emitted constructor boundaries reported as zero; compiler-ledger
+causality overstated; aggregate RSS masking failed paired rounds; and the
+wide allocation's memory-pass premise contradicted by its final result.
+The final disposition restores the previously reviewed tighter source and
+preserves the negative evidence. Design choices remain proposed, without an
+approval log, and the pull request remains Draft.
+
+Still unverified: fresh-record grouping and
+text-source arbitration, direct sequence-page access, a Whitefoot fix and
+post-fix witness verification, parallel instruction attribution, wider
+workload/machine generality, and allocator-only peak usage within one
+fallback. Proposed follow-up keys and each disposition are in the pull
+request; no status-board or other repository change was made. No build,
+test, check or timing ran on the local machine.
