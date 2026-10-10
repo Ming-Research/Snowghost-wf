@@ -313,3 +313,28 @@ owner decision and construction-cost evidence. No files from the concurrent
 fallback-design work, status board, pin or submodules changed. All execution
 was hosted; the branch remains Draft in
 [PR 61](https://github.com/Ming-Research/Snowghost-wf/pull/61).
+
+### Storage-only continuation
+
+The owner authorized storage adoption without adding the inverse invariant or
+parallelizing owner-motion writes. This narrows this round's completion scope;
+the prior performance rejection thresholds, output identity requirements and
+all existing gates remain unchanged. The prior inverse-maintenance and emitted
+owner-motion task requirements remain open under sg-paged-grow-inverse; a
+successful storage comparison cannot satisfy that broader adoption criterion.
+The owner-motion Decision in layout.md is unchanged.
+
+Each Context root and each Block retains its own separate `Box<Paged<Flow>>`
+and `Box<Paged<SequenceNode>>`. Stable slots, tombstones, AVL links, summaries,
+range actions, existing slot ceilings and pending-list construction remain.
+Built-in prefix initialization follows append order; topology construction
+still splits independent runs and joins child summaries before the parent.
+Growth moves no initialized element. Owner-motion publication is unchanged.
+No inverse invariant, proof-only data or parallel owner-motion form is added.
+
+Sparse route storage still represents absent prefixes without initializing
+those cells. Its former shared slot accessors now live with routes.wf; changing
+that representation is not required for the owner sequences and remains the
+proposed sg-paged-sparse-routes decision. No status board is changed in this run.
+The implementation and all final-head gates and timing remain unverified until
+hosted execution supplies evidence.
