@@ -3201,15 +3201,29 @@ still fails. Final acceptance remains the complete common-compiler matrix.
 
 The admission key is the completed flow's exact Space, used width, content
 origins, flow width, definite height and column count/width/gap. The saved
-columned flag must also hold. A single paragraph is dirty; own and block styles,
-child outputs and topology remain unchanged under the existing restyle/marking
-contract. Intrinsic demand, shrink-to-fit, positioned children, a dirty boundary,
-any changed block/child, multiple paragraphs, incoming percentage readers or
-an own percentage height keep the full reference path. Thus `prepare_spaces`
-would read the same block styles, containing widths/heights, child kinds and
-structural flow, and write the same widths, local horizontal positions, spaces,
-height provenance, split widths and compatibility ranks. Dirty inline text is
-still prepared and broken, including the existing float-dependent rebreak.
+columned flag must also hold. Intrinsic demand, shrink-to-fit, positioned
+children, a dirty boundary, incoming percentage readers or an own percentage
+height keep the full reference path. The paragraph path requires a single dirty
+paragraph with unchanged own/block styles, child outputs and topology under the
+existing marking contract. Thus `prepare_spaces` would read the same block
+styles, containing widths/heights, child kinds and structural flow, and write
+the same widths, local horizontal positions, spaces, height provenance, split
+widths and compatibility ranks. Dirty inline text is still prepared and broken,
+including the existing float-dependent rebreak.
+
+The block path instead uses the existing `restack_block` contract: every marked
+paragraph and child lies inside the selected block's closed subtree. Every
+nested block either keeps its actual horizontal preparation outputs, or a
+block/text-only subtree recomputes them with `prepare_local_widths`; the latter
+refuses child contexts and atomic inlines. Old or new percentage readers in
+that subtree and at its direct children refuse. Percentage-free child subtrees
+shield deeper readers through their own unchanged outgoing bases. The existing
+height-proof refresh and marked-atomic preparation precede scoped stacking,
+which cannot converge before the selected Close. Outside this subtree the
+completed key, unchanged topology/styles and retained scope proof establish the
+same consumed preparation inputs. Changing a block's break grouping is allowed
+because the complete column-unit collection still runs after normal geometry
+settles. No block dirty mark or preparation check is suppressed.
 
 Normal-flow convergence retains all existing margin, float, baseline, height,
 numeric and suffix certificates. `column_map` is consumed only by final output
@@ -3226,13 +3240,15 @@ The fixtures must cover one and multiple columns, a font change that moves a
 column boundary, lined/lineless transitions and an empty unit stream, negative
 margins, floats, atomic inline and split fragments,
 repeated edits and source reconstruction, plus changed column shape, containing
-width, own style, block style, child and percentage inputs that keep full replay.
+width, own style and percentage inputs that keep full replay, plus scoped
+block restyles with unchanged and locally recomputed widths, child and atomic
+changes, changed break grouping and marks outside the selected block.
 Mutations must detect omitted rebalancing, wrong content height, omitted scoped
 publication and an unguarded admission; existing finite full-identity and numeric
 mutations remain conjunctive. This is a proposed task-local dependency change,
 not an owner-approved adoption or a claim that the current full pass is free.
 
-The incoming-space fixture changes only an ancestor's fixed height and one
+The incoming-space fixture changes only an ancestor flow context's fixed height and one
 inline font, leaving the column's own style and width unchanged. The existing
 `steady` predicate ignores this height-basis change for definite-free content;
 the completed preparation key still rejects it because `prepare_spaces` writes
@@ -3405,3 +3421,35 @@ observation. Changed block/child/frame/height/shape cases still take their
 conservative paths. These results support the bounded path already exercised,
 not completion of the performance criterion or the later incoming-space and
 line-presence fixtures.
+
+
+### Block-scoped column replay: trace and prior criterion
+
+The complete input trace in hosted
+[38022214273](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38022214273)
+matches all 60 incremental edits to full layout. All fourteen remaining large
+column replays have exactly one restyled block and one marked paragraph, no
+marked child, boundary invalidation or intrinsic demand, and the same completed
+Space, width and frame. The twelve already-scoped edits have the same outer key
+without that block mark. `restack_block` rejects columns before examining its
+existing local proof, forcing full normal preparation and summary publication.
+
+The extension separates the common outer input key from dirty-consumer
+selection, then permits the existing block proof to run for a column context.
+It introduces no new order: local width/height preparation precedes affected
+normal geometry, and complete column-unit collection consumes that geometry;
+independent contexts and paragraph preparation keep their existing independence.
+Full replay remains the alternative for every failed proof. Before measurement,
+the same-source paragraph-only repair and its twin are the controls, with main,
+handoff and their twins on the same compiler and interleaved runner. Reject the
+extension if block fixtures differ from full layout, the width or closed-scope
+mutation escapes its intended fixture, the targeted replay stays dense, or the
+complete native font-size comparisons still exceed 2x main. First-edit gains
+alone cannot settle this experiment.
+
+The prior incoming-space fixture used an ordinary ancestor block. Its unmutated
+hosted run correctly retained equivalent percentage-free child inputs and
+scoped one entry, so the fixture did not establish its intended premise. The
+ancestor now establishes its own flow context to make the changed definite
+height cross an actual context edge. The original full/scoped expectation and
+input-key mutation remain unchanged and require new execution evidence.

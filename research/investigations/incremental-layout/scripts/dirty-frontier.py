@@ -199,9 +199,33 @@ def column_fixtures():
     # The section's own computed style and width stay unchanged. Only its
     # incoming height basis and one descendant's font change; the older steady
     # guard permits that basis change because these contents are definite-free.
-    yield 'column-incoming-space', source(extra='article{height:900px}'
+    yield 'column-incoming-space', source(extra='article{display:flow-root;height:900px}'
           'article.ancestor-change{height:700px}'
           '.ancestor-change p:nth-child(32) .glyph{font-size:32px}'), ancestor_pairs
+    def block_pairs(tree):
+        glyph = text(tree, 'Column target.')['parent']
+        block = tree.by_node[glyph]['parent']
+        return [f'C {block} changed', f'K {block} changed'] * 2
+    inherited = 'p{font:16px/1 monospace}.glyph{font:inherit}p.changed{font-size:32px}'
+    yield 'column-block-font', source(extra=inherited), block_pairs
+    yield 'column-block-width', source(extra=inherited + 'p.changed{padding-left:80px}'), block_pairs
+    yield 'column-block-atomic', source(body=rows.replace('Column target.</span>',
+          'Column target.</span><b style="display:inline-block">Atomic.</b>'), extra=inherited), block_pairs
+    def group_pairs(tree):
+        node = first(tree, 'div')
+        return [f'C {node} changed', f'K {node} changed'] * 2
+    grouped = rows.replace('<p><span class="glyph">Column target.</span></p>',
+                          '<div><p><span class="glyph">Column target.</span></p><aside>Child.</aside></div>')
+    group_style = 'aside{display:flow-root;width:80px;height:20px;font:16px/1 monospace}'
+    yield 'column-block-child', source(body=grouped, extra=group_style +
+          '.changed .glyph{font-size:32px}.changed aside{height:70px}'), group_pairs
+    yield 'column-block-percentage', source(body=grouped, extra=group_style +
+          '.changed .glyph{font-size:32px}.changed aside{height:80%}'), group_pairs
+    grouped_break = rows.replace('<p><span class="glyph">Column target.</span></p>',
+          '<div><p><span class="glyph">Column target.</span></p>' +
+          ''.join('<p><span class="glyph">Grouped line.</span></p>' for _ in range(5)) + '</div>')
+    yield 'column-block-break', source(body=grouped_break, extra=
+          '.changed{break-inside:avoid}.changed .glyph{font-size:32px}'), group_pairs
     def source_pairs(tree):
         target = text(tree, 'Column target.')
         paragraph = tree.by_node[target['parent']]['parent']
@@ -291,7 +315,7 @@ def check_fixture(args, directory, name, source, edits):
     protocol = directory / (name + '.raw')
     operations = inctime.script_operations(str(script))
     inctime.read(str(protocol), operations, checking=True, require_paths=True)
-    if name in ('column-one', 'column-two', 'column-three'):
+    if name in ('column-one', 'column-two', 'column-three', 'column-block-font', 'column-block-width'):
         column_counts(raw)
     if name == 'column-incoming-space':
         column_input_counts(raw)
