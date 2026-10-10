@@ -1,6 +1,6 @@
 # Split fragment dependency contract (Q134 A; Q135 A)
 
-Current continuation: attribute and repair the Apollo11 font-size acceptance failure under wf-41f46e60030c (specification v0.117), preserving every correctness and performance criterion. Owner-motion storage is separately owned by status-board item `sg-pooled-store`: the owner ruled on 2026-10-09 that block order moves to built-in Paged and the inverse becomes a type invariant over its elements. The Whitefoot proof session owns `proof-q-aggregate-fill`; Snowghost does not depend on it. The [released inverse-proof continuation](#released-inverse-proof-and-recursive-order-storage) below retains historical diagnostics. [Draft PR 55](https://github.com/Ming-Research/Snowghost-wf/pull/55) owns this continuation's delivery, validation and deferrals; no adoption merge is authorized.
+Current continuation: the [final fallback trim](#final-fallback-trim-measured-result-and-unmet-target) reduces overhead but still fails the 1x requirement; reduce counted block fallbacks to at most main's edit cost under wf-41f46e60030c (specification v0.117), preserving every admission, the records needed by the next edit and the [Q141 acceptance criteria](#q141-fallback-cost-question-and-prior-rejection-criterion). [Draft PR 58](https://github.com/Ming-Research/Snowghost-wf/pull/58) owns this continuation's delivery, validation and proposed deferrals; the earlier Apollo11 font-size repair is recorded in [PR 55](https://github.com/Ming-Research/Snowghost-wf/pull/55). Owner-motion storage remains separately owned by status-board item `sg-pooled-store`: the owner ruled on 2026-10-09 that block order moves to built-in Paged and the inverse becomes a type invariant over its elements. The Whitefoot proof session owns `proof-q-aggregate-fill`; Snowghost does not depend on it. The [released inverse-proof continuation](#released-inverse-proof-and-recursive-order-storage) below retains historical diagnostics. No adoption merge is authorized.
 
 ## Question and prior rejection criterion
 
@@ -3551,3 +3551,1680 @@ final revision's gates and review disposition are recorded in
 paragraph-only rejection is historical evidence, not the block extension's
 acceptance result. No compiler pin, submodule, owner-motion storage or inverse
 proof changes are made by this repair.
+
+### Q141 fallback cost: question and prior rejection criterion
+
+Can the counted block-reconstruction path cost no more than main while
+preserving every existing splice admission and all state needed by the next
+edit? The owner selected removal of unread use-record work and redundant
+page-table round trips first. A dirty-ancestor fallback is a separate
+investigation, not an alternative implemented here.
+
+The before source is `4b8a75b241107c02504b3fa9d1eaccf9e758a349`, including
+[PR 55's column repair](https://github.com/Ming-Research/Snowghost-wf/pull/55).
+Main is [PR 56's compiler adaptation](https://github.com/Ming-Research/Snowghost-wf/pull/56) at
+`bb98d4371d0e148775e232e4d2938ddb9aec3be6`, containing compiler adaptations
+only. Every cohort uses `wf-41f46e60030c`, including independently built
+main and candidate twins. Three forward/reverse interleaved rounds share
+one GitHub-hosted runner, captures, fonts and complete X5 scripts, in
+sequential and four-worker modes. Two forward/inverse pilot samples precede
+the batch; their elapsed times and spread remain in the artifact. No local
+or self-hosted execution is part of this experiment.
+
+Before measuring, reject the cost target if any paired fallback median is
+above main's corresponding median; the twin measures noise and cannot waive
+a failed threshold. Select exactly the unchanged Apollo11 script's fallback
+edit IDs, preserving every preceding edit, and compare those same IDs on
+main. Preserve the 38 splices and refusal distribution (18 reason 9, two
+reason 7, two reason 3) per mode. Every X5 page/kind/mode control must remain
+within 2x main. Before/after attribution requires the frozen before and its
+twin alongside the final source on the same runner.
+
+The native oracle already separates structural delta, picks, style and
+layout update. Delta includes splice refusal, dense flags and reconstruction;
+it must not be mislabeled as reconstruction alone. Per-edit instruction dumps
+split `structure_changed` (reconstruction), `update` (layout), and the remaining
+structural-edit instructions (style, attempted splice and other bookkeeping).
+They report call counts and exclusive contributions, not overlapping inclusive
+sums. A zero-edit collection control must report zero instructions. The
+native scripts contain no full-layout comparator between edits.
+
+The timing summary keeps all edits for each X5 page/kind/mode separately
+from the selected fallback subset. Pair candidate with main and candidate
+twin with main twin within each round; apply 2x to the former scope and 1x
+to the latter. Neither pooling twins nor pooling rounds may conceal a
+failed paired threshold. Per-edit native phase counters and instruction
+phase counts remain in the artifacts, so a median of complete edits is not
+presented as the sum of independently selected phase medians.
+
+Reject correctness if any required identity, next-edit splice path or mutation
+observation fails. Before deleting a producer, trace every consumer and the
+replacement's publication lifetime. Removing a still-needed route must be
+detected by a subsequent edit. Needed costs that cannot meet the target under
+this contract require an owner decision, not a skipped check or changed
+admission. The temporary workflow and helper are wired only to this finite
+experiment and are removed after archiving its evidence, before readiness.
+
+### Fallback producer/consumer audit
+
+The current reconstruction first builds a private replacement, retires the
+old context directory entries in a private copy, copies surviving routes,
+and records the replacement. Preparation transfer and publication follow
+those checks. The immediately following layout does not consume every route,
+but later incremental edits do; absence from that one layout is not proof
+of dead data.
+
+| Producer/work | Reader after fallback | Disposition before measurement |
+| --- | --- | --- |
+| `record_uses`: context owner and table structural routes | `styles_restyled` calls `mark_use`; an owner route also invalidates a placing grid/flex/table parent | Required; dropping these can leave layout or its parent stale. |
+| `record_uses`: block routes | `splice_owner` resolves an exact DOM parent to its single block; `mark_use` also records the changed block scope | Required for the next structural splice and scoped block restyle. |
+| `record_uses`: paragraph strut and piece routes | `mark_use` marks precisely those paragraphs; a boxes-only restyle additionally consults `paragraph_reads` | Required independently of block geometry marks. A block route does not mark its paragraphs for preparation. |
+| `note_use`: repeated supplier in one paragraph | The duplicate branch returns without publishing another route | Its repeated directory reads do not change the result; source-level duplicate suppression is a candidate for measurement. |
+| `retain_routes`: old route traversal | It copies only routes whose context survives `retire_at`; those routes serve later edits outside the replacement | Retired routes are already omitted. Surviving routes cannot simply be dropped with the rebuilt context. |
+| `record_units` and retained text-unit copy | `text_changed`, splice-source lookup and a later reconstruction's `reuse_prepared` | Required for fresh and surviving text; skipped whitespace remains a distinct refusal state. |
+| Context directory, `context_of` and checkpoint lookup | Subsequent path validation, splice-owner resolution and exact-checkpoint reconstruction | Required; context identities remain stable outside the replacement and retired slots must not alias new ones. |
+| `finish_sequence` and `bulk_nodes` | Stable-rank readers, subsequent local splice insertion/removal, and `materialize_flow` | Required owner-local payloads, topology and weights; `finish_tree_sequences` seals the context sequence and each block's distinct sequence, not the same sequence twice. |
+| `fill_flow` | The current full layout and boundary passes borrow the event array returned by `materialize_flow` | Required conversion from retained owner-local order to the pass's immutable event view; its scratch lifetime ends after the pass. |
+| `own_geometry`, origin reads, `block_output` and motion/height summaries | Current parent layout plus subsequent old/current geometry, range-motion and boundary readers | Required coordinate representation and summaries. Extra padding/border/height reads in summary construction have those consumers; deleting them would change the retained contract. Their present construction cost is not a proven lower bound. |
+| Full boundary/height/fragment publication | Subsequent splice admission, dirty-frontier updates and old/current geometry readers | Required retained state that main does not store in the same form; profiles must separate publication from duplicate preparation before any cost is called inherent. |
+
+The focused lifetime sequence forces a mixed-inline-seam reconstruction,
+then splices in another ordinary block of that same rebuilt context. It
+edits retained and newly inserted text/styles, checks an outside context,
+removes the fallback insertion, and splices again. Separate omissions erase
+fallback-published style heads or text units, requiring the immediately
+following splice or first retained-text edit to detect the missing record.
+An absent text route means no paragraph consumes that node, so erasing a
+real route leaves stale geometry on the next text edit; the full comparator
+must report a difference, not a topology refusal. The first hosted omission
+run exposed an incorrect refusal expectation in the new detector while
+correctly reporting geometry differences after both fallback insertion and
+removal. The detector now requires those exact differences, with the earlier
+fallback and following splices still correct.
+The original Apollo11 script additionally receives a splice/inverse pair
+after each counted fallback, preserving original sites and edit order and
+renumbering only newly allocated DOM nodes. Hosted execution is required
+before claiming these sequences pass.
+
+The before-source lifetime pilot passes in
+[hosted run 38033466490](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38033466490).
+Its drivers were compiled at `b2ea372d9cdcdfae5dff03fea7043ca72fd5717f`;
+that commit and the requested before revision have the identical renderer
+tree `3cd1ca91be4621f41f62889dce568faa8973bf5c`. The focused sequence takes
+0.21/0.22 seconds in its two sequential pilots, supporting the expanded
+batch. Both modes pass its 20 edits and the Apollo11 sequence's 104 edits
+(60 unchanged operations plus 44 followups). The fixed original path
+inventory is retained in `tests/layout/fixtures/apollo11/block-paths.json`;
+it specifies preservation of the before-source admissions, while each edit's
+geometry is compared with a fresh full rebuild. The new record omissions
+still require their own hosted detection evidence.
+
+### First fallback trim: comparison before measurement
+
+The three-round native baseline in
+[38033465161](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38033465161)
+places the fallback medians at 37–41 ms for the before source and 24–26 ms
+for main on a hosted AMD EPYC 9V74. Its complete profiles contain
+4,933,630,767 main and 6,193,244,173 before-source instructions over the same
+22 fallback edits. Reconstruction accounts for 926,273,904 of the
+1,259,613,406 added instructions, layout for 326,378,472 and other
+structural-edit bookkeeping for 6,961,030. The initial summary step failed
+because the compiler outlined the candidate's reconstruction under a
+`.body.llvm` symbol; the raw timings and all per-edit instruction dumps are
+complete. Symbol normalization must preserve those bodies and recursive
+call contexts when deriving final tables.
+
+The corrected accounting and its negative controls pass in
+[38034336251](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38034336251),
+which reprocesses those archived dumps without rebuilding or measuring
+again. The instruction sums below include only the same 22 sequential
+fallback intervals; native results additionally measure four workers.
+
+| Phase | Main instructions | Before instructions | Added instructions |
+| --- | ---: | ---: | ---: |
+| Structural reconstruction | 851,918,664 | 1,778,192,568 | 926,273,904 |
+| Layout update | 4,054,991,903 | 4,381,370,375 | 326,378,472 |
+| Bookkeeping, including style and splice refusal | 26,720,200 | 33,681,230 | 6,961,030 |
+| Complete fallback interval | 4,933,630,767 | 6,193,244,173 | 1,259,613,406 |
+
+The largest exclusive source-function additions are `slot_read` (12,840,178
+calls, 360,033,796 instructions), `slot_write` (1,065,712 calls, 84,254,195
+instructions), `note_use` (678,427 calls, 45,957,681 instructions) and
+`route_write` (1,065,712 calls, 43,629,126 instructions). `retain_routes`
+adds 27,199,207 exclusive instructions in 22 calls. Allocator and copying
+differences are accounted separately in `attribution.csv`; they cannot be
+added to inclusive caller costs a second time. Main uses direct arrays and
+inlines its `note_use` and `record_units`, so absent instrumented symbols
+do not mean that main records no uses or text units. Its `record_uses`
+executes 24,486 times versus 14,802 before-source calls: reconstruction
+already records only the fresh subtree, retaining outside routes rather
+than recording every outside payload again.
+
+Three local changes preserve the existing records and dependencies:
+
+1. Consecutive paragraph pieces with the same supplying element already
+   have the route published by the strut or preceding piece. No intervening
+   operation can change that supplier's head. Omit those duplicate calls,
+   keeping `note_use`'s general duplicate check for nonconsecutive suppliers.
+2. `retain_routes` writes into a fresh empty use table. Keep a supplier's
+   chain head in a local variable and write it once after collecting its
+   surviving routes; no consumer reads the intermediate heads. Preserve
+   chain order and every live-context check.
+3. Allocate the fallback's style-route table as a bulk page using a checked
+   producer bound: all old routes, plus one new context owner per context,
+   block uses, two row/column uses, paragraph struts and pieces. The bound
+   may exceed actual emissions due to duplicate uses, but cannot omit an
+   emission. It adds independent read-only subtree reductions before the
+   existing route publication. If the bound exceeds the directory ceiling,
+   retain ordinary growth rather than changing admission or refusing an
+   otherwise valid edit. The final logical length still counts actual
+   records. No reserve heuristic, record elision or new lifetime is used.
+
+The allocation proposal exchanges directory nodes for a potentially larger
+single page. Its capacity is the next power of two above the old logical
+route count plus the producer bound; duplicate paragraph suppliers and
+retired old routes can make that capacity larger than the actual route
+count. No smaller-memory claim is made. The bound does not change route
+identity, order, reachability or the storage ceiling. The retained M2
+directories, owner-local sequences and boundary summaries remain required
+by later edits; matching main's native cost is still an empirical target,
+not a consequence of the record-lifetime argument.
+
+Before measuring these changes, compare them with the frozen before and its
+twin, main and its twin, and the new candidate and its twin on one hosted
+runner. Reject attribution if eliminated calls/traversals do not explain
+an instruction reduction, and retain the original native thresholds without
+a noise exception. Fresh routes, text routes, boundary summaries, height
+records and fragment state remain required. The full identity and mutation
+matrix, including the new record omissions, must pass on the resulting head.
+
+### First trim result and final comparison criterion
+
+[Hosted run 38034328080](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38034328080)
+compares the frozen main/before cohorts and their twins with
+`19462a976a48f843fa4cdc3d968bfae285673b44` and its independently built twin.
+All six use the same compiler binary (SHA-256
+`ee3abc1d9bbb562b18a44893f973272b1768acb69273bfa93742e0880ef06921`),
+Clang 22.1.8 and one Ubuntu 24.04.5 hosted AMD EPYC 7763 runner with four
+logical CPUs. Three forward/reverse rounds retain all 60 block edits and
+select the same 22 fallback IDs for this comparison.
+
+The first trim fails the native target: fallback medians remain 35.1–36.9 ms
+sequential and 37.7–39.2 ms with four workers, against main/twin ranges of
+26.7–27.7 ms and 28.1–29.7 ms respectively. Every candidate/main paired
+fallback median remains above 1x. Same-run before medians are 39.3–39.8 ms
+sequential and 41.2–44.2 ms with four workers. The complete round/twin rows
+are in the run's `native-summary.csv`; these ranges do not pool or waive
+any failed round.
+
+The isolated instruction profile explains a real but insufficient reduction:
+
+| Phase over the same 22 fallbacks | Main | Before | First trim |
+| --- | ---: | ---: | ---: |
+| Reconstruction | 851,918,664 | 1,778,192,568 | 1,342,228,270 |
+| Layout | 4,054,991,903 | 4,381,370,375 | 4,381,236,812 |
+| Bookkeeping | 26,720,515 | 33,681,365 | 33,531,763 |
+| Total | 4,933,631,082 | 6,193,244,308 | 5,756,996,845 |
+
+`slot_read` falls from 12,840,178 to 3,313,824 calls and saves 288,206,409
+exclusive instructions. `note_use` falls from 678,427 to 377,606 calls,
+saving 19,252,544 instructions. `slot_write` falls from 1,065,712 to
+1,045,956 calls, saving 42,476,841 instructions including shorter directory
+paths. Allocator calls also fall; the new bulk reserve adds 6,721,174
+instructions to `route_table`. The profile sums every exclusive function
+cost, including copying and allocation, so no remainder is called an
+unattributed reconstruction cost. Layout reductions, topology sealing and
+boundary publication remain almost unchanged and are consumed by subsequent
+incremental edits.
+
+One further unread result is visible in the boundary audit:
+`prepare_boundary_entry_at` computes and stores a transfer at synthesized
+`Close` event ranks, although `reduce_sequence` visits stable entry slots
+and excludes the closing rank from nested slices, and `store_reduction`
+reads only live payload ranks. A close event has no stable payload slot.
+The other caller, `reference_item_output`, already returns before preparing
+any close. Leave that scratch at its initial value instead of computing and
+writing an unused transfer. Keep all open-block natural/motion observations,
+leaf transfers, reductions and publication: their consumers remain live.
+This changes neither admission nor any published record.
+
+Before measuring the final source, compare the complete trim with the frozen
+before/main cohorts and all twins under the same prior thresholds. Include
+every X5 kind on ECMA262, HTML5 and Apollo11. The close-event change predicts
+fewer motion/preparation instructions without changing reduction or retained
+record counts; reject its dead-result argument if any identity, path or
+mutation gate fails. It does not predict that this small deletion closes the
+remaining native gap. If the required record construction/publication still
+exceeds main, the result remains a failed M2 cost criterion; deleting those
+records or changing their lifetime requires an owner decision, not a relaxed
+threshold.
+
+The completion review found an avoidable dependency in the new capacity
+bound: paragraph-piece and child-subtree totals shared one accumulator.
+They now use separate unsigned saturating reductions and combine only at
+the return, preserving the exact bound while exposing their independence.
+The hosted parallel-build ledger is retained to check compiler permission;
+source independence alone is not evidence of emitted parallel execution.
+
+### Complete trim: retained-state validation
+
+The complete implementation is `31bea4a8d0516782c392836867c82f234c81ce43`,
+renderer tree `27d6b5487685eabf76168b56947a6c8b833f96e2`. It passes
+[check](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38037446902),
+[layout-check](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38037446879),
+[Q139](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38037450442),
+[Q140](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38037450504),
+and the [complete falsify-m2 matrix](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38037446889):
+all 164 jobs, including the existing M2, Q139 and Q140 mutations and both new
+record omissions, succeed. No compiler error counts as mutation detection.
+
+The Apollo11 jobs in the
+[page identity run](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38037446913)
+pass both modes with 60 original edits equal to fresh full layout and exactly
+38 splices, 18 reason-9 fallbacks, two reason-7 fallbacks and two reason-3
+fallbacks. Each original edit retains its own recorded path, not merely the
+aggregate distribution. The expanded sequence passes all 104 edits with 82
+splices: the same 38 original splices plus a splice and undo after each of
+the 22 fallbacks. The focused lifetime sequence passes all 20 edits in both
+modes. All 20 jobs in that run pass, including every page/kind identity
+comparison in both modes and sequential/parallel equality. The last HTML5
+root-font job reports 60 equal edits per mode, zero differences and zero
+refusals.
+
+Removing fallback-published style heads makes the next formerly splicable
+edit take reason 1 while preserving its geometry. Removing text routes
+leaves stale geometry on retained-text edits 4 and 17, after fallback
+insertion and removal respectively; the preceding fallbacks and splices
+still match their required paths and full layout. Both omissions are
+detected in sequential and four-worker builds. These observations directly
+refute deleting those records merely because the immediately following
+full layout does not read them.
+
+The independent comparison builds retain their parallel compiler ledger.
+Both new route-counting loops are permitted as unsigned saturating
+reductions and emitted as split reductions. This verifies compiler
+permission for the review repair, without claiming a native speedup from
+parallel counting. The two candidate manifests record the same pinned
+compiler checksum and Clang 22.1.8 as the frozen controls. No new language
+or compiler gap is established by this change.
+
+### Complete trim: cost result and remaining decision
+
+[Hosted comparison 38037446537](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38037446537)
+completed on 2026-10-10 at implementation revision
+`31bea4a8d0516782c392836867c82f234c81ce43`. It uses one Ubuntu 24.04.5
+AMD EPYC 9V45 runner exposing four logical CPUs, the same pinned compiler
+checksum and Clang 22.1.8 as above, and `WF_WORKERS=4` for parallel mode.
+Main is `bb98d4371d0e148775e232e4d2938ddb9aec3be6`; before is the unchanged
+`4b8a75b241107c02504b3fa9d1eaccf9e758a349` renderer. Independently built twins
+accompany all three sources. Rounds 1 and 3 run main, main twin, before,
+before twin, candidate, candidate twin; round 2 reverses that order within
+each page/kind/mode. All comparisons below are within this runner; earlier
+runners' wall times are not pooled with it.
+
+The two-edit Apollo11 pilots take 0.315/0.314 seconds for sequential main,
+0.314/0.365 for sequential candidate twin, 0.265/0.265 for four-worker main
+and 0.317/0.316 for four-worker candidate twin. These whole-process pilot
+times select the finite batch; they are not fallback-edit times. The
+zero-edit profiles collect zero instructions for every source. Full profiles
+produce all 120 before/after dump parts, from which the same 22 fallback
+intervals are selected. Startup, input DOM mutation before the structural
+entry and the full-layout comparator are outside those intervals.
+
+The trim **fails the 1x fallback target in all 12 paired comparisons**.
+It passes all 216 paired X5 control comparisons at the separate 2x limit.
+A successful collection workflow does not mean the cost criterion passed.
+The closest control is HTML5 font-size with four workers at 1.9934x main;
+that result establishes no margin for another machine or workload.
+
+Fallback complete-edit medians in microseconds, always the same 22 IDs;
+slash-separated values are independently built ordinary/twin cohorts:
+
+| Mode | Round | Main / twin | Before / twin | Complete trim / twin |
+| --- | ---: | ---: | ---: | ---: |
+| seq | 1 | 15,471.0 / 15,526.0 | 22,544.0 / 22,591.0 | 20,429.5 / 20,124.0 |
+| seq | 2 | 14,764.5 / 15,547.5 | 21,235.0 / 21,178.5 | 19,371.5 / 19,157.0 |
+| seq | 3 | 14,675.0 / 14,622.5 | 21,862.5 / 22,532.0 | 20,079.5 / 19,395.5 |
+| par | 1 | 14,701.5 / 14,929.5 | 22,953.5 / 22,562.0 | 21,849.5 / 20,480.0 |
+| par | 2 | 14,211.0 / 14,162.0 | 22,088.5 / 22,166.0 | 20,082.0 / 20,717.0 |
+| par | 3 | 14,161.0 / 14,395.0 | 21,743.5 / 21,601.0 | 19,587.0 / 19,668.5 |
+
+[Native cohort medians](q141-native.csv) preserve every source, twin, round,
+mode and scope. The table below gives the range of six individual medians
+(three rounds, two builds) in microseconds and the worst paired ratio; ranges
+are a compact presentation, not pooled samples or a relaxation of the limit.
+Each kind has 20 operations on ECMA262 and 60 on HTML5 and Apollo11. The
+Apollo11 all-block median includes its 38 splices and must not substitute
+for the fallback-only comparison above.
+
+| Page / kind | Sequential main → trim (µs); worst ratio | Four-worker main → trim (µs); worst ratio |
+| --- | ---: | ---: |
+| ecma262 / word | 54.5–61.5 → 56.5–63.0; 1.0957x | 74.5–88.0 → 83.0–93.0; 1.1698x |
+| ecma262 / sentence | 127.0–183.0 → 80.0–84.5; 0.6496x | 180.5–227.5 → 113.0–117.5; 0.6510x |
+| ecma262 / colour | 12.5–13.5 → 12.0–12.5; 1.0000x | 12.5–14.5 → 14.0–23.5; 1.8800x |
+| ecma262 / fontsize | 1,501.0–1,605.0 → 735.5–825.0; 0.5349x | 1,589.5–1,695.0 → 1,026.5–1,111.0; 0.6763x |
+| ecma262 / rootfont | 25,094.5–27,741.0 → 2,834.5–3,303.5; 0.1266x | 36,605.5–40,501.0 → 3,376.5–3,584.0; 0.0946x |
+| ecma262 / block | 369,694.5–377,903.0 → 88.5–94.5; 0.0003x | 337,435.5–348,883.5 → 120.0–133.5; 0.0004x |
+| html5 / word | 39.0–41.0 → 43.0–46.5; 1.1375x | 54.5–60.5 → 62.5–69.0; 1.2661x |
+| html5 / sentence | 109.0–196.5 → 143.0–159.0; 1.3839x | 138.5–157.0 → 155.5–173.0; 1.1227x |
+| html5 / colour | 9.0–9.5 → 9.0–9.5; 1.0556x | 13.0–14.0 → 13.5–17.0; 1.2692x |
+| html5 / fontsize | 410.5–480.5 → 608.5–696.5; 1.5944x | 441.5–474.5 → 780.0–911.0; 1.9934x |
+| html5 / rootfont | 590,152.5–613,552.5 → 752,955.0–801,499.0; 1.3063x | 347,191.5–361,926.5 → 479,493.5–489,369.5; 1.3872x |
+| html5 / block | 382,135.0–389,695.0 → 251.0–271.5; 0.0007x | 339,269.0–345,640.0 → 239.0–269.5; 0.0008x |
+| apollo11 / word | 109.5–119.0 → 115.5–129.0; 1.0909x | 162.0–172.5 → 187.5–205.5; 1.2088x |
+| apollo11 / sentence | 125.5–138.5 → 157.0–172.0; 1.2908x | 190.0–212.0 → 270.0–297.5; 1.5415x |
+| apollo11 / colour | 13.5–15.0 → 15.0–16.5; 1.1786x | 19.0–20.0 → 20.5–31.5; 1.6154x |
+| apollo11 / fontsize | 148.5–165.0 → 174.5–201.0; 1.3267x | 290.5–316.5 → 306.0–338.0; 1.0944x |
+| apollo11 / rootfont | 47,259.0–50,587.0 → 53,564.0–56,925.5; 1.1400x | 39,859.5–42,375.5 → 39,476.5–41,629.0; 1.0048x |
+| apollo11 / block | 14,567.0–15,488.5 → 3,204.5–3,435.5; 0.2241x | 13,983.0–14,772.5 → 3,383.0–3,590.5; 0.2475x |
+
+The per-fallback native artifact retains delta, picks, style and update
+microseconds. Native delta includes refusal and flags; only the isolated
+instruction attribution below identifies reconstruction alone. These are
+sequential instruction counts, not four-worker instruction profiles:
+
+| Phase, same 22 fallback intervals | Main | Before | Complete trim | Trim minus main |
+| --- | ---: | ---: | ---: | ---: |
+| Structural reconstruction | 851,918,664 | 1,778,192,568 | 1,342,456,042 | 490,537,378 |
+| Layout | 4,054,991,903 | 4,381,370,375 | 4,379,008,464 | 324,016,561 |
+| Bookkeeping | 26,720,110 | 33,681,050 | 33,530,283 | 6,810,173 |
+| Total | 4,933,630,677 | 6,193,243,993 | 5,754,994,789 | 821,364,112 |
+
+[Per-edit phase attribution](q141-phases.csv) retains each fallback separately.
+The complete [exclusive function attribution](q141-attribution.csv) contains
+689 normalized functions with their call counts. Its signed differences sum
+to all 821,364,112 remaining extra instructions, and its before-to-trim
+changes sum to the 438,249,204 saved instructions (7.08% of the before
+interval). Allocation and copying are accounted as separate exclusive
+functions, not added again to inclusive caller totals. The largest source
+and library contributors include:
+
+| Function | Calls main / before / trim | Exclusive instructions main / before / trim |
+| --- | ---: | ---: |
+| `wf_layout.slot_read<all>` | 0 / 12,840,178 / 3,313,824 | 0 / 360,033,796 / 71,827,387 |
+| `wf_layout.slot_write<all>` | 0 / 1,065,712 / 1,045,956 | 0 / 84,254,195 / 41,777,354 |
+| `wf_layout.route_read<all>` | 0 / 1,221,163 / 1,221,163 | 0 / 19,217,974 / 19,217,974 |
+| `wf_layout.route_write<all>` | 0 / 1,065,712 / 1,045,956 | 0 / 43,629,126 / 42,823,310 |
+| `wf_layout.note_use` | 0 / 678,427 / 377,606 | 0 / 45,957,681 / 26,705,137 |
+| `wf_layout.record_uses` | 24,486 / 14,802 / 14,802 | 26,504,148 / 21,922,515 / 21,073,253 |
+| `wf_layout.retain_routes` | 0 / 22 / 22 | 0 / 27,199,207 / 28,380,180 |
+| `wf_layout.record_units` | 0 / 14,802 / 14,802 | 0 / 12,860,882 / 12,860,882 |
+| `wf_layout.finish_sequence` | 0 / 32,995 / 32,995 | 0 / 18,611,649 / 18,611,649 |
+| `wf_layout.reduce_sequence` | 0 / 151,925 / 151,925 | 0 / 25,672,145 / 25,672,145 |
+| `wf_layout.join_output` | 0 / 170,465 / 170,465 | 0 / 15,612,604 / 15,612,604 |
+| `wf_layout.publish_boundaries` | 0 / 12,425 / 12,425 | 0 / 10,307,007 / 10,307,007 |
+| `wf_layout.entry_motion_at` | 0 / 79,245 / 60,975 | 0 / 6,864,765 / 5,859,915 |
+| `wf_layout.prepare_boundary_entry_at` | 0 / 79,123 / 79,123 | 0 / 7,699,456 / 7,022,848 |
+| `wf_layout.reconstruction_route_bound` | 0 / 0 / 14,802 | 0 / 0 / 1,400,370 |
+| `wf_layout.route_table<all>` | 0 / 88 / 110 | 0 / 4,419,032 / 11,140,206 |
+| `_int_malloc` | 870,979 / 1,414,448 / 1,199,776 | 173,976,156 / 273,713,635 / 244,195,447 |
+| `_int_free` | 2,464,325 / 3,359,084 / 3,144,580 | 164,178,816 / 227,140,727 / 209,223,841 |
+| `malloc` | 2,242,880 / 3,078,101 / 2,853,602 | 116,515,513 / 165,667,342 / 150,164,246 |
+| `__memcpy_avx_unaligned_erms` | 538,340 / 1,326,718 / 1,309,807 | 42,136,225 / 80,274,844 / 80,571,825 |
+
+Main's inlined use/text recording is included in its callers; a missing
+standalone symbol is not evidence that main omits those semantics. The
+complete trim removes 9,526,354 `slot_read` calls, 300,821 `note_use` calls
+and 19,756 `slot_write` calls compared with before. Skipping the unread Close
+scratch removes 18,270 `entry_motion_at` calls while preserving all 151,925
+`reduce_sequence`, 32,995 `finish_sequence` and 12,425 `publish_boundaries`
+calls. The fresh/retained use relations and text units themselves remain.
+
+The remaining M2-specific work has consumers described in the audit:
+`slot_read`/`route_read` inspect the old directories and live-context state;
+`slot_write`/`route_write`, `note_use`, `retain_routes` and `record_units`
+publish fresh or surviving identities for later style, text and structural
+edits. `finish_sequence` seals the stable owner-local order used by the next
+splice. `reduce_sequence` and `join_output` compute summaries consumed by
+parent layout and later boundary replay, and `publish_boundaries` stores
+those summaries for subsequent admission and dirty-frontier updates.
+Allocation/free/copy routines support these constructed and replaced values;
+the aggregate library rows do not individually prove which allocation a
+future design could avoid. Main uses a compact context/paragraph-range style
+summary rather than M2's explicit stable-slot relations and does not construct
+the same retained boundary/order state.
+
+The result establishes the cost of the current required representation, not
+a lower bound on all possible implementations. Reconstruction still adds
+490,537,378 instructions and layout 324,016,561 versus main after the audited
+unread results are removed. The omission mutations refute deleting real
+style/text records; identity and path checks protect retained order and
+boundary state. Reaching 1x remains unverified. A broader redesign of required-state construction or publication would
+need a new design investigation and owner direction. The consumer evidence
+does not prove that every remaining local optimization is exhausted or that
+the current producer cost is inherent. No state lifetime, admission condition
+or performance threshold is changed here. A dirty-chain fallback remains the separately
+scheduled post-M2 investigation.
+
+The allocation Decision remains proposed. Its measured saving does not
+settle its memory tradeoff: reserving from retired routes and duplicate
+suppliers may overallocate, and peak memory was not measured. The completion
+review's shared-accumulator finding was repaired and its compiler permission
+verified; no remaining correctness finding is claimed. The separate final
+review and delivery status are recorded in the Draft pull request.
+
+### Empty-storage follow-up: comparison before measurement
+
+A further allocation-caller audit found a local omission still available
+without changing required-state construction or lifetime.
+`clear_fragment_anchors` unconditionally replaces one Slots box and three
+Array boxes with empty storage; `finish_reference_geometry` replaces three
+Slots boxes after its payload-flag loops. `new_context` initializes all seven
+containers to exactly that empty state. For an Array whose length is zero,
+or Slots whose capacity is zero (and therefore length is zero), replacement
+publishes no new logical state. Leave that existing empty container in place.
+
+The condition for Slots is capacity, not length: an empty container with
+allocated capacity must still be released, preserving the current memory
+lifetime and the next append's growth behavior. All populated-container
+replacements, payload-flag loops, fragment counters and flags, and the
+reference-phase reset remain unconditional with respect to those no-op
+omissions. Each predicate reads only the field whose independent replacement
+it controls. This adds no representation, interface, admission condition or
+cache; it omits a write of the same empty state. Runtime-capacity storage
+continues to use the pinned language's specified Box representation. No
+missing bulk-clear operation or language gap is inferred from this audit.
+
+Before measuring, require fewer direct allocations in these two routines
+without changing the counts of required routes, reductions or publication.
+The source audit does not establish the frequency of empty calls or a native
+saving. Compare the new candidate and its twin against frozen main/before
+and both twins on one hosted runner, with the same three interleaved rounds,
+all X5 controls, isolated fallback profiles, 1x fallback threshold and 2x
+control threshold. Reject correctness on any identity, next-edit admission
+or mutation failure. The previous measured source and its tables remain
+historical evidence; they cannot establish this follow-up's result. A broader
+construction decision remains premature while this local omission is being
+validated.
+
+### Non-paragraph duplicate read: comparison before measurement
+
+The remaining directory-read audit found that `note_use` reads the previous
+`StyleRoute` even for owner, block, row and column uses, whose `paragraph`
+is `no_index`. Its duplicate predicate is
+`same_context && same_paragraph && paragraph != no_index`; for those uses,
+the first two terms cannot change the result. Evaluate the paragraph test
+before loading the previous route. `route_read` and `slot_read` only read
+storage and return the explicit missing value on an absent slot; neither
+publishes state nor returns an error whose handling could be lost. The
+supplier-head read remains necessary to link the new record. All paragraph
+duplicate comparisons, storage bounds, route publication and admission
+conditions remain unchanged.
+
+Before measuring, predict fewer `note_use`-to-`route_read` calls, with the
+same `note_use`, style-route publication and required-state publication counts. Reject
+that mechanism if the isolated instruction profile does not show it. Native
+benefit is unverified: compare the final source and its independent twin
+against the same frozen main/before cohorts in three interleaved hosted
+rounds, retaining every X5 control, the 1x fallback and 2x control criteria,
+and all identity, next-edit and mutation gates. This is an algebraically
+irrelevant read removal within the existing representation, not an omission
+of a safety or admission check or a new construction design.
+
+The same read/write audit also identified two exact path-directory round
+trips. `relative_steps` reloads one `ContextPath` at the same index after
+only local allocation and checks; its `paths` input is read-only. Keep the
+first value for the parent and child fields, preserving the existing live
+and bound checks. During reconstruction, historical retired paths equal
+`absent_context_path()` (`live = False`, both indices `no_index`), which is
+already the new directory's initial value. Advance the logical append index
+for those paths without writing that value again; retain `route_push`'s
+ceiling check in that branch. Live paths still use the existing append path.
+Retirement, fresh record publication, every numeric slot, directory length,
+allocation and subsequent append order stay unchanged. The only false-path
+producers are initial missing storage and subtree retirement, both publishing
+that same value. Path traversal and liveness readers reject an unlive path
+before interpreting its indices; raw directory-copy loops preserve its value.
+The later `retire_at` call remains necessary to clear currently live slots
+owned by the subtree being replaced.
+
+Before measuring these omissions together with the non-paragraph guard,
+predict fewer `relative_steps`-to-`route_read` calls and fewer reconstruction
+path writes, with unchanged live paths, style/text emissions, stable sequence
+and boundary publication. The preceding native and correctness rejection
+criteria apply unchanged. The profile of each caller distinguishes the
+removed operations; a combined native comparison does not establish each
+individual omission's wall-time effect. No new bulk-copy representation,
+identity reclamation or construction mechanism is introduced.
+
+### Empty-storage follow-up: measured result
+
+[Hosted comparison 38042785237](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38042785237)
+measures `8fcb8b42ef262a4ec6dd081324876c2c6e0041cf`, renderer tree
+`032cd66a65adc68df47e6674b832b30c8bdb5fb3`, before the subsequent route/path
+read omissions. Its six cohorts use the frozen main and before revisions,
+the common compiler and Clang 22.1.8, on one Ubuntu 24.04.5 hosted AMD EPYC
+7763 runner exposing four logical CPUs. Three interleaved rounds and both
+independently built twins retain the original acceptance criteria. Every
+one of the 12 paired fallback medians still fails 1x (1.2453–1.3461x main);
+all 216 paired X5 controls pass 2x. This is an intermediate result, not
+evidence for the later source.
+
+The isolated 22-fallback profile confirms the predicted local omission:
+
+| Direct caller | Before and preceding route/Close trim: allocation/free pairs | Empty-storage trim: allocation/free pairs |
+| --- | ---: | ---: |
+| `clear_fragment_anchors` | 60,188 | 235 |
+| `finish_reference_geometry` | 98,979 | 117 |
+
+These two callers remove exactly 158,815 direct allocation/free pairs.
+Their call counts stay 15,047 and 32,993, respectively; only already-empty
+container replacement disappears. `note_use` remains at 377,606 calls,
+`record_uses` and `record_units` at 14,802 each, `reduce_sequence` at 151,925
+and `publish_boundaries` at 12,425, matching the preceding trim. Required
+record and summary publication is therefore unchanged in this profile.
+
+The complete fallback interval contains 5,728,191,330 instructions:
+1,342,059,227 reconstruction, 4,352,551,688 layout and 33,580,415 other
+bookkeeping. The same-run main contains 4,933,630,992 instructions and
+the before source 6,193,244,353. The native comparison with the preceding
+trim used a different hosted machine, so it does not isolate a guard-only
+wall-time saving. Direct caller counts identify the removed mechanism
+without making that cross-machine claim.
+
+This source passes [check 38042782108](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38042782108),
+[layout-check 38042782007](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38042782007),
+[Q139 38042785842](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38042785842),
+[Q140 38042785854](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38042785854),
+all 20 jobs of [oracles-m2 38042782039](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38042782039)
+and all 164 jobs of [falsify-m2 38042782067](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38042782067).
+In both modes the 60 original Apollo11 edits preserve every admission;
+all 104 expanded edits match full reconstruction, including the splice and
+undo after every fallback. Both new route-omission mutations produce their
+specified next-edit failures after valid builds and complete sequences.
+
+The later prior-route and repeated-path source reads inline into
+`slot_read` in the measured callers. Their pending prediction is therefore
+observed through those call edges, rather than expecting a standalone
+`route_read` symbol. The empty-storage source has 558,867
+`note_use`-to-`slot_read` calls, 129,242 `relative_steps`-to-`slot_read`
+calls and 235,399 direct reconstruction directory writes: 185,819 context
+paths, 40,430 text units and 9,150 establishing-element lookups. These are the
+mechanism baselines for the next result; they do not change its prior
+prediction, thresholds or required publication counts.
+
+### Native phase decomposition: comparison before measurement
+
+The instruction profiles separate reconstruction, layout and bookkeeping for
+every sequential fallback. The four-worker native `delta_us` also includes
+splice refusal and flag construction, so it cannot establish the same
+three-way breakdown. Collect that missing observation with temporary oracle
+instrumentation in private hosted worktrees, keeping the production layout
+source and canonical acceptance drivers unchanged.
+
+The temporary helper brackets the direct `structure_changed` call with the
+existing oracle clock/dependency pattern, reading the initial timestamp only
+after the flag box exists, passing it into a private wrapper and reading the
+final timestamp through the mutated layout. A second private wrapper anchors
+the layout call after the finisher's after-picks timestamp. The finisher
+reports that after-picks-to-finished layout interval and
+its complete layout-plus-style interval in nanoseconds. Bookkeeping is their
+per-edit remainder after subtracting reconstruction and layout. Phase reports
+are appended after the measured interval. Clock and wrapper overhead remains
+part of this instrumented observation; it cannot replace the uninstrumented
+1x/2x acceptance comparison or establish a change's isolated native saving.
+
+Before collecting, require all three phase records for every original edit,
+a positive reconstruction interval for each selected fallback, positive layout
+time, nonnegative bookkeeping and exact per-edit conservation. Reject missing,
+duplicate or malformed records and a changed original admission. Negative
+controls must detect each failure. Reconcile total and layout nanoseconds
+with the ordinary timing rows, allowing only the exact one/two-microsecond
+bounds caused by their separate integer truncation; reconstruction must fit
+its containing delta interval. Source patching must reject a missing
+or ambiguous anchor. Build frozen main, before and candidate independently
+with all twins and the common compiler; retain the exact oracle-only patch
+beside each binary. Two forward/inverse pilot samples precede three
+interleaved rounds of all 60 Apollo11 block edits in both modes, selecting
+the same 22 fallback IDs for the phase table. This closes the missing native
+decomposition without a renderer mechanism or admission change.
+
+### Native phase decomposition: measured result
+
+[Hosted phase comparison 38050234235](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38050234235)
+uses an Intel Xeon Platinum 8573C with four exposed logical CPUs, Ubuntu
+24.04.5 and Linux 6.17.0-1022-azure. All six independent builds use
+`wf-41f46e60030c`, compiler SHA-256
+`ee3abc1d9bbb562b18a44893f973272b1768acb69273bfa93742e0880ef06921`, and
+Clang 22.1.8. Main and its twin are `bb98d4371d0e148775e232e4d2938ddb9aec3be6`,
+before and its twin `4b8a75b241107c02504b3fa9d1eaccf9e758a349`, and candidate
+and its twin `1745ff5e12a5b8f80bc08fe60facecdcb1130870`. The workflow runs
+at `88b9f201c91f69f07a6adc75ebbb94c12e8a2858`; each archived driver manifest
+records its source revision and its exact oracle-only instrumentation patch.
+Both sequential and four-worker builds succeed. Their parallel ledgers
+preserve the start/rebuild/end and start/layout/end dependencies.
+
+Two forward/inverse pilot samples per selected cohort and mode take
+0.466–0.566 seconds, with maximum within-pair spread 1.0034x, before the
+three forward/reverse/forward interleaved rounds. The instrumentation,
+accounting, ordinary-timer reconciliation and original-admission controls
+pass. The 36 full raw runs contain 6,480 phase records; the selected 22
+fallback IDs yield 792 distinct per-edit rows in
+[q141-final-native-phases.csv](q141-final-native-phases.csv). Every selected
+row matches its raw phase records and conserves total nanoseconds exactly.
+
+The table gives ranges of the six individual 22-fallback medians (three
+rounds, two twins) in microseconds. Each phase is summarized independently:
+sums of column medians need not equal the total median. These instrumented
+observations establish the decomposition in both modes; only the separate
+uninstrumented comparison determines 1x/2x acceptance.
+
+| Mode / cohort | Reconstruction | Layout | Bookkeeping | Complete edit |
+| --- | ---: | ---: | ---: | ---: |
+| Sequential / main | 7,350.1–7,726.4 | 21,634.9–21,990.9 | 331.9–353.1 | 29,385.3–30,141.8 |
+| Sequential / before | 16,697.6–17,343.3 | 26,115.0–27,190.0 | 406.4–430.1 | 43,279.0–44,982.9 |
+| Sequential / candidate | 13,748.9–13,957.3 | 26,702.3–26,925.2 | 407.8–443.9 | 41,008.5–41,405.5 |
+| Four workers / main | 9,737.7–9,981.1 | 20,863.0–21,154.3 | 416.1–434.4 | 31,154.4–31,539.5 |
+| Four workers / before | 19,550.5–20,002.9 | 25,974.3–27,145.6 | 550.8–576.2 | 46,196.9–47,716.4 |
+| Four workers / candidate | 16,269.5–16,742.1 | 26,137.9–26,845.3 | 553.4–582.7 | 43,161.0–44,147.6 |
+
+Reconstruction decreases from the before source in both modes while remaining
+above main; layout also remains above main. Bookkeeping is measured rather
+than left unattributed. This does not assign parallel instructions to
+functions or isolate each omission's native saving. Instrumentation overhead
+and differences between hosted machines preclude combining these times with
+another run's uninstrumented timings.
+
+
+### Final fallback trim: measured result and unmet target
+
+[Hosted comparison 38047104753](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38047104753)
+measures `1745ff5e12a5b8f80bc08fe60facecdcb1130870`, renderer tree
+`14354fa87e88048b6daa32c3c06412453848065b`, on one AMD EPYC 7763 runner
+exposing four logical CPUs, Ubuntu 24.04.5 and Linux 6.17.0-1022-azure.
+Main is `bb98d4371d0e148775e232e4d2938ddb9aec3be6`. The before driver and
+its independently built twin were compiled at
+`b2ea372d9cdcdfae5dff03fea7043ca72fd5717f`, whose renderer tree
+`3cd1ca91be4621f41f62889dce568faa8973bf5c` is identical to the requested
+`4b8a75b241107c02504b3fa9d1eaccf9e758a349`; the workflow checks that equality
+before reusing those frozen artifacts. Both candidate builds are exact 1745ff5.
+All six drivers have empty source patches and the common
+`wf-41f46e60030c` checksum recorded in the phase comparison above, with
+Clang 22.1.8. This task moves no pin or submodule. Parallel mode uses
+`WF_WORKERS=4`.
+
+Three rounds interleave main/main twin/before/before twin/candidate/candidate
+twin, reversing the order in round 2. The complete X5 scripts, captures and
+fonts are shared within this runner. The two-edit Apollo11 pilots take
+0.616/0.566 seconds for sequential main, 0.616/0.615 for candidate twin,
+0.516/0.516 for four-worker main and 0.565/0.568 for candidate twin. The
+largest within-pair spread there is 1.0885x; these startup-inclusive samples
+select the finite batch and are not edit-cost observations. All three
+zero-edit profiles contain zero instructions and every full profile has
+120 before/after dump parts. Accounting negative controls pass.
+
+The final trim **fails all 12 paired 1x fallback comparisons**, at
+1.2624–1.3623x main. Its medians are 5.6–11.2% below the corresponding
+before-source medians on this runner, but that improvement does not satisfy
+M2. All 216 paired X5 controls pass 2x; the closest is HTML5 font-size with
+four workers, 1.8539x. Neither twins nor rounds are pooled to waive a failure.
+These results supersede the earlier trim tables for the final renderer;
+the earlier tables remain historical comparisons at their named revisions.
+
+Complete-edit medians in microseconds for the same 22 Apollo11 fallback IDs;
+slash-separated values are the ordinary/twin builds:
+
+| Mode / round | Main / twin | Before / twin | Final trim / twin |
+| --- | ---: | ---: | ---: |
+| seq 1 | 25,292.5 / 25,087.0 | 36,141.0 / 35,927.0 | 32,792.0 / 32,202.0 |
+| seq 2 | 26,149.0 / 26,092.0 | 37,073.5 / 37,027.5 | 34,023.5 / 34,666.5 |
+| seq 3 | 26,761.5 / 27,072.0 | 37,238.5 / 37,744.0 | 33,881.0 / 34,176.5 |
+| par 1 | 26,292.5 / 27,103.5 | 39,675.0 / 38,833.0 | 35,435.0 / 35,541.5 |
+| par 2 | 26,719.5 / 26,853.5 | 38,294.5 / 39,800.5 | 36,149.5 / 35,527.0 |
+| par 3 | 27,372.0 / 27,668.0 | 40,217.0 / 41,623.0 | 37,290.0 / 36,959.0 |
+
+[All 684 native cohort medians](q141-final-native.csv) retain each round,
+mode and scope. Below, each range summarizes six individual medians (three
+rounds and two independent builds), followed by the worst paired ratio.
+ECMA262 has 20 operations per kind, HTML5 and Apollo11 60. Apollo11's
+all-block control includes the 38 successful splices and cannot stand in
+for the 22-fallback comparison.
+
+| Page / kind | Sequential main → final (µs); worst ratio | Four-worker main → final (µs); worst ratio |
+| --- | ---: | ---: |
+| ecma262 / word | 90.0–101.0 → 97.5–106.5; 1.1514x | 148.0–158.0 → 161.0–180.0; 1.1765x |
+| ecma262 / sentence | 214.0–226.5 → 126.0–134.5; 0.6285x | 274.0–287.0 → 196.0–213.0; 0.7774x |
+| ecma262 / colour | 14.5–15.5 → 14.0–15.0; 1.0345x | 18.0–19.0 → 19.5–26.0; 1.4054x |
+| ecma262 / fontsize | 1,601.5–1,788.0 → 926.0–949.0; 0.5886x | 1,727.0–2,141.5 → 1,347.5–1,415.0; 0.7872x |
+| ecma262 / rootfont | 32,379.5–34,429.5 → 3,678.0–3,952.5; 0.1205x | 53,385.5–54,723.5 → 4,475.0–4,762.5; 0.0885x |
+| ecma262 / block | 495,186.5–502,042.5 → 138.5–151.5; 0.0003x | 452,711.0–457,465.5 → 205.0–219.0; 0.0005x |
+| html5 / word | 65.5–69.0 → 75.5–76.5; 1.1603x | 110.0–113.5 → 119.0–128.5; 1.1422x |
+| html5 / sentence | 199.5–224.0 → 256.0–277.5; 1.3756x | 300.5–320.0 → 301.0–322.5; 1.0332x |
+| html5 / colour | 14.5–15.0 → 14.0–15.0; 1.0345x | 23.0–25.0 → 24.0–30.0; 1.2000x |
+| html5 / fontsize | 720.5–809.5 → 979.5–1,047.0; 1.4330x | 804.0–865.5 → 1,391.5–1,535.5; 1.8539x |
+| html5 / rootfont | 907,425.5–920,404.5 → 1,082,574.5–1,108,047.0; 1.2101x | 542,028.0–548,687.5 → 693,290.0–703,705.5; 1.2846x |
+| html5 / block | 491,720.5–511,551.0 → 439.5–455.5; 0.0009x | 447,231.0–468,008.0 → 429.5–445.0; 0.0010x |
+| apollo11 / word | 198.0–204.0 → 222.5–227.0; 1.1465x | 334.0–345.5 → 385.5–395.0; 1.1826x |
+| apollo11 / sentence | 233.5–239.5 → 310.5–316.5; 1.3555x | 405.5–417.5 → 571.0–582.0; 1.4230x |
+| apollo11 / colour | 26.0–28.0 → 26.5–29.0; 1.1154x | 36.5–40.0 → 42.5–49.0; 1.3425x |
+| apollo11 / fontsize | 281.0–306.5 → 328.0–357.5; 1.2145x | 559.0–567.0 → 587.5–638.5; 1.1371x |
+| apollo11 / rootfont | 79,632.0–80,389.0 → 88,714.5–92,370.5; 1.1497x | 70,981.5–72,242.0 → 66,691.0–68,539.5; 0.9656x |
+| apollo11 / block | 25,132.0–26,925.0 → 5,560.0–5,730.0; 0.2229x | 26,388.0–27,576.5 → 6,495.0–6,703.5; 0.2472x |
+
+The isolated sequential profile selects those same 22 fallback intervals,
+excluding startup, input DOM mutation before structural entry and the full
+comparator. Native phase observations in both modes are recorded separately
+above; their instrumented runner's times are not pooled with this one.
+
+| Phase | Main instructions | Before instructions | Final instructions | Final minus main |
+| --- | ---: | ---: | ---: | ---: |
+| Reconstruction | 851,918,664 | 1,778,192,568 | 1,328,300,179 | 476,381,515 |
+| Layout | 4,054,991,903 | 4,381,370,375 | 4,352,551,688 | 297,559,785 |
+| Bookkeeping | 26,720,425 | 33,681,410 | 33,580,460 | 6,860,035 |
+| Complete fallback | 4,933,630,992 | 6,193,244,353 | 5,714,432,327 | 780,801,335 |
+
+[All 66 per-edit instruction decompositions](q141-final-phases.csv) preserve
+each fallback. The [689-function attribution](q141-final-attribution.csv)
+accounts for the complete signed difference using exclusive instructions:
+780,801,335 above main and 478,812,026 below before (7.7312%). No remainder
+is left unattributed. Selected function counts and self costs follow;
+`<all>` combines generic instantiations and normalized outlined bodies.
+Zero named calls in main do not imply absent use/text-recording semantics:
+main inlines those operations in its compact representation.
+
+| Function | Calls main / before / final | Exclusive instructions main / before / final |
+| --- | ---: | ---: |
+| slot_read<all> | 0 / 12,840,178 / 3,258,724 | 0 / 360,033,796 / 70,457,987 |
+| slot_write<all> | 0 / 1,065,712 / 884,623 | 0 / 84,254,195 / 35,162,701 |
+| route_read<all> | 0 / 1,221,163 / 1,221,163 | 0 / 19,217,974 / 19,217,974 |
+| route_write<all> | 0 / 1,065,712 / 884,623 | 0 / 43,629,126 / 36,047,324 |
+| note_use | 0 / 678,427 / 367,426 | 0 / 45,957,681 / 28,135,354 |
+| record_uses | 24,486 / 14,802 / 14,802 | 26,504,148 / 21,922,515 / 20,962,654 |
+| retain_routes | 0 / 22 / 22 | 0 / 27,199,207 / 28,380,180 |
+| record_units | 0 / 14,802 / 14,802 | 0 / 12,860,882 / 12,860,882 |
+| finish_sequence | 0 / 32,995 / 32,995 | 0 / 18,611,649 / 18,611,649 |
+| reduce_sequence | 0 / 151,925 / 151,925 | 0 / 25,672,145 / 25,672,145 |
+| join_output | 0 / 170,465 / 170,465 | 0 / 15,612,604 / 15,612,604 |
+| publish_boundaries | 0 / 12,425 / 12,425 | 0 / 10,307,007 / 10,307,007 |
+| entry_motion_at | 0 / 79,245 / 60,975 | 0 / 6,864,765 / 5,859,915 |
+| prepare_boundary_entry_at | 0 / 79,123 / 79,123 | 0 / 7,699,456 / 7,022,848 |
+| reconstruction_route_bound | 0 / 0 / 14,802 | 0 / 0 / 1,400,370 |
+| route_table<all> | 0 / 88 / 110 | 0 / 4,419,032 / 11,140,206 |
+| clear_fragment_anchors | 0 / 15,047 / 15,047 | 0 / 1,790,593 / 352,896 |
+| finish_reference_geometry | 0 / 32,993 / 32,993 | 0 / 3,995,453 / 1,062,469 |
+| malloc | 2,242,880 / 3,078,101 / 2,694,787 | 116,515,513 / 165,667,342 / 143,149,119 |
+| _int_malloc | 870,979 / 1,414,448 / 1,199,550 | 173,976,156 / 273,713,635 / 243,845,844 |
+| _int_free | 2,464,325 / 3,359,084 / 2,986,025 | 164,178,816 / 227,140,727 / 200,584,622 |
+| __memcpy_avx_unaligned_erms | 538,340 / 1,326,718 / 1,309,736 | 42,136,225 / 80,274,844 / 80,605,099 |
+
+The final route/path omissions remove 13,759,003 instructions relative to the
+empty-storage profile. The predicted operations disappear, while the literal
+prediction of unchanged standalone `note_use` call counts is **not met**:
+10,180 invocations are inlined into `record_uses`. Its profile gains exactly
+10,180 direct slot reads and 20,360 direct route writes. Combining these
+with `note_use` leaves the same 484,716 route writes as before that guard,
+but reduces their combined slot reads from 558,867 to 550,767 (8,100).
+This is a change of compiled call boundary, not omission of 10,180 relations.
+
+`relative_steps` slot reads fall from 129,242 to 82,242, removing 47,000
+repeated immutable-path reads. Direct reconstruction ContextPath stores fall
+from 185,819 to 24,486, omitting 161,333 historical tombstones already in the
+fresh page. Its 40,430 TextUnit and 9,150 establishing-element lookup stores
+remain unchanged. Across all callers, every non-ContextPath route-write
+instantiation retains its previous count; total route writes fall by exactly
+161,333. The aggregate final `slot_read` count falls by 55,100 versus the
+empty-storage profile, matching the 8,100 plus 47,000 read omissions.
+These compiled call edges distinguish each mechanism; they do not isolate
+each omission's wall-time effect across different runs.
+
+The earlier savings remain: 300,821 consecutive duplicate supplier calls,
+19,756 intermediate supplier-head writes and 18,270 Close motion preparations
+are omitted. Empty-storage cleanup retains only 235 and 117 direct
+allocation/free pairs instead of 60,188 and 98,979, removing 158,815 pairs.
+Fresh/surviving style and text relations, stable owner-local sequences,
+reductions and boundary publication remain, with the consumers identified
+in the audit. Allocation/copy/free functions account for their own exclusive
+costs; this profile does not identify every allocated object's lifetime or
+prove all remaining work irreducible.
+
+### Final renderer validation and remaining direction
+
+The measured final renderer passes
+[check 38047105049](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38047105049),
+[layout-check 38047105031](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38047105031),
+[Q139 38047108569](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38047108569),
+[Q140 38047108494](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38047108494),
+all 20 jobs of [oracles-m2 38047105036](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38047105036)
+and all 164 jobs of [falsify-m2 38047105070](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38047105070).
+Both modes preserve all 60 original Apollo11 results and every original
+admission: 38 splices, 18 reason-9, two reason-7 and two reason-3 fallbacks.
+All 104 expanded edits match fresh full reconstruction, including a splice
+and undo after each fallback, and both focused 20-edit sequences pass.
+The Q139/Q140 pull-request merge tree equals the measured revision's tree;
+the final delivery revision and its repeated gates are recorded in
+[Draft PR 58, fallback cost](https://github.com/Ming-Research/Snowghost-wf/pull/58)
+without changing this measured renderer.
+
+The new style omission changes the next splice to reason 1; the text
+omission produces stale geometry at the retained-text edits after both
+fallback insertion and removal. Both mutations compile and are detected in
+both modes. The original admission and earlier unrelated edits remain
+checked, so a build failure or unrelated refusal cannot count as detection.
+The route-bound paragraph and child reductions remain independently
+permitted and emitted in the final parallel build.
+
+The authorized local omissions are implemented and measured, but the cost
+target remains unmet. The current retained-state construction adds
+476,381,515 reconstruction instructions and 297,559,785 layout instructions
+versus main. Their required outputs have identified consumers; removing the
+outputs would violate the next-edit contract. This does not establish a
+lower bound on their implementation cost or prove every possible local
+optimization exhausted. Comparing a different construction/publication path
+for those same relations and summaries is a broader design investigation,
+awaiting the owner's direction in
+[Draft PR 58, fallback cost](https://github.com/Ming-Research/Snowghost-wf/pull/58). No dirty-chain fallback,
+weaker admission or relaxed cost criterion is introduced.
+
+The bulk-page allocation Decision remains proposed, without a design-log
+entry. Its capacity may overreserve for retired routes and duplicate
+suppliers; peak memory is unmeasured. Parallel instruction attribution,
+other workloads/machines and per-object allocation provenance remain
+unverified. No Whitefoot gap is established by this work, and no pin or
+submodule moved. All compilation, tests, checks and measurement ran on
+GitHub-hosted CI; local operations only edited/read source and Git state
+and analyzed downloaded evidence.
+
+### Bulk retained construction: comparison before measurement
+
+The continuation starts from `941e51d478f13ae38e5d714e45c01903356a04ba`.
+The selected direction is bulk construction of the same retained state, with
+unchanged admission and the existing 1x fallback requirement. This section
+precedes implementation and measurements of that construction. The prior
+profile attributes 476,381,515 excess instructions to reconstruction and
+297,559,785 to layout; it does not establish that either cost is necessary.
+
+| Retained structure | Construction dependencies | Subsequent readers | Bulk candidate and limits |
+| --- | --- | --- | --- |
+| Surviving style routes and supplier heads | Retirement results and each old supplier's linked chain; output IDs follow supplier order and old-chain traversal, while the published chain reverses that traversal | `mark_use`, `splice_owner`, scoped paragraph/block restyle outside the replacement | Count each supplier independently, reduce counts in a balanced tree, assign disjoint output slices from subtree totals, fill each supplier's slice and publish its head once. Preserve exact route IDs, order, termination checks and storage ceiling. Only traversal within a supplier follows a true pointer dependency. |
+| Fresh style routes and supplier heads | Completed context tree, preorder context identities, block/row/column order and paragraph supplier deduplication; duplicate suppression consults the last route for that supplier | The same style and splice readers inside the replacement | A bulk emission stream plus supplier grouping could compute predecessor links and duplicate flags before stable compaction. It must preserve first-emission order across suppliers, including nonconsecutive repeated suppliers in one paragraph; direct concurrent writes to supplier heads are not independent. Investigate after surviving-route construction; a grouping/sorting representation requires its own dependency and cost evidence. |
+| Context paths | Historical slot identities, retirement subtree, preorder IDs of fresh contexts and their parent/child links | Path validation, later reconstruction, preparation reuse and splice routing | Copy old paths into disjoint final page cells, preserving tombstones and high-water mark; fresh IDs can be assigned by subtree counts. Retirement and publication still precede preparation transfer. Never compact historical slots. |
+| Establishing-element lookup | Surviving context liveness; first qualifying context in preorder for each element | Nearest reconstructible context and exact checkpoint selection | Fill retained lookup independently per DOM slot; fresh first-writer selection needs the same preorder arbitration as the current builder. |
+| Text-unit directory and skipped text | Surviving liveness or skipped sentinel; fresh paragraph/piece order, consecutive-piece extent, and last writer when a node recurs | `text_changed`, splice-source lookup, `reuse_prepared` | Fill retained units independently per DOM slot; fresh units can reduce each consecutive source run before publication, but multiple producers of one source must retain the current final-writer rule. Skipped publication only replaces absent records. |
+| Owner-local sequence nodes and payloads | Finished pending sequence; median children determine heights and event totals | Stable rank, splice insertion/removal, flow materialization, range motion | Already bulk: `finish_sequence` sizes two pages, `bulk_nodes` fills disjoint halves and a counted loop fills payloads. Do not replace this with incremental insertion. Allocation/initialization and repeated immutable lookup remain candidates, not proof of redundant state. |
+| Flow event view | Finished owner-local topology and each subtree's event span | Current full layout and boundary preparation | Already disjoint-slice recursion in `fill_flow`; nested Open/Close offsets depend on subtree event counts. A direct page view may reduce lookups without changing event order or the scratch lifetime. |
+| Boundary transfers, height and motion summaries | Settled geometry, own outputs and left/own/right association, with nested block output preceding its parent | Subsequent splice certificates, convergence, range displacement and parent layout | Already a balanced postorder `reduce_sequence` followed by disjoint page publication. Preserve exact saturating association; a mathematically associative reformulation is not sufficient. Investigate page access only after reconstruction costs. |
+| Fragment roles, joins and owner-relative geometry | Settled lines, split topology and source-domain lifetimes | Later text edits, split repair, range translation and output materialization | Existing source-domain identity and role activity are required. A bulk rebuild must retain every negative adjacency and lineless transition record; no omission is justified by the immediate fallback's output alone. |
+
+The first implementation candidate removes the shared append dependency of
+surviving-route construction. Its balanced sizing tree fixes the same output
+positions that the serial append would produce. Independent suppliers fill
+disjoint slices; each supplier retains its actual linked-list dependency.
+The additional count traversal is an explicit work/critical-path tradeoff,
+preferred over a global prefix counter. Direct destination-page population
+of retained paths, units and establishing-element lookup is a separate
+candidate: its records have no cross-slot dependency. Existing fresh-state
+publication and sequence reductions remain until a supported replacement is
+shown; naming an already bulk function is not a new optimization.
+
+**Prior rejection criteria.** For each implemented construction, require at
+least a 10% reduction in its isolated inclusive construction instructions
+against 941e51d on the same 22 Apollo11 fallback intervals, with allocation,
+copying and sizing included once. Reject any identity, record, ordering,
+lifetime, ceiling or admission difference even if geometry happens to match.
+Keep exclusive phase/function attribution separate from those inclusive
+construction costs. A shorter independent dependency chain is required;
+a measured saving does not justify a new unnecessary sequential chain.
+Failure of the 10% threshold rejects that candidate, not the unchanged 1x
+M2 requirement. No weaker admission, skipped state or early fallback is an
+alternative in this comparison.
+
+Use the protocol of run 38047104753 with main
+`bb98d4371d0e148775e232e4d2938ddb9aec3be6`, before 941e51d, and the delivered
+candidate, each with an independent twin, compiler `wf-41f46e60030c`, all X5
+controls, sequential/four-worker modes and three forward/reverse/forward
+rounds on one GitHub-hosted runner. Preserve every original per-ID admission.
+Report phase instruction totals for all three sources and the same paired
+1x fallback and 2x control verdicts. No build, test or timing runs locally.
+
+Peak resident memory is measured with `/usr/bin/time -v` around the native
+Apollo11 block script, with zero-edit and two-edit pilots and the complete
+script for all three sources and both modes. This is a process high-water
+mark, including initial layout; it is not mislabelled as an allocator-only
+fallback delta. Compare a candidate with only the bulk-page reservation
+removed on the same runner to isolate that reservation: keep it only if its
+maximum RSS increase is at most 5% and its construction instruction saving
+is at least 10% relative to that matched variant. A higher cost or smaller
+saving reopens the allocation proposal; neither comparison can establish
+peak memory inside an individual fallback interval from process RSS alone.
+
+Before delivery, run check, layout-check, Q139, Q140, all oracles-m2 jobs
+(including 104 expanded Apollo11 edits and the focused lifetime sequences),
+and the complete falsify-m2 matrix. Add intended-consumer mutations for each
+new bulk publication, including missing supplier heads/routes and retained
+text/path publication where changed. A compilation failure is never a
+mutation detection. Preserve the prior allocation proposal without a log
+entry; any new surviving material choice is proposed in the layout tree.
+
+The per-construction comparison uses additional private builds that restore
+one 941e51d constructor at a time: `serialroutes`, `oldpaths`, `oldunits`
+and `oldcontexts`. Directory allocation and publication are included inside
+both constructors' common function boundary; the original loop bodies are
+extracted from 941e51d, and each private patch is archived. This isolates
+construction from unrelated unchanged reconstruction and layout work; these
+variants do not replace the exact-source main/before/candidate timing
+cohorts. `noreserve` removes only the producer-bound reservation/counting.
+Inclusive constructor costs count only calls from `structure_changed`, not
+recursive or outlined internal calls twice. Missing emitted boundaries are
+reported as unverified attribution, never treated as zero-cost construction.
+
+Before reading the collected results, the reservation comparison's common
+inclusive denominator is the sum of the outer `retain_routes`, `record_tree`
+and `reconstruction_route_bound` calls from `structure_changed`. This is
+retained/fresh publication construction, not route-only work: `record_tree`
+also publishes paths, text units and establishing-context lookup. It includes
+allocation, fresh-route growth and sizing once and does not select only the
+functions that improve. The archived `noreserve` patch eliminates the bound
+call in source, so that specific term is source-eliminated work; a missing
+emitted boundary for a call still present remains unverified. This clarifies
+the accounting scope before observing the result and changes neither the
+10% instruction threshold nor the 5% resident-memory limit.
+
+#### Independent multiple-result calls: parallel-permission witness
+
+The candidate's emitted parallel ledger from hosted build
+[38059104043](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38059104043),
+renderer `f2a76593123fce60aee9e634571bdfcdc6196026`, admits the two disjoint
+`fill_retained_routes` calls and the independent supplier fill. It also
+splits the directory-copy and lifetime-filter loops as independent maps.
+However, the count traversal's adjacent recursive calls bind `(total,
+valid)` result lists. The ledger explicitly denies the second call
+followed by the independent `route_read` because the first statement
+"binds an ordered result list"; it prints no permission for the recursive
+call pair. Separately, it reports that `count_retained_routes` has no
+sequential clone. The two recursive reads and disjoint count writes have no
+algorithmic dependency; only combining their returned totals waits. The
+source exposes independence, but this compiler does not realize that part
+of the intended shorter construction chain. The inference that ordered
+result bindings prevent the recursive pair's permission is what the reduced
+witness below tests, not an explicit pair diagnostic already observed.
+
+This is a compiler optimization gap, not a source rejection or a claimed
+specification violation: [PAR-1 at the pinned compiler revision](https://github.com/Ming-Research/Whitefoot/blob/41f46e60030c0dd79de7f39731530dc8d15be3d2/spec/kernel-spec.md)
+permits read/read overlap and disjoint binding writes, while explicitly
+allowing an implementation to overlap nothing. No result-struct rewrite,
+extra output store or sequential workaround is introduced.
+
+Before running the reduced case, the question is whether the same denial
+persists without layout types, allocation or shared writes. The
+[standalone witness](bulk-parallel-results.wf) recursively sums immutable
+halves and returns a total and validity together. Its independent call pair
+is the acceptance site; its four-element main must still return success.
+Reject the reduced diagnosis if the pinned compiler permits that pair, or
+if the witness does not compile and compute four. For the upstream fix,
+require admission and retained parallel permission for the natural pair,
+then confirm that the renderer's corresponding count calls receive that
+permission and that all unchanged semantic gates pass. Runtime grain
+selection is separate from permission and is not forced by the witness.
+The temporary fallback-cost workflow compiles and runs this smallest case
+on a hosted runner and archives its ledger; retain the source until the
+owning Whitefoot session incorporates the regression, then replace it with
+that upstream reference. Proposed handoff key: `sg-wf-bulk-multiple-results`.
+
+Hosted witness [38060646678](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38060646678)
+on `85c079acabebe23ae0e68fdf8555a1c5446bc547` compiled with the pinned compiler
+and exited successfully for total four. The archived ledger says `family
+emitted for 0 of 1 cyclic components` and `component(count) excluded: count
+has no sequential clone`; it records no permitted recursive call pair.
+The reduced permission gap is therefore reproduced without layout storage.
+This does not by itself prove the compiler's internal cause: the
+ordered-result diagnosis also relies on the renderer's explicit statement
+classification. No runtime performance or universal multi-result limitation
+is inferred from this tiny witness. Supplier sizing's intended shorter
+parallel chain remains unverified until an upstream correction supplies the
+missing permission; disjoint filling and page-copy permission are separately
+observed and do not close that gap.
+
+#### Bulk construction correctness evidence
+
+On `85c079acabebe23ae0e68fdf8555a1c5446bc547`, hosted
+[check 38060646679](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38060646679),
+[layout-check 38060646667](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38060646667),
+[Q139 38060650231](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38060650231)
+and [Q140 38060650190](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38060650190)
+passed. [oracles-m2 38058844549](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38058844549)
+passed all 20 jobs on `8c1646c843a064eb1826b2cd77ba142a56331892`; its renderer
+and compiler pin are identical to 85c079a, with renderer tree
+`89f7c5d33a0b75e1090e2a462824831744b96905`. The downloaded Apollo11 evidence
+contains, in each sequential/four-worker mode, 60 matching original edits,
+104 matching expanded edits with a splice and undo after every fallback,
+and 20 matching focused lifetime edits. These results establish the tested
+identity and admission observations, not the construction-cost or 1x
+performance criterion. Builds, checks, executable witnesses and measurements
+ran only on GitHub-hosted runners.
+
+The complete [falsify-m2 run 38058778686](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38058778686)
+on `67fcf391bb99f43d58e11cafa6f3d7b127f235f5` ran 168 jobs: 167 passed;
+the context-path omission patch alone failed compilation because deleting
+its statement left a noncanonical blank line. That failure is not mutation
+detection. Removing the statement's newline too preserved the intended
+fault, and the [focused retry 38060442299](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38060442299)
+on `ecaa041e376b18f5902053f4cc7d18f6c68b9900` passed the shared baseline and
+machinery plus all six fallback mutations in both modes. Together they
+cover every matrix row: 99 M2 mutations, 37 Q139 mutations, 22 Q140 mutations
+and six fallback mutations, plus the baseline, machinery, numeric-suffix
+and Q140 fixture jobs. Their renderer and pin are identical to 85c079a;
+the only failed row was repaired and rerun, not waived. The optional
+fallback-only retry leaves the complete default matrix unchanged.
+
+| New retained-state omission | First fallback | Intended later observation, in both modes |
+| --- | --- | --- |
+| Supplier heads | Identical result, reason 3 | A required local splice becomes a reconstruction fallback, reason 1, with identical geometry |
+| Text units | Identical result, reason 3 | The retained-text edit yields `inc DIFF` because its geometry is stale |
+| Establishing-context lookup | Identical result, reason 3 | The following required reconstruction is refused, reason 3 |
+| Historical path copy | Identical result, reason 3 | The following structural edit is refused, reason 1 |
+
+Each unmutated two-edit witness passes its independent full-layout comparison
+and required admission. The original style-route and text-route omissions
+also remain detected by their established post-fallback consumers. No
+compilation failure, earlier unrelated error or changed expected result is
+counted as detection.
+
+### Bulk candidate result and supplier rejection
+
+[Hosted comparison 38059104043](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38059104043)
+measured renderer `f2a76593123fce60aee9e634571bdfcdc6196026`, tree
+`89f7c5d33a0b75e1090e2a462824831744b96905`, against main and 941e51d with the
+compiler, twins and three-round protocol written above. Its AMD EPYC 7763
+runner exposed four logical CPUs under Ubuntu 24.04.5 and Linux
+6.17.0-1022-azure; all drivers used Clang 22.1.8 and compiler checksum
+`ee3abc1d9bbb562b18a44893f973272b1768acb69273bfa93742e0880ef06921`.
+The six timing drivers have empty source patches. The 941e51d drivers are
+the archived 1745ff5 builds with identical renderer tree and compiler;
+each private constructor variant has its patch in the run artifact.
+
+The job reached its original 90-minute limit during cleanup and is marked
+cancelled. Every measurement, summary and upload step nevertheless completed
+successfully before cleanup ended. The downloaded artifact contains all 684
+native medians, 456 paired comparisons, 56 RSS observations, all eight sets
+of 120 per-edit profile parts, and the complete constructor summaries.
+The parser's negative controls and zero-edit collection controls passed.
+This is complete archived measurement evidence, not a green workflow claim.
+Future batches use the already committed 120-minute limit, grounded in this
+observed duration.
+
+The candidate **fails all 12 paired 1x fallback comparisons**, ranging from
+1.2838x to 1.6141x main. All 216 candidate X5 controls pass 2x, worst 1.7952x.
+941e51d also fails all 12 fallback comparisons; one of its 216 controls,
+four-worker ECMA262 colour, reaches 2.0294x on this runner. That observation
+is retained, not hidden by the historical run's green control result.
+The [native medians](q141-bulk-rejected-native.csv) and
+[paired verdicts](q141-bulk-rejected-acceptance.csv) preserve every cohort,
+round and control. Ordinary/twin fallback medians in microseconds are:
+
+| Mode / round | Main / twin | 941e51d / twin | Rejected bulk candidate / twin |
+| --- | ---: | ---: | ---: |
+| seq 1 | 24,683.0 / 24,914.5 | 31,619.5 / 31,426.5 | 33,117.0 / 33,330.0 |
+| seq 2 | 25,512.5 / 25,570.0 | 33,208.5 / 32,244.5 | 32,753.5 / 33,032.0 |
+| seq 3 | 25,935.5 / 25,709.5 | 32,407.5 / 33,119.0 | 33,905.5 / 34,302.0 |
+| par 1 | 26,417.0 / 26,601.0 | 34,966.0 / 35,637.0 | 42,640.0 / 41,208.0 |
+| par 2 | 26,461.5 / 26,526.0 | 34,899.5 / 37,525.5 | 41,454.5 / 41,697.5 |
+| par 3 | 27,229.0 / 27,125.0 | 36,521.5 / 36,882.5 | 42,486.0 / 42,380.5 |
+
+The [per-construction observations](q141-bulk-rejected-constructions.csv)
+resolve every required outer boundary, including allocation and sizing.
+Matched old-loop variants change one constructor each; totals cover the
+same 22 fallback intervals:
+
+| Construction | Old-loop instructions | Bulk instructions | Saving | Prior 10% verdict |
+| --- | ---: | ---: | ---: | --- |
+| Retained supplier routes and heads | 70,682,596 | 214,308,575 | -143,625,979 (-203.20%) | Reject |
+| Historical context paths | 13,262,530 | 3,309,092 | 9,953,438 (75.05%) | Pass |
+| Retained text units | 36,153,780 | 21,528,002 | 14,625,778 (40.45%) | Pass |
+| Establishing-context lookup | 16,368,812 | 8,943,572 | 7,425,240 (45.36%) | Pass |
+
+The supplier construction is removed from the delivered path under the
+pre-written rejection rule. Its previous serial constructor is restored;
+no replacement spelling conceals the independently reproduced compiler
+permission gap. Its supplier-head omission remains wired to the restored
+publication under the clearer name `omit-retained-heads`, with the same
+consumer and expected failure. The three successful directory constructions
+remain. This changes the measured composition, so the final renderer requires
+new measurements and semantic validation; these rejected-candidate numbers
+are not substituted for them. The reduced compiler witness stays as an
+upstream regression proposal, with reapplication to the removed renderer
+experiment only if that approach is reopened on new evidence.
+
+The [exclusive attribution](q141-bulk-rejected-attribution.csv) and
+[per-edit phase totals](q141-bulk-rejected-phases.csv) reconcile the result:
+
+| Phase | Main instructions | 941e51d instructions | Rejected candidate instructions |
+| --- | ---: | ---: | ---: |
+| Reconstruction | 851,918,664 | 1,328,300,179 | 1,430,400,963 |
+| Layout | 4,054,991,903 | 4,352,551,688 | 4,352,620,859 |
+| Bookkeeping | 26,720,425 | 33,580,460 | 33,539,366 |
+| Complete fallback | 4,933,630,992 | 5,714,432,327 | 5,816,561,188 |
+
+The candidate adds 102,128,861 instructions overall despite the three
+directory savings. The comparison does not establish irreducible overhead
+or justify relaxing 1x. Fresh route/text publication and already-bulk
+sequence/reduction access remain distinct, unimplemented candidates in the
+dependency audit.
+
+For this rejected composition, the reservation's common publication scope
+uses 350,655,328 instructions versus 641,541,540 without reservation, a
+290,886,212 (45.34%) saving. The absent `noreserve` bound call is confirmed
+by its source patch. Across the three full-script RSS rounds, the maximum
+process high-water marks are below; [all pilots and rounds](q141-bulk-rejected-memory.csv)
+are retained. Maxima compare each cohort's highest observed process RSS;
+individual round differences are not allocation-only deltas.
+
+| Mode | Main KiB | 941e51d KiB | Rejected candidate KiB | No-reservation KiB | Candidate peak increase |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Sequential | 80,668 | 103,084 | 103,800 | 99,728 | 4.08% |
+| Four workers | 83,092 | 108,820 | 106,796 | 104,692 | 2.01% |
+
+The construction saving passes, but the memory verdict is unresolved:
+paired sequential rounds range from 1.95% to 6.37% higher RSS, with two
+above 5%. The ratio of separate maxima alone therefore does not establish
+the intended memory bound. Removing supplier-count scratch and restoring
+its constructor changes allocation, so keeping the reservation in the final
+renderer remains conditional on the repeated comparison, with the paired
+spread reported explicitly. No final cost, RSS or semantic claim is made
+before that collection completes.
+
+### Tighter reservation comparison before measurement
+
+The first RSS comparison crosses the prior 5% bound in paired sequential
+rounds. Before changing or measuring another allocation bound, the question
+is whether the same bulk-page reservation can retain its instruction saving
+with less unused capacity. This refines allocation only: supplier-chain
+construction remains the restored loop, the rejected parallel-count witness
+remains explicit, and no records or readers are removed.
+
+Compare a tighter scalar bound with the existing wide bound and no
+reservation. Count every old route whose context is live after retirement;
+for valid published state this includes each surviving chain record, and
+any unreachable live entry only overestimates. Fresh paragraph capacity
+counts its strut plus supplier transitions: compare each piece's supplier
+with its adjacent predecessor, or the strut for the first piece. These
+independent immutable reads bound `record_uses` calls; `note_use` can suppress
+a call's emission but never emits two records. Keep the existing context,
+block, row and column terms, saturation, chain validation and storage-ceiling
+growth fallback. Do not introduce a mutable previous-supplier chain.
+
+Include the live-old-route scan and fresh-producer reduction inside the
+common outer `reconstruction_route_bound` boundary, so the existing
+publication denominator includes all new sizing work exactly once. A private
+`widebound` build restores the previous scalar bound for attribution and RSS;
+it is not substituted for any exact-source timing cohort. Retain the prior
+10% instruction saving against `noreserve` and the 5% RSS limit, reporting
+every paired full-script round as well as cohort maxima. Reject the tighter
+bound on any identity, lifetime, ordering, admission or ceiling difference,
+or if it fails those cost conditions. The unchanged 1x fallback and 2x
+control requirements still apply to the delivered composition. This is not
+a reformulation of the rejected multiple-result construction: it computes
+only capacity, leaves the compiler gap explicit and keeps the rejection in effect.
+
+### Tighter-bound candidate: source and validation
+
+The tighter-bound candidate is `2a524d903fd62372bb2a4d4415517d7f266381ba`,
+renderer tree `067fa011d425aae6c0a294744020ac98ccc42d88`. It restores
+supplier-chain construction and keeps disjoint retained-directory copying
+and the tighter capacity bound. No admission, record lifetime, pin or
+submodule changes accompany this composition.
+
+Its [measurement-build ledger](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38068824377)
+records parallel splits for the live-old-route reduction, the adjacent
+supplier-transition, paragraph and child-subtree reductions, retained-unit
+and establishing-context filters, and all three directory-copy instances.
+This verifies compiler permission at those sites, not a runtime speedup or
+permission for every surrounding independent statement. All eleven driver
+builds succeed. The six timing drivers have empty source patches; each
+private constructor variant changes only `renderer/layout/structure.wf`.
+
+Hosted gates on this renderer: Q139 and Q140 execute GitHub’s PR merge
+`b8fad325025c6243a00994b27f30edc2f9d9be95`; its complete Git tree is identical
+to 2a524d9, including the renderer, compiler pin and submodule entries. The
+other runs below check out 2a524d9 directly.
+
+| Gate | Run | Result |
+| --- | --- | --- |
+| check, including DOM self-test and design lint | [38068708881](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38068708881) | Pass |
+| layout-check | [38068708896](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38068708896) | Pass |
+| Q139 | [38068712146](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38068712146) | Pass |
+| Q140 | [38068712318](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38068712318) | Pass |
+| Complete oracles-m2 | [38068708868](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38068708868) | All 20 jobs pass |
+| Complete falsify-m2 | [38068708864](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38068708864) | All 168 jobs pass |
+
+The mutation run includes every row: 99 M2, 37 Q139, 22 Q140 and six
+fallback omissions, plus the four shared baseline/machinery jobs. All new
+omissions compile and fail at their intended later consumer in both modes.
+The retained-unit omission produces different geometry on the next text
+edit; context-lookup and path omissions refuse the next structural edit;
+the supplier-head omission changes its admitted splice to fallback even
+though geometry agrees. The initial fallback itself still agrees, so these
+observations distinguish complete retained publication from immediate-only
+correctness. Existing fresh-style and fresh-text omission controls also
+remain detected.
+
+The Apollo11 artifact from [oracles-m2 38068708868](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38068708868)
+contains, in each mode, 60 matching original edits, 104 matching expanded
+edits and 20 matching focused lifetime edits. Every one of the 22 fallbacks
+is followed by an admitted splice and undo: all 44 following paths are
+`(1, 0)`, with every original per-edit path unchanged. All 20 jobs in the
+complete page-identity suite pass. These gates cover this candidate; the
+subsequent reservation selection below needs its own delivered-source evidence.
+
+### Tighter-bound result and simpler reservation selection
+
+[Comparison 38068824377](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38068824377)
+completes successfully on the candidate above. It contains all 30,240 native
+edit rows, 684 medians, 456 paired verdicts, 70 RSS observations, and eight
+sets of 120 profile parts. The machine is an AMD EPYC 7763 hosted runner with
+four logical CPUs, Ubuntu 24.04.5 and Linux 6.17.0-1022-azure. All eleven
+drivers use `wf-41f46e60030c`, the previously recorded compiler checksum and
+Clang 22.1.8. Main is bb98d43, before is the exact 941e51d renderer and the
+candidate is 2a524d9; each timing source has an independent twin, with three
+forward/reverse/forward rounds in sequential and four-worker modes.
+
+The [native medians](q141-bulk-tight-native.csv) and
+[paired verdicts](q141-bulk-tight-acceptance.csv) reject all 12 candidate
+fallback comparisons: 1.2631–1.3963x main. All 216 candidate X5 controls pass
+2x, worst 1.7696x for four-worker HTML5 font-size. Before also fails all 12
+fallback comparisons; 215 of its 216 controls pass, with ECMA262 colour in
+the parallel twin's second round at 37.0 versus 17.5 microseconds (2.1143x).
+These observations do not establish a control-speed improvement from the
+fallback code change.
+
+The [constructor observations](q141-bulk-tight-constructions.csv) resolve all
+22 outer boundaries for each candidate constructor. Inclusive instructions,
+including their allocation, are:
+
+| Retained directory | Matched old loop | Bulk copy/filter | Saving | Prior verdict |
+| --- | ---: | ---: | ---: | --- |
+| Historical context paths | 13,262,546 | 3,309,108 | 9,953,438 (75.05%) | Pass 10% |
+| Text units | 36,153,671 | 21,527,893 | 14,625,778 (40.45%) | Pass 10% |
+| Establishing-context lookup | 16,368,823 | 8,943,583 | 7,425,240 (45.36%) | Pass 10% |
+
+The common retained/fresh publication scope costs 247,755,496 instructions
+with tighter reservation versus 455,779,864 without it: 208,024,368 saved
+(45.64%), passing the prior 10% condition. The candidate includes 45,403,377
+instructions in the new sizing boundary; the no-reservation source patch
+eliminates that call. The private wide-bound wrapper is inlined and has no
+separate outer boundary, so its precise inclusive sizing cost remains
+unverified rather than reported as zero. Whole-fallback totals below remain
+observable independently of that missing function boundary.
+
+[Maximum process RSS](q141-bulk-tight-memory.csv), KiB, across full-script
+rounds includes startup and initial layout:
+
+| Mode | Main | 941e51d | Tight bound | No reservation | Wide bound |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Sequential | 80,720 | 101,076 | 100,788 | 97,852 | 101,112 |
+| Four workers | 83,244 | 108,376 | 104,564 | 103,772 | 106,484 |
+
+Tight-bound paired RSS increases are 3.08%, 0.97%, 0.96% sequentially and
+1.59%, 1.00%, -0.08% with four workers; it passes the prior 5% condition.
+Crucially, after removal of supplier-count scratch, the matched wide-bound
+variant also passes every paired RSS comparison: 3.40%, 3.43%, 3.33%
+sequentially and 3.15%, 3.58%, 2.43% with four workers. The earlier rejected
+supplier composition's memory crossing is not evidence that this simpler
+composition requires tighter sizing.
+
+The [exclusive phase totals](q141-bulk-tight-phases.csv) and
+[function attribution](q141-bulk-tight-attribution.csv) show why this is not
+an effective final trim:
+
+| Phase | Main | 941e51d | Tight-bound candidate |
+| --- | ---: | ---: | ---: |
+| Reconstruction | 851,918,664 | 1,328,300,179 | 1,327,914,688 |
+| Layout | 4,054,991,903 | 4,352,551,688 | 4,352,569,205 |
+| Bookkeeping | 26,720,515 | 33,580,460 | 33,569,163 |
+| Complete fallback | 4,933,631,082 | 5,714,432,327 | 5,714,053,056 |
+
+The net reduction from 941e51d is only 379,271 instructions (0.0066%). The
+matched wide-bound variant totals 5,673,057,911 instructions on the same 22
+fallbacks: tighter sizing adds 40,995,145. This is a whole-fallback variant
+comparison, not an invented missing-boundary estimate. Isolated directory
+savings and whole-program deltas are different observations, not quantities
+to add without their other interactions.
+
+**Selection before the next measurement.** Both reservations satisfy the
+observed memory limit, so restore the original producer bound instead of
+keeping the live-route and per-piece scans. The wide bound has fewer sizing
+dependencies and less measured work; the tighter bound's lower capacity is
+not needed to satisfy the stated RSS condition. This applies the project's
+parallelism-first rule and the already selected allocation direction; it
+neither relaxes 1x nor removes any retained record. The tighter candidate
+passes its local cost/memory thresholds but loses this comparison with the
+simpler admissible alternative.
+
+Restore the exact renderer of 9c4827c, retaining the three successful bulk
+directories and original supplier loop. Reuse its already built independent
+drivers only after exact renderer and compiler equality is checked; this
+reuse does not substitute the private wide-bound timings for final timings.
+Run the complete canonical six-cohort, three-round comparison again, with
+all X5 controls, no-reservation and matched old-directory profiles, RSS,
+and the complete required semantic gates. The existing 10%, 5%, 1x and 2x
+criteria remain unchanged. Remove the temporary wide-bound variant from the
+new batch because its allocation policy is now the candidate itself; the
+older run and its source patch remain the evidence for this selection.
+
+
+### Wide-reservation candidate: source and semantic validation
+
+The wide-reservation renderer is `eafe415df1e7aea13a7778375a34bc5ac6367795`,
+restored at `6f799df9771588da076b0c218f878823268aa664` and unchanged by the
+ASCII-only design punctuation repair `7ad221a`. It matches 9c4827c exactly,
+including the compiler pin. The independent timing drivers from
+[build run 38066972540](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38066972540)
+all exit successfully in both modes, have the common compiler checksum,
+and carry empty patches for the six canonical cohorts. Each of the four
+private constructor variants changes only `renderer/layout/structure.wf`;
+their generator is unchanged from that build. Archived-source equality is
+also enforced by the new hosted measurement job.
+
+The delivered driver's
+parallel ledger permits independent maps for retained-unit and context
+filters and all three `copy_route_pages` instances, with budget-carrying
+clone families for each page-copy instance. The existing producer-count
+loops retain their saturating-reduction permission. These observations
+establish emitted permissions at those sites, not a measured runtime gain.
+
+All required semantic gates pass. Check and layout-check execute 7ad221a;
+Q139 and Q140 execute PR merge `e1683a2b79d992076660759256ccd4d3376930ac`,
+whose complete tree `6384e09fe7267b7198ab81f3c3aff0a9f0f2a96e` matches
+7ad221a, including pins and submodules. The two full suites execute 6f799df,
+with identical renderer and checks. The initial check on 6f799df accepted
+all modules and passed the DOM self-test and 21 checker tests, then rejected
+a non-ASCII apostrophe in the proposed design node; 7ad221a fixes that
+punctuation and the complete check passes.
+
+| Gate | Run | Result |
+| --- | --- | --- |
+| check | [38077572411](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38077572411) | Pass |
+| layout-check | [38077572414](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38077572414) | Pass |
+| Q139 | [38077576357](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38077576357) | Pass |
+| Q140 | [38077576365](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38077576365) | Pass |
+| Complete oracles-m2 | [38077147210](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38077147210) | All 20 jobs pass |
+| Complete falsify-m2 | [38077147192](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38077147192) | All 168 jobs pass |
+
+The complete mutation matrix retains 99 M2, 37 Q139, 22 Q140 and six fallback
+omissions, plus four shared jobs. Every new omission compiles and fails at
+its intended later consumer in both modes. Removing retained units changes
+the next text result; removing context lookup or paths refuses the next
+structural edit; removing supplier heads changes the admitted splice to a
+fallback while geometry still agrees. The first fallback agrees in all four
+cases. Existing fresh-style and fresh-text omission controls also remain
+detected, so no initial-only result substitutes for preserved future state.
+
+In each mode, the Apollo11 raw artifacts contain 60 matching original edits,
+104 matching expanded edits and 20 matching focused lifetime edits. The
+mapping preserves all original per-edit paths. Every one of the 22 fallbacks
+has its following splice and undo admitted: all 44 following paths are
+`(1, 0)`. The remaining page-identity jobs also pass. These observations
+validate the delivered construction's consumers; cost and memory acceptance
+are assessed separately below.
+
+### Wide-reservation result and failed memory condition
+
+[Comparison 38077150304](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38077150304)
+completes successfully on the restored renderer above. The hosted machine
+is an AMD EPYC 9V74 with four logical CPUs (two cores with SMT), Ubuntu
+24.04.5 and Linux 6.17.0-1022-azure. All drivers use `wf-41f46e60030c`,
+compiler checksum `ee3abc1d9bbb562b18a44893f973272b1768acb69273bfa93742e0880ef06921`
+and Clang 22.1.8. Main is bb98d43, before is the exact 941e51d renderer,
+and the candidate is the exact renderer restored at 6f799df. The six
+canonical cohorts have independent twins and three forward/reverse/forward
+rounds, sequential and with `WF_WORKERS=4`, on this one runner. Native timing
+completes in 56 minutes; the subsequent RSS and seven-cohort profiling
+stages also complete successfully. Different runner hardware prevents a
+causal timing comparison with the previous run's tighter candidate.
+
+The [native medians](q141-bulk-wide-native.csv) and
+[paired verdicts](q141-bulk-wide-acceptance.csv) contain 684 medians and 456
+comparisons. All 12 candidate fallback comparisons fail 1x, at
+1.2754-1.3305x main. All 216 candidate X5 controls pass 2x, narrowly at the
+worst case: 1.9982x for four-worker HTML5 font-size. Before fails all 12
+fallback comparisons and one of 216 controls: HTML5 font-size, ordinary
+parallel round 2, 1176.5 versus 561.0 microseconds (2.0971x). Retain that
+observation without attributing an unrelated control improvement to this
+fallback change.
+
+Fallback medians, microseconds; each cell is ordinary / independent twin:
+
+| Mode / round | Main / twin | 941e51d / twin | Wide candidate / twin |
+| --- | ---: | ---: | ---: |
+| seq 1 | 20,379.5 / 20,360.0 | 26,092.5 / 26,202.5 | 26,198.0 / 26,023.0 |
+| seq 2 | 20,386.0 / 20,283.0 | 26,093.0 / 26,067.5 | 26,100.0 / 26,133.0 |
+| seq 3 | 20,397.0 / 20,292.5 | 26,112.0 / 26,220.5 | 26,015.0 / 26,175.0 |
+| par 1 | 20,341.5 / 20,364.0 | 26,823.5 / 26,815.5 | 26,937.5 / 26,795.5 |
+| par 2 | 20,363.0 / 20,405.0 | 27,220.0 / 27,266.5 | 27,081.0 / 26,942.0 |
+| par 3 | 20,258.5 / 20,298.0 | 27,023.0 / 26,774.5 | 26,823.0 / 27,005.5 |
+
+Every X5 control follows. Each mode cell gives the range of six medians
+(three rounds times ordinary/twin), in order main -> 941e51d -> candidate,
+then the largest paired candidate/main ratio. The linked CSV preserves
+individual medians and exact pairings.
+
+| Page / edit | Sequential microseconds; worst ratio | Four-worker microseconds; worst ratio |
+| --- | --- | --- |
+| ecma262 / word | 73.0–74.5 → 78.5–83.5 → 78.0–80.0; 1.0959x | 113.0–115.5 → 122.5–133.5 → 122.5–136.0; 1.1826x |
+| ecma262 / sentence | 169.0–181.5 → 103.0–105.0 → 103.5–106.0; 0.6243x | 206.0–223.0 → 152.5–158.0 → 153.0–162.0; 0.7864x |
+| ecma262 / colour | 14.0–15.0 → 13.5–14.0 → 14.0–14.0; 1.0000x | 15.0–16.0 → 17.5–20.0 → 16.0–23.5; 1.5161x |
+| ecma262 / fontsize | 1,492.5–1,635.0 → 861.0–898.0 → 857.0–881.0; 0.5826x | 1,683.0–1,740.5 → 1,152.5–1,187.0 → 1,134.5–1,201.5; 0.6998x |
+| ecma262 / rootfont | 29,380.5–29,694.5 → 3,478.0–3,859.0 → 3,487.0–3,760.5; 0.1266x | 43,631.0–43,780.5 → 4,035.0–4,104.5 → 3,981.0–4,115.0; 0.0943x |
+| ecma262 / block | 443,379.0–447,350.0 → 118.5–125.0 → 121.0–124.0; 0.0003x | 393,863.0–396,593.5 → 162.0–171.0 → 164.5–176.0; 0.0004x |
+| html5 / word | 53.0–54.5 → 60.0–61.0 → 60.5–63.5; 1.1887x | 85.0–89.5 → 92.5–96.0 → 93.0–95.5; 1.1111x |
+| html5 / sentence | 157.0–162.5 → 210.5–222.0 → 212.0–217.0; 1.3822x | 218.5–231.5 → 242.0–258.5 → 240.5–253.5; 1.1553x |
+| html5 / colour | 12.0–12.0 → 12.0–12.0 → 12.0–12.0; 1.0000x | 16.0–19.0 → 20.0–21.0 → 18.5–22.0; 1.2222x |
+| html5 / fontsize | 558.5–631.0 → 841.0–863.5 → 841.5–869.0; 1.5421x | 561.0–631.0 → 1,104.0–1,176.5 → 1,111.0–1,178.5; 1.9982x |
+| html5 / rootfont | 780,882.0–784,731.0 → 968,270.5–973,184.5 → 970,923.5–976,808.5; 1.2501x | 440,344.0–446,774.5 → 583,642.0–590,465.0 → 589,333.5–596,094.5; 1.3452x |
+| html5 / block | 442,349.5–446,761.5 → 372.0–381.5 → 370.0–376.0; 0.0008x | 384,764.0–389,359.0 → 358.5–378.0 → 363.0–376.5; 0.0010x |
+| apollo11 / word | 156.5–159.5 → 171.5–175.5 → 170.0–176.0; 1.1246x | 249.0–253.0 → 284.0–291.0 → 285.0–294.0; 1.1687x |
+| apollo11 / sentence | 183.0–190.0 → 237.0–246.0 → 236.0–241.5; 1.3019x | 300.0–305.5 → 417.0–431.5 → 422.5–429.0; 1.4229x |
+| apollo11 / colour | 18.0–19.0 → 18.5–19.0 → 18.5–19.5; 1.0278x | 27.0–27.5 → 27.5–34.0 → 28.0–37.0; 1.3455x |
+| apollo11 / fontsize | 223.0–230.5 → 261.0–269.0 → 260.5–276.5; 1.1996x | 408.0–420.0 → 440.0–455.5 → 439.0–451.5; 1.0797x |
+| apollo11 / rootfont | 65,430.0–66,062.5 → 73,724.5–74,065.0 → 73,871.5–74,368.0; 1.1366x | 54,362.5–55,030.0 → 52,241.0–53,193.0 → 52,589.5–53,167.0; 0.9674x |
+| apollo11 / block | 20,189.0–20,334.0 → 4,576.5–4,611.5 → 4,595.5–4,616.0; 0.2276x | 20,228.0–20,354.0 → 5,012.5–5,042.5 → 5,010.5–5,069.5; 0.2493x |
+
+
+The [constructor profiles](q141-bulk-wide-constructions.csv) observe every
+required candidate outer boundary on all 22 fallbacks. Allocation and
+sizing are included once; matched variants restore one old loop at a time.
+
+| Construction | Matched old loop | Bulk | Saving | Prior 10% verdict |
+| --- | ---: | ---: | ---: | --- |
+| Historical context paths | 13,262,422 | 3,308,984 | 9,953,438 (75.05%) | Pass |
+| Retained text units | 36,153,637 | 21,527,859 | 14,625,778 (40.45%) | Pass |
+| Establishing-context lookup | 16,368,703 | 8,943,463 | 7,425,240 (45.36%) | Pass |
+
+Supplier-chain construction is the restored loop, costing 70,682,596
+inclusive instructions; the rejected balanced construction is absent. Fresh
+record publication and the already bulk sequence/flow/reduction paths
+remain unchanged. The wide candidate's sizing function has an observable
+outer boundary, unlike the previous private wrapper: it costs 1,400,370
+instructions. Common publication therefore totals 207,029,349 versus
+455,779,864 without reservation, a saving of 248,750,515 (54.58%), passing
+10%. The matched no-reservation patch eliminates the sizing call in source;
+its missing boundary is not a generic zero-cost inference.
+
+The [exclusive phase totals](q141-bulk-wide-phases.csv) and
+[function attribution](q141-bulk-wide-attribution.csv) reconcile as follows:
+
+| Phase | Main | 941e51d | Wide candidate |
+| --- | ---: | ---: | ---: |
+| Reconstruction | 851,918,664 | 1,328,300,179 | 1,286,925,785 |
+| Layout | 4,054,991,903 | 4,352,551,688 | 4,352,551,688 |
+| Bookkeeping | 26,720,245 | 33,580,190 | 33,580,190 |
+| Complete fallback | 4,933,630,812 | 5,714,432,057 | 5,673,057,663 |
+
+The wide composition removes 41,374,394 instructions (0.7240%) from 941e51d,
+all in reconstruction, but still exceeds main by 739,426,851. The isolated
+constructor savings are separate observations; their sum is not substituted
+for this complete-program delta.
+
+[Maximum process RSS](q141-bulk-wide-memory.csv), KiB, across full-script
+rounds includes startup and initial layout:
+
+| Mode | Main | 941e51d | Wide candidate | No reservation |
+| --- | ---: | ---: | ---: | ---: |
+| Sequential | 80,732 | 101,128 | 101,048 | 97,976 |
+| Four workers | 85,360 | 106,540 | 108,516 | 103,180 |
+
+Every paired full-script reservation increase is reported:
+
+| Mode | Round 1 | Round 2 | Round 3 |
+| --- | ---: | ---: | ---: |
+| Sequential | 3.05% | 3.05% | 3.60% |
+| Four workers | 6.36% | 4.68% | 2.43% |
+
+**Memory verdict: fail the prior 5% condition.** Parallel round 1 is
+108,516 versus 102,024 KiB; even the ratio of separate parallel maxima is
+5.17%. The earlier private wide-bound comparison passing on an EPYC 7763
+does not override this crossing on the final-source EPYC 9V74 run. This
+result does not isolate allocator capacity from process scheduling, and no
+claim of a machine-independent RSS bound follows from either run. The
+reservation's 54.58% instruction saving does not waive its separate memory
+condition. The overall M2 1x requirement also remains failed.
+
+
+### Reservation disposition and memory replication before measurement
+
+Reject the restored wide reservation under the unchanged 5% criterion.
+Restore the exact tighter renderer of 2a524d9, whose complete comparison
+38068824377 and semantic suites are recorded above: local directory,
+publication and RSS conditions pass, while all 12 fallback medians still
+fail 1x. This supersedes the earlier selection of the wide bound, whose
+current-source memory result invalidates that selection's premise. It does
+not change the thresholds or infer a runtime advantage across machines.
+The parallelism rule compares admissible candidates; the wide candidate's
+shorter sizing chain cannot waive its separate memory condition.
+
+The restored renderer keeps the three bulk directories and the original
+supplier loop. Its extra live-route and adjacent-supplier reductions are
+capacity work, not an alternate implementation of the rejected
+multiple-result supplier witness. Its exact-source six-cohort timing and
+phase attribution remain the tighter-candidate tables and CSVs above.
+Fresh records, owner-local sequences, flow and boundary reductions remain
+unchanged; the 1x goal is unfulfilled.
+
+Before any further memory observation, repeat the existing RSS protocol on
+this exact tighter renderer, main and 941e51d, with matched no-reservation
+and wide-bound controls, using the eleven archived drivers from
+38068824377 only after renderer/pin equality. The new workflow input selects
+only the existing memory command, zero/two-edit pilots and three full-script
+interleaved rounds; it does not narrow the default complete comparison.
+Require every paired full-script tighter/no-reservation increase to remain
+at most 5%. Report every round alongside the earlier observation. A crossing
+rejects acceptance from the earlier passing run and requires an explicit
+allocation disposition; do not rerun until a favorable sample appears.
+No timing or instruction conclusion will be drawn from this RSS-only batch.
+
+
+### Final tighter construction: replicated memory and verdict
+
+The selected renderer at `be0fe994cd4cb6536d83c57d9256eb56c9644ecc` is
+`067fa011d425aae6c0a294744020ac98ccc42d88`, exactly the source measured and
+validated at 2a524d9. The proposed design now uses the tighter capacity
+bound; no criterion, admission, compiler pin or submodule changes.
+
+[RSS replication 38082236052](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38082236052)
+passes on an AMD EPYC 7763 hosted runner, four logical CPUs, Ubuntu 24.04.5,
+Linux 6.17.0-1022-azure, with the same archived compiler and exact-source
+drivers. It collects all 70 expected observations: two zero-edit and two
+two-edit pilots, then three full-script rounds for five cohorts and two
+modes. This repeats memory only; complete six-cohort timings and phase
+profiles remain the source-identical run 38068824377, not a substituted
+wide-bound result. [All replicated RSS observations](q141-bulk-tight-memory-repeat.csv)
+are preserved alongside the first tighter run.
+
+Maximum process RSS in KiB across the replicated full-script rounds:
+
+| Mode | Main | 941e51d | Final tighter | No reservation | Wide control |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Sequential | 82,744 | 103,184 | 98,868 | 99,820 | 101,064 |
+| Four workers | 85,092 | 108,064 | 106,064 | 103,888 | 108,956 |
+
+Paired final/no-reservation increases are 0.76%, 1.02%, -1.16% sequentially
+and 2.53%, 0.11%, 0.59% with four workers. All six pass 5%, as do all six
+from the earlier tighter-source run (worst 3.08%). The wide control again
+crosses 5%, at 5.41% in parallel round 3. This supports the allocation
+disposition without erasing the earlier wide control's passing observation
+or claiming a bound on other machines or workloads. Cohort maxima can
+occur in different rounds; acceptance uses every paired round.
+
+**Final local verdict:** all three directory constructions pass 10%; the
+tighter reservation saves 45.64% of common publication instructions and
+passes every paired RSS observation in both tighter-source batches. Keep
+these local improvements. Reject balanced supplier construction and wide
+reservation under their original conditions. The current proposed Decision
+supersedes the wide-bound selection after its memory premise failed; the
+extra sizing work is required by the admissible alternative demonstrated
+here. No alternate supplier implementation conceals the compiler witness.
+
+**M2 verdict: unmet.** The complete final-source comparison still fails all
+12 fallback medians at 1.2631-1.3963x main, with only 379,271 fewer total
+instructions than 941e51d. All 216 controls pass, worst 1.7696x. These are
+local experimental improvements, not completion of the 1x objective or
+evidence that the remaining overhead is irreducible.
+
+For the final tighter renderer, fallback medians from 38068824377 are below,
+in microseconds, ordinary / independent twin. Machine: AMD EPYC 7763, four
+logical CPUs; compiler `wf-41f46e60030c`, checksum above, Clang 22.1.8; main
+bb98d43, before exact 941e51d, final renderer exact 2a524d9. Three
+forward/reverse/forward rounds, sequential and `WF_WORKERS=4`.
+
+| Mode / round | Main / twin | 941e51d / twin | Final tighter / twin |
+| --- | ---: | ---: | ---: |
+| seq 1 | 24,928.5 / 26,293.5 | 35,057.5 / 35,484.5 | 34,806.5 / 35,217.5 |
+| seq 2 | 24,553.0 / 24,548.5 | 32,780.5 / 31,506.5 | 31,089.0 / 32,793.5 |
+| seq 3 | 25,246.5 / 25,328.0 | 32,639.5 / 32,814.5 | 33,342.0 / 32,238.0 |
+| par 1 | 30,082.5 / 29,220.5 | 39,324.5 / 39,999.5 | 40,497.5 / 39,419.0 |
+| par 2 | 26,804.5 / 26,747.0 | 34,357.0 / 34,973.5 | 33,985.0 / 33,785.0 |
+| par 3 | 26,477.5 / 26,689.5 | 35,877.0 / 36,176.0 | 35,259.5 / 35,044.0 |
+
+Every final X5 control follows: ranges of six medians, in order
+main -> 941e51d -> final tighter, followed by the largest paired final/main
+ratio. [Individual medians](q141-bulk-tight-native.csv) and
+[all paired verdicts](q141-bulk-tight-acceptance.csv) preserve exact rounds.
+
+| Page / edit | Sequential microseconds; worst ratio | Four-worker microseconds; worst ratio |
+| --- | --- | --- |
+| ecma262 / word | 90.0–96.0 → 97.0–104.0 → 97.0–102.5; 1.1389x | 146.0–154.0 → 161.0–183.0 → 160.5–180.5; 1.1759x |
+| ecma262 / sentence | 215.0–237.0 → 126.0–137.5 → 125.5–134.0; 0.6233x | 288.0–309.0 → 201.0–217.5 → 198.5–216.5; 0.7205x |
+| ecma262 / colour | 14.5–15.5 → 14.0–16.0 → 14.0–16.0; 1.0667x | 17.5–19.5 → 20.0–37.0 → 19.5–25.5; 1.4571x |
+| ecma262 / fontsize | 1,546.0–1,802.5 → 916.0–1,003.0 → 911.5–1,040.0; 0.6426x | 2,023.5–2,169.5 → 1,350.5–1,411.0 → 1,347.0–1,377.5; 0.6721x |
+| ecma262 / rootfont | 31,883.0–34,152.5 → 3,665.0–4,076.0 → 3,638.5–4,134.0; 0.1210x | 51,355.5–54,675.0 → 4,572.0–4,871.5 → 4,452.0–4,986.5; 0.0912x |
+| ecma262 / block | 490,949.0–507,923.0 → 143.0–152.0 → 140.5–155.5; 0.0003x | 447,766.0–465,168.0 → 206.5–232.0 → 202.0–229.0; 0.0005x |
+| html5 / word | 66.0–67.5 → 76.0–78.0 → 74.0–77.0; 1.1579x | 111.5–115.5 → 122.0–127.5 → 122.0–127.0; 1.1390x |
+| html5 / sentence | 202.0–208.0 → 258.0–270.0 → 259.5–292.5; 1.4130x | 297.0–314.5 → 301.5–325.0 → 298.5–321.0; 1.0808x |
+| html5 / colour | 14.5–15.5 → 14.5–16.0 → 14.5–16.0; 1.0667x | 22.5–25.5 → 25.5–29.0 → 25.0–30.5; 1.2449x |
+| html5 / fontsize | 754.0–818.5 → 994.0–1,091.0 → 1,000.5–1,078.0; 1.3813x | 805.5–896.5 → 1,394.5–1,482.0 → 1,379.5–1,470.5; 1.7696x |
+| html5 / rootfont | 898,857.0–913,298.5 → 1,083,737.5–1,093,424.0 → 1,083,326.0–1,128,478.0; 1.2445x | 542,836.0–561,584.0 → 684,059.5–713,714.0 → 688,024.5–710,347.5; 1.2909x |
+| html5 / block | 477,251.5–499,613.0 → 447.0–465.0 → 441.5–458.0; 0.0009x | 435,768.5–482,793.0 → 433.0–442.0 → 432.5–447.5; 0.0010x |
+| apollo11 / word | 198.0–201.5 → 221.5–228.0 → 218.5–230.0; 1.1587x | 333.5–344.5 → 380.5–391.5 → 380.5–390.5; 1.1709x |
+| apollo11 / sentence | 232.5–237.0 → 303.0–314.0 → 304.0–317.0; 1.3605x | 400.0–411.5 → 558.0–572.0 → 555.5–576.0; 1.4263x |
+| apollo11 / colour | 23.5–28.0 → 24.5–28.0 → 24.5–28.5; 1.0426x | 35.0–37.5 → 42.0–52.0 → 37.5–52.0; 1.4247x |
+| apollo11 / fontsize | 273.5–293.0 → 329.5–353.0 → 328.0–361.5; 1.3074x | 553.5–576.0 → 552.0–626.5 → 569.0–580.0; 1.0479x |
+| apollo11 / rootfont | 78,433.5–79,546.0 → 87,223.5–88,702.0 → 87,674.5–89,225.0; 1.1217x | 70,572.0–71,336.0 → 66,353.5–67,135.0 → 66,834.5–67,601.5; 0.9565x |
+| apollo11 / block | 24,489.5–25,650.5 → 5,543.0–5,858.5 → 5,569.0–5,888.0; 0.2358x | 26,444.0–29,700.5 → 6,417.5–7,062.0 → 6,408.0–7,099.5; 0.2503x |
+
+
+The final phase totals and inclusive constructor values remain those in
+[Tighter-bound result](#tighter-bound-result-and-simpler-reservation-selection),
+with the same renderer and drivers; the later rejection of wide allocation
+supersedes that section's selection, not its source-specific measurements.
+The current source's earlier complete gates at 2a524d9 pass all 20 oracle
+and 168 mutation jobs, including 104 expanded edits and all 44 admitted
+post-fallback splice/undo paths in both modes. The final exact-revision
+gates and reviewed remote head are recorded in
+[the Draft pull request](https://github.com/Ming-Research/Snowghost-wf/pull/58).
+
+The separate read-only review covers the complete continuation from
+941e51d, all checklist groups A/D/C/T/R/M/V and design checks G1-G3/DC1-DC4,
+with focused supplements after each source restoration. Findings fixed:
+missing emitted constructor boundaries reported as zero; compiler-ledger
+causality overstated; aggregate RSS masking failed paired rounds; and the
+wide allocation's memory-pass premise contradicted by its final result.
+The final disposition restores the previously reviewed tighter source and
+preserves the negative evidence. Design choices remain proposed, without an
+approval log, and the pull request remains Draft.
+
+Still unverified: fresh-record grouping and
+text-source arbitration, direct sequence-page access, a Whitefoot fix and
+post-fix witness verification, parallel instruction attribution, wider
+workload/machine generality, and allocator-only peak usage within one
+fallback. Proposed follow-up keys and each disposition are in the pull
+request; no status-board or other repository change was made. No build,
+test, check or timing ran on the local machine.

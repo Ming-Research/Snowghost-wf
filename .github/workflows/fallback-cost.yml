@@ -1,0 +1,312 @@
+# Temporary Q141 measurement; remove after evidence is archived, before ready.
+name: fallback-cost
+on:
+  push:
+    branches: [research/m2-fallback-cost]
+  workflow_dispatch:
+    inputs:
+      memory_only:
+        description: Repeat only the existing RSS pilots and interleaved rounds
+        type: boolean
+        default: false
+      witness_only:
+        description: Collect only the independent multiple-result call witness
+        type: boolean
+        default: false
+      driver_run:
+        description: Reuse these exact-source driver artifacts for harness-only work
+        default: ''
+      fixtures_only:
+        description: Run the fallback lifetime pilot and sequences only
+        type: boolean
+        default: false
+      evidence_run:
+        description: Summarize completed archived profiles without rerunning measurements
+        default: ''
+      candidate:
+        description: Candidate revision (empty selects this workflow revision)
+        default: ''
+      controls:
+        description: Include all X5 kinds on all three pages
+        type: boolean
+        default: false
+      phases_only:
+        description: Instrument private oracle worktrees for exact native phase breakdown
+        type: boolean
+        default: false
+permissions:
+  contents: read
+  actions: read
+jobs:
+  build:
+    if: inputs.witness_only != true && inputs.driver_run == '' && inputs.evidence_run == '' && (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[fallback]'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: main
+            source: bb98d4371d0e148775e232e4d2938ddb9aec3be6
+            archive: main
+          - name: maintwin
+            source: bb98d4371d0e148775e232e4d2938ddb9aec3be6
+            archive: maintwin
+          - name: before
+            source: 941e51d478f13ae38e5d714e45c01903356a04ba
+            archive: candidate
+          - name: beforetwin
+            source: 941e51d478f13ae38e5d714e45c01903356a04ba
+            archive: candidatetwin
+          - name: candidate
+            source: ''
+          - name: candidatetwin
+            source: ''
+          - name: noreserve
+            source: ''
+          - name: widebound
+            source: ''
+          - name: oldpaths
+            source: ''
+          - name: oldunits
+            source: ''
+          - name: oldcontexts
+            source: ''
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        if: matrix.archive != '' && inputs.phases_only != true
+        with:
+          github-token: ${{ github.token }}
+          run-id: 38047104753
+          name: driver-${{ matrix.archive }}
+          path: build/driver
+      - name: Verify frozen source and common compiler
+        if: matrix.archive != '' && inputs.phases_only != true
+        env:
+          SOURCE: ${{ matrix.source }}
+        run: |
+          set -euo pipefail
+          source=$(head -n 1 build/driver/revision.txt)
+          git diff --exit-code "$source" "$SOURCE" -- renderer
+          grep -Fx 'release = wf-41f46e60030c' build/driver/revision.txt
+          grep '^ee3abc1d9bbb562b18a44893f973272b1768acb69273bfa93742e0880ef06921 ' build/driver/revision.txt
+          test "$(cat build/driver/seq-build.status)" = 0
+          test "$(cat build/driver/par-build.status)" = 0
+          test ! -s build/driver/source.diff
+      - name: Common compiler and LLVM
+        if: matrix.archive == '' || inputs.phases_only == true
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y --no-install-recommends clang lld
+          make -s compiler toolchain
+      - name: Independent exact-source builds
+        if: matrix.archive == '' || inputs.phases_only == true
+        env:
+          SOURCE: ${{ matrix.source || inputs.candidate || github.sha }}
+          PHASES: ${{ inputs.phases_only }}
+          COHORT: ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/driver
+          git worktree add --detach build/tree "$SOURCE"
+          if [ "$PHASES" = true ]; then
+            python3 research/investigations/m2-edit-cost/fallback-phase.py self-test
+            python3 research/investigations/m2-edit-cost/fallback-phase.py patch --tree build/tree
+          fi
+          case "$COHORT" in
+            noreserve|widebound|oldpaths|oldunits|oldcontexts)
+              python3 research/investigations/m2-edit-cost/fallback-cost.py variant --tree build/tree --variant "$COHORT"
+              altered=true ;;
+            *) altered=false ;;
+          esac
+          wfc=$(realpath build/whitefoot/wf-41f46e60030c/whitefootc)
+          git -C build/tree rev-parse HEAD > build/driver/revision.txt
+          git -C build/tree rev-parse HEAD:renderer >> build/driver/revision.txt
+          cat whitefoot.pin >> build/driver/revision.txt
+          sha256sum "$wfc" >> build/driver/revision.txt
+          clang --version >> build/driver/revision.txt
+          cp build/whitefoot/wf-41f46e60030c/whitefoot-release.json build/driver/
+          for mode in seq par; do
+            flag=''
+            if [ "$mode" = par ]; then flag='--par --par-ledger'; fi
+            status=0
+            (cd build/tree/renderer && /usr/bin/time -p "$wfc" --cache "$RUNNER_TEMP/cache" --fragments function $flag --graph modules.wfg --entry layout_oracle -o "$GITHUB_WORKSPACE/build/driver/layout_oracle_$mode") > "build/driver/$mode-build.log" 2>&1 || status=$?
+            cat "build/driver/$mode-build.log"
+            echo "$status" > "build/driver/$mode-build.status"
+            if [ "$status" -ne 0 ]; then exit "$status"; fi
+          done
+          git -C build/tree diff HEAD > build/driver/source.diff
+          if [ "$PHASES" = true ] && [ "$altered" = true ]; then
+            test "$(git -C build/tree diff --name-only HEAD | wc -l)" = 2
+            git -C build/tree diff --name-only HEAD | grep -Fx renderer/layout/structure.wf
+            git -C build/tree diff --name-only HEAD | grep -Fx renderer/oracle/layout/edit.wf
+          elif [ "$PHASES" = true ]; then
+            test "$(git -C build/tree diff --name-only HEAD)" = renderer/oracle/layout/edit.wf
+          elif [ "$altered" = true ]; then
+            test "$(git -C build/tree diff --name-only HEAD)" = renderer/layout/structure.wf
+          else
+            test ! -s build/driver/source.diff
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: driver-${{ matrix.name }}
+          path: build/driver/
+  measure:
+    needs: build
+    if: always() && inputs.evidence_run == '' && (needs.build.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.driver_run != ''))
+    runs-on: ubuntu-24.04
+    # The reference native batch took 68 minutes; eight profile cohorts
+    # now replace three, with RSS collection added on the same runner.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.driver_run || github.run_id }}
+          pattern: driver-*
+          path: build/drivers
+      - name: Require unchanged renderer for archived candidates
+        if: inputs.driver_run != ''
+        run: |
+          set -euo pipefail
+          for name in candidate candidatetwin; do
+            source=$(head -n 1 build/drivers/driver-$name/revision.txt)
+            git fetch origin $source
+            git diff --exit-code $source HEAD -- renderer whitefoot.pin
+          done
+      - name: Fonts, profiler and machine record
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y --no-install-recommends valgrind fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          chmod +x build/drivers/driver-*/layout_oracle_*
+          mkdir -p build/fallback-cost
+          uname -a > build/fallback-cost/machine.txt
+          lscpu >> build/fallback-cost/machine.txt
+          cat /etc/os-release >> build/fallback-cost/machine.txt
+          make -s oracle-fonts
+      - name: Shared captures and scripts
+        env:
+          CONTROLS: ${{ inputs.controls }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/research/concurrency
+          if [ "$CONTROLS" = true ]; then sh research/investigations/concurrency/run.sh fetch || true; fi
+          tar -xzf tests/layout/fixtures/apollo11/inputs.tar.gz -C build/research/concurrency
+          sha256sum -c tests/layout/fixtures/apollo11/inputs.sha256
+          cp build/drivers/driver-main/layout_oracle_seq build/layout_oracle_seq
+          pages=apollo11
+          if [ "$CONTROLS" = true ]; then pages='ecma262 html5 apollo11'; fi
+          sh research/investigations/incremental-layout/run.sh prepare $pages
+          sha256sum build/x5/scripts/* build/research/concurrency/* renderer/style/ua.css > build/fallback-cost/inputs.sha256
+      - name: Instruction parser negative controls
+        run: python3 research/investigations/m2-edit-cost/fallback-cost.py self-test
+      - name: Native pilot and interleaved rounds
+        if: inputs.fixtures_only != true && inputs.phases_only != true && inputs.memory_only != true
+        env:
+          CONTROLS: ${{ inputs.controls }}
+        run: |
+          set -euo pipefail
+          flag=''
+          if [ "$CONTROLS" = true ]; then flag=--controls; fi
+          python3 research/investigations/m2-edit-cost/fallback-cost.py native --names main maintwin before beforetwin candidate candidatetwin $flag
+      - name: Maximum resident set pilots and interleaved rounds
+        if: inputs.fixtures_only != true && inputs.phases_only != true
+        run: python3 research/investigations/m2-edit-cost/fallback-cost.py memory --names main before candidate noreserve widebound
+      - name: Isolated instruction profiles with zero-edit control
+        if: inputs.fixtures_only != true && inputs.phases_only != true && inputs.memory_only != true
+        run: python3 research/investigations/m2-edit-cost/fallback-cost.py profile --names main before candidate noreserve widebound oldpaths oldunits oldcontexts
+      - name: Per-fallback attribution and paired timing summaries
+        if: inputs.fixtures_only != true && inputs.phases_only != true && inputs.memory_only != true
+        run: python3 research/investigations/m2-edit-cost/fallback-cost.py summarize
+      - name: Native phase pilot and interleaved rounds
+        if: inputs.phases_only == true
+        run: |
+          python3 research/investigations/m2-edit-cost/fallback-phase.py self-test
+          python3 research/investigations/m2-edit-cost/fallback-phase.py native --names main maintwin before beforetwin candidate candidatetwin
+      - name: Fallback lifetime pilot and both modes
+        if: inputs.fixtures_only == true
+        run: |
+          set -euo pipefail
+          s=research/investigations/incremental-layout/scripts/fallback-followup.py
+          python3 "$s" --self-test
+          for repeat in 1 2; do
+            WF_WORKERS=4 /usr/bin/time -p python3 "$s" build/drivers/driver-candidate/layout_oracle_seq "build/fallback-cost/fixture-pilot-$repeat"
+          done
+          for mode in seq par; do
+            WF_WORKERS=4 python3 "$s" "build/drivers/driver-candidate/layout_oracle_$mode" "build/fallback-cost/fixture-$mode"
+            WF_WORKERS=4 "build/drivers/driver-candidate/layout_oracle_$mode" edittime build/x5/scripts/apollo11-block.edits build/research/concurrency/apollo11.html renderer/style/ua.css 'wikibase.client.init&only=styles&skin=vector-2022=build/research/concurrency/apollo11-modules.css' 'modules=site.styles&only=styles&skin=vector-2022=build/research/concurrency/apollo11-site.css' > "build/fallback-cost/apollo-before-$mode.raw"
+            WF_WORKERS=4 python3 "$s" "build/drivers/driver-candidate/layout_oracle_$mode" "build/fallback-cost/apollo-followup-$mode" --apollo
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fallback-evidence
+          path: |
+            build/fallback-cost/
+            build/x5/scripts/
+            build/research/concurrency/
+
+  summarize:
+    if: inputs.evidence_run != ''
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+      - name: Check design form against the task review base
+        run: make design-lint DESIGN_REVIEW_BASE=4b8a75b241107c02504b3fa9d1eaccf9e758a349
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.evidence_run }}
+          name: fallback-evidence
+          path: build
+      - name: Reconcile all recorded edit instructions
+        run: |
+          python3 research/investigations/m2-edit-cost/fallback-cost.py self-test
+          python3 research/investigations/m2-edit-cost/fallback-cost.py summarize
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fallback-summary
+          path: |
+            build/fallback-cost/*.csv
+            build/fallback-cost/*.json
+
+  parallel-witness:
+    if: inputs.witness_only == true || contains(github.event.head_commit.message, '[bulk-witness]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Pinned compiler and toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld
+          make -s compiler
+      - name: Small independent multiple-result witness
+        run: |
+          set -euo pipefail
+          mkdir -p build/bulk-witness
+          git rev-parse HEAD > build/bulk-witness/revision.txt
+          cat whitefoot.pin >> build/bulk-witness/revision.txt
+          wfc=$(realpath build/whitefoot/wf-41f46e60030c/whitefootc)
+          /usr/bin/time -p "$wfc" --par --par-ledger research/investigations/m2-edit-cost/bulk-parallel-results.wf -o build/bulk-witness/witness > build/bulk-witness/ledger.log 2>&1
+          build/bulk-witness/witness
+          cat build/bulk-witness/ledger.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bulk-parallel-witness
+          path: build/bulk-witness/

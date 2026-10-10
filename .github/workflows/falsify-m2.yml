@@ -4,7 +4,7 @@ name: falsify-m2
 
 on:
   push:
-    branches: [main, research/m2-layout, research/m2-edit-cost, research/m2-apollo11-fix, research/m2-q139, research/m2-frag-a, research/m2-frag-b]
+    branches: [main, research/m2-layout, research/m2-edit-cost, research/m2-apollo11-fix, research/m2-q139, research/m2-frag-a, research/m2-frag-b, research/m2-fallback-cost]
 
   workflow_dispatch:
     inputs:
@@ -12,6 +12,10 @@ on:
         description: Comma-separated Q139 rows to retry; empty runs all M2, Q139 and Q140 rows
         required: false
         default: ''
+      fallback_only:
+        description: Retry only fallback mutations and their shared baseline checks
+        type: boolean
+        default: false
       baseline_run:
         description: Reuse a q139-baseline artifact only when renderer source is identical
         required: false
@@ -19,7 +23,7 @@ on:
 
 jobs:
   q140:
-    if: inputs.q139_mutations == '' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[falsify]'))
+    if: inputs.fallback_only != true && (inputs.q139_mutations == '' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[falsify]')))
     uses: ./.github/workflows/q140.yml
     permissions:
       contents: read
@@ -416,7 +420,7 @@ jobs:
           PYEOF
   falsify:
     needs: q139-baseline
-    if: inputs.q139_mutations == '' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[geometry-readers]') || contains(github.event.head_commit.message, '[position-readers]') || contains(github.event.head_commit.message, '[migrated]') || contains(github.event.head_commit.message, '[range]') || contains(github.event.head_commit.message, '[frontier]') || contains(github.event.head_commit.message, '[falsify]') || contains(github.event.head_commit.message, '[stationary]') || contains(github.event.head_commit.message, '[reference]') || contains(github.event.head_commit.message, '[fragment]'))
+    if: inputs.fallback_only != true && (inputs.q139_mutations == '' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[geometry-readers]') || contains(github.event.head_commit.message, '[position-readers]') || contains(github.event.head_commit.message, '[migrated]') || contains(github.event.head_commit.message, '[range]') || contains(github.event.head_commit.message, '[frontier]') || contains(github.event.head_commit.message, '[falsify]') || contains(github.event.head_commit.message, '[stationary]') || contains(github.event.head_commit.message, '[reference]') || contains(github.event.head_commit.message, '[fragment]')))
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     strategy:
@@ -1085,7 +1089,7 @@ jobs:
             build/*-case.*.err
 
   numeric-suffix:
-    if: (github.event_name == 'workflow_dispatch' && inputs.q139_mutations == '') || contains(github.event.head_commit.message, '[falsify]') || contains(github.event.head_commit.message, '[numeric]')
+    if: inputs.fallback_only != true && ((github.event_name == 'workflow_dispatch' && inputs.q139_mutations == '') || contains(github.event.head_commit.message, '[falsify]') || contains(github.event.head_commit.message, '[numeric]'))
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -1211,7 +1215,7 @@ jobs:
             build/mutation-cache/
   q139-falsify:
     needs: q139-baseline
-    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[q139-falsify]') || contains(github.event.head_commit.message, '[falsify]')
+    if: inputs.fallback_only != true && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[q139-falsify]') || contains(github.event.head_commit.message, '[falsify]'))
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
@@ -1250,3 +1254,53 @@ jobs:
           path: |
             build/q139-mutation/
             build/mutation.diff
+
+  fallback-falsify:
+    needs: q139-baseline
+    if: inputs.q139_mutations == '' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[falsify]'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        mutation: [omit-fallback-style-routes, omit-fallback-text-routes, omit-retained-heads, omit-bulk-retained-units, omit-bulk-retained-contexts, omit-bulk-path-copy]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: q139-baseline
+          path: build
+      - name: Compiler and fonts
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          make -s compiler oracle-fonts
+          chmod +x build/layout_base build/layout_base_par
+      - name: Require the unmutated fallback lifetime before mutation
+        run: |
+          set -euo pipefail
+          python3 research/investigations/incremental-layout/scripts/fallback-followup.py --self-test
+          WF_WORKERS=4 /usr/bin/time -p python3 research/investigations/incremental-layout/scripts/fallback-followup.py build/layout_base build/fallback-pilot
+      - name: Remove one kind of still-needed fallback record
+        run: |
+          set -euo pipefail
+          python3 research/investigations/incremental-layout/scripts/fallback-falsify.py apply '${{ matrix.mutation }}'
+          git diff > build/fallback-mutation.diff
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          (cd renderer && "$wfc" --cache ../build/mutation-cache --fragments function --graph modules.wfg --entry layout_oracle -o ../build/layout_mutant)
+          (cd renderer && "$wfc" --cache ../build/mutation-cache --fragments function --par --graph modules.wfg --entry layout_oracle -o ../build/layout_mutant_par)
+      - name: Require the intended next-edit failure in both modes
+        run: |
+          set -euo pipefail
+          WF_WORKERS=4 python3 research/investigations/incremental-layout/scripts/fallback-falsify.py verify '${{ matrix.mutation }}' build/layout_base build/layout_mutant build/fallback-mutation-seq
+          WF_WORKERS=4 python3 research/investigations/incremental-layout/scripts/fallback-falsify.py verify '${{ matrix.mutation }}' build/layout_base_par build/layout_mutant_par build/fallback-mutation-par
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fallback-${{ matrix.mutation }}
+          path: |
+            build/fallback-pilot/
+            build/fallback-mutation-*/
+            build/fallback-mutation.diff
