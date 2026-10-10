@@ -4049,7 +4049,7 @@ duplicate comparisons, storage bounds, route publication and admission
 conditions remain unchanged.
 
 Before measuring, predict fewer `note_use`-to-`route_read` calls, with the
-same `note_use`, route-write and required-state publication counts. Reject
+same `note_use`, style-route publication and required-state publication counts. Reject
 that mechanism if the isolated instruction profile does not show it. Native
 benefit is unverified: compare the final source and its independent twin
 against the same frozen main/before cohorts in three interleaved hosted
@@ -4057,3 +4057,29 @@ rounds, retaining every X5 control, the 1x fallback and 2x control criteria,
 and all identity, next-edit and mutation gates. This is an algebraically
 irrelevant read removal within the existing representation, not an omission
 of a safety or admission check or a new construction design.
+
+The same read/write audit also identified two exact path-directory round
+trips. `relative_steps` reloads one `ContextPath` at the same index after
+only local allocation and checks; its `paths` input is read-only. Keep the
+first value for the parent and child fields, preserving the existing live
+and bound checks. During reconstruction, historical retired paths equal
+`absent_context_path()` (`live = False`, both indices `no_index`), which is
+already the new directory's initial value. Advance the logical append index
+for those paths without writing that value again; retain `route_push`'s
+ceiling check in that branch. Live paths still use the existing append path.
+Retirement, fresh record publication, every numeric slot, directory length,
+allocation and subsequent append order stay unchanged. The only false-path
+producers are initial missing storage and subtree retirement, both publishing
+that same value. Path traversal and liveness readers reject an unlive path
+before interpreting its indices; raw directory-copy loops preserve its value.
+The later `retire_at` call remains necessary to clear currently live slots
+owned by the subtree being replaced.
+
+Before measuring these omissions together with the non-paragraph guard,
+predict fewer `relative_steps`-to-`route_read` calls and fewer reconstruction
+path writes, with unchanged live paths, style/text emissions, stable sequence
+and boundary publication. The preceding native and correctness rejection
+criteria apply unchanged. The profile of each caller distinguishes the
+removed operations; a combined native comparison does not establish each
+individual omission's wall-time effect. No new bulk-copy representation,
+identity reclamation or construction mechanism is introduced.
