@@ -53,7 +53,8 @@ def controls():
     good = 'structure path 1 splice 0 reason 3\nstructure path 2 splice 1 reason 0\n'
     expected = {1: (0, 3), 2: (1, 0)}
     require_paths(good, expected)
-    for wrong in ('', good.splitlines()[0], good + good, good.replace('splice 1 reason 0', 'splice 0 reason 1')):
+    swapped = 'structure path 1 splice 1 reason 0\nstructure path 2 splice 0 reason 3\n'
+    for wrong in ('', good.splitlines()[0], good + good, good.replace('splice 1 reason 0', 'splice 0 reason 1'), swapped):
         try:
             require_paths(wrong, expected)
         except ValueError:
@@ -170,6 +171,12 @@ def apollo(driver, out):
     execute(driver, 'edit', script, 'build/research/concurrency/apollo11.html', raw, sheets)
     inctime.read(raw, inctime.script_operations(script), checking=True, require_paths=True)
     require_paths(raw.read_text(), expected)
+    # Aggregate refusal counts cannot detect a swap between two edit sites.
+    # Also require the frozen per-edit paths with no inserted followups.
+    original_raw = out / 'apollo-original.raw'
+    execute(driver, 'edit', source, 'build/research/concurrency/apollo11.html', original_raw, sheets)
+    inctime.read(original_raw, inctime.script_operations(source), checking=True, require_paths=True)
+    require_paths(original_raw.read_text(), baseline)
     print('Apollo11: all original 60 edits and 44 splice followups match full rebuilds')
 
 

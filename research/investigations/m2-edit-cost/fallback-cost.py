@@ -188,6 +188,13 @@ def summarize():
     from collections import Counter
     import re
     rows = list(csv.DictReader((OUT / 'native.csv').open()))
+    inventory_path = ROOT / 'tests/layout/fixtures/apollo11/block-paths.json'
+    expected_paths = {n: (splice, reason) for n, splice, reason in json.loads(inventory_path.read_text())['paths']}
+    for row in rows:
+        if row['page'] == 'apollo11' and row['kind'] == 'block' and row['cohort'] not in ('main', 'maintwin'):
+            path = int(row['splice']), int(row['reason'])
+            if path != expected_paths[int(row['edit'])]:
+                raise ValueError(('changed original admission', row))
     selected = {}
     for mode in ('seq', 'par'):
         inventory = [r for r in rows if r['cohort'] == 'candidate' and r['page'] == 'apollo11' and r['kind'] == 'block' and r['mode'] == mode and r['round'] == '1']

@@ -3794,3 +3794,10 @@ remaining native gap. If the required record construction/publication still
 exceeds main, the result remains a failed M2 cost criterion; deleting those
 records or changing their lifetime requires an owner decision, not a relaxed
 threshold.
+
+The completion review found an avoidable dependency in the new capacity
+bound: paragraph-piece and child-subtree totals shared one accumulator.
+They now use separate unsigned saturating reductions and combine only at
+the return, preserving the exact bound while exposing their independence.
+The hosted parallel-build ledger is retained to check compiler permission;
+source independence alone is not evidence of emitted parallel execution.
