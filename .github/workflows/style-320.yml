@@ -1,4 +1,4 @@
-# Temporary instruction-count measurement; removed after the raw evidence is saved.
+# Temporary verification of the retained instruction counts; removed after reporting.
 name: style-320
 
 on:
@@ -11,73 +11,57 @@ permissions:
   actions: read
 
 jobs:
-  measure:
+  verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Retrieve both unchanged builds and identify the collection boundary
+      - name: Retrieve the four profiles and annotations
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-          mkdir -p build/style-320 build/style-320-counts
-          gh run download 38014053730 --repo Ming-Research/Snowghost-wf --name style-320-raw --dir build/style-320
-          chmod +x build/style-320/proto_layout_seq-before build/style-320/proto_layout_seq-after
-          sudo apt-get update
-          sudo apt-get install -y valgrind
-          cp build/style-320/{source.sha256,compilers.sha256,inputs.sha256,input-pins.txt,before-release.json,after-release.json,build-before.exit,build-after.exit,build-before.stderr,build-after.stderr} build/style-320-counts/
-          for side in before after; do
-            sha256sum "build/style-320/proto_layout_seq-$side" >> build/style-320-counts/binaries.sha256
-            objdump -d --disassemble=wf_proto.style.compute_styles "build/style-320/proto_layout_seq-$side" > "build/style-320-counts/compute_styles-$side.asm"
-            objdump -d --disassemble=wf_proto.layout.drive.resume "build/style-320/proto_layout_seq-$side" > "build/style-320-counts/drive-$side.asm"
-            # Both optimized drivers call the wrapper's sole body directly.
-            test "$(grep -c 'call.*<wf_proto.style.style_shape_c>' "build/style-320-counts/drive-$side.asm")" = 1
-            if grep -q 'call.*<wf_proto.style.compute_styles>' "build/style-320-counts/drive-$side.asm"; then exit 1; fi
-          done
-          { git rev-parse HEAD; uname -srm; lscpu; valgrind --version; ldd --version; cat /etc/os-release; } > build/style-320-counts/environment.txt
-      - name: Fetch the pinned ecma262 inputs
+          mkdir -p build/style-320-verified
+          gh run download 38015166829 --repo Ming-Research/Snowghost-wf --name style-320-counts --dir build/style-320-verified
+      - name: Compare all counts without relying on tied caller row order
         run: |
           set -euo pipefail
-          data=build/research/concurrency
-          mkdir -p "$data"
-          while read -r name url sum; do
-            curl -fsSL --retry 3 -o "$data/$name" "$url"
-            echo "$sum  $data/$name" | sha256sum -c -
-          done < build/style-320/input-pins.txt
-          sha256sum "$data"/ecma262* research/investigations/concurrency/ua.css > build/style-320-counts/inputs-current.sha256
-          cmp build/style-320/inputs.sha256 build/style-320-counts/inputs-current.sha256
-      - name: Collect the optimized compute_styles body twice per release
-        run: |
-          set -euo pipefail
-          data=build/research/concurrency
-          ua=research/investigations/concurrency/ua.css
-          for repeat in 1 2; do
-            for side in before after; do
-              WF_WORKERS=1 valgrind --tool=callgrind --collect-atstart=no --toggle-collect=wf_proto.style.style_shape_c --callgrind-out-file="build/style-320-counts/callgrind-$side-$repeat.out" "build/style-320/proto_layout_seq-$side" L1 0 "$data/ecma262.html" "$ua" "$data/ecma262-ecmarkup.css" "$data/ecma262-print.css" > "build/style-320-counts/driver-$side-$repeat.stdout" 2> "build/style-320-counts/driver-$side-$repeat.stderr"
-              test "$(awk '/^summary:/ {print $2}' "build/style-320-counts/callgrind-$side-$repeat.out")" -gt 0
-              callgrind_annotate --auto=no --threshold=100 --inclusive=no "build/style-320-counts/callgrind-$side-$repeat.out" > "build/style-320-counts/self-$side-$repeat.txt"
-              callgrind_annotate --auto=no --threshold=100 --inclusive=yes "build/style-320-counts/callgrind-$side-$repeat.out" > "build/style-320-counts/inclusive-$side-$repeat.txt"
-              callgrind_annotate --auto=no --threshold=100 --inclusive=yes --tree=caller "build/style-320-counts/callgrind-$side-$repeat.out" > "build/style-320-counts/caller-$side-$repeat.txt"
-            done
-          done
-      - name: Confirm that both repeats have identical instruction counts
-        run: |
-          set -euo pipefail
-          for side in before after; do
-            for kind in self inclusive caller; do
-              for repeat in 1 2; do
-                sed -n '/PROGRAM TOTALS/,$p' "build/style-320-counts/$kind-$side-$repeat.txt" > "build/style-320-counts/compare-$kind-$side-$repeat.txt"
-              done
-              diff -u "build/style-320-counts/compare-$kind-$side-1.txt" "build/style-320-counts/compare-$kind-$side-2.txt"
-            done
-            cmp "build/style-320-counts/driver-$side-1.stdout" "build/style-320-counts/driver-$side-2.stdout"
-          done
-          cmp build/style-320-counts/driver-before-1.stdout build/style-320-counts/driver-after-1.stdout
-          echo 'All self, inclusive and caller Ir counts agree exactly across repeats; driver outputs also agree.' > build/style-320-counts/repeat-confirmation.txt
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data = Path('build/style-320-verified')
+          def table(path):
+              text = path.read_text()
+              return text[text.index('PROGRAM TOTALS'):]
+          def callers(path):
+              records = []
+              for block in table(path).split('\n\n'):
+                  rows = block.splitlines()
+                  functions = [line.strip() for line in rows if ' * ' in line]
+                  if not functions:
+                      continue
+                  assert len(functions) == 1, (path, block)
+                  incoming = sorted(line.strip() for line in rows if ' < ' in line)
+                  records.append((functions[0], incoming))
+              assert records, path
+              return sorted(records)
+          for side in ('before', 'after'):
+              for kind in ('self', 'inclusive'):
+                  assert table(data / f'{kind}-{side}-1.txt') == table(data / f'{kind}-{side}-2.txt'), (side, kind)
+              first = callers(data / f'caller-{side}-1.txt')
+              second = callers(data / f'caller-{side}-2.txt')
+              assert first == second, (side, 'caller')
+              (data / f'canonical-callers-{side}.json').write_text(json.dumps(first, indent=2) + '\n')
+              assert (data / f'driver-{side}-1.stdout').read_bytes() == (data / f'driver-{side}-2.stdout').read_bytes(), side
+          assert (data / 'driver-before-1.stdout').read_bytes() == (data / 'driver-after-1.stdout').read_bytes()
+          result = ('Every self and inclusive function Ir and every caller/callee Ir and call count agree exactly across repeats.\n'
+                    'Only tied caller presentation order differed; grouping by callee is preserved in the comparison.\n'
+                    'Driver outputs agree across all four runs.\n')
+          (data / 'repeat-confirmation.txt').write_text(result)
+          print(result)
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: style-320-counts
-          path: build/style-320-counts/
+          name: style-320-verified
+          path: build/style-320-verified/
           retention-days: 30
