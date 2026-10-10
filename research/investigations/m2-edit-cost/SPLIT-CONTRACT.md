@@ -3097,3 +3097,19 @@ with their previous caller when `bisect-hosted.yml` adopts this comparison.
 Their frozen commits and results above remain the reproduction record;
 the current experiment needs native acceptance timing and direct emission
 evidence, with no supplemental profiler after the timed batch.
+
+### Grid correction in the historical oracle comparison
+
+After the grid-splice base merge, hosted oracle run 38004458182 at bd7835d
+reached `grid-final-space-cases.html` and rejected byte identity with the
+pre-Q140 renderer (byte 285, line 13). The exact-head Q139 and Q140 gates
+accepted the corrected fixture against Chromium. As with the Q139 correction
+above, the historical renderer is a negative control for this approved
+behavior change, not the expected geometry for the new fixture.
+
+The comparison retains both historical and current dumps plus a fresh
+Chromium reference. It requires the historical output to fail the independent
+geometry comparison with status 1, the current output to pass, and current
+sequential/parallel dumps to remain byte-identical. Every other historical
+comparison is unchanged. Failure of either independent expectation rejects
+the adaptation; no renderer change or new geometry decision is introduced.
