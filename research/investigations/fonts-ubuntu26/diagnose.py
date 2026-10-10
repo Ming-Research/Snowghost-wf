@@ -64,7 +64,7 @@ old = '''    Err(..) => {
       let code = fail(err: err, files: files, what: &fonts_word[0_u64..fonts_word.len]);
       return code;
     }
-  };
+  }
   let viewport'''
 new = '''    Err(error: problem) => {
       let diagnostic = box_slots_new::<u8>(capacity: 128_u64);
@@ -85,7 +85,7 @@ new = '''    Err(error: problem) => {
       let code = fail(err: err, files: files, what: &diagnostic.inner[0_u64..size]);
       return code;
     }
-  };
+  }
   let viewport'''
 assert source.count(old) == 1
 driver.write_text(source.replace(old, new))
@@ -114,12 +114,29 @@ for face in changed:
 (results / 'offenders.json').write_text(json.dumps(offenders, indent=2))
 print(f'OFFENDERS {json.dumps(offenders)}', flush=True)
 
+for face in offenders:
+    for version in ('24.04', '26.04'):
+        source = Path('build/fontsets') / version / 'root' / face['path'].lstrip('/')
+        result = run(f'face-oracle-{version}-{source.name}', ['build/font_face_oracle', str(source)])
+        print(f'FACE_ORACLE {version} {source.name} {result.stdout.splitlines()[0]}', flush=True)
+
 for face in changed:
     for version in ('24.04', '26.04'):
         source = Path('build/fontsets') / version / 'root' / face['path'].lstrip('/')
         font = TTFont(source, checkChecksums=2) if source.read_bytes()[:4] != b'ttcf' else TTCollection(source).fonts[0]
-        font.ensureDecompiled()
+        font.ensureDecompiled(recurse=True)
+        if version == '26.04':
+            mapping = font.getBestCmap() or next(t.cmap for t in font['cmap'].tables if hasattr(t, 'cmap') and t.cmap)
+            face['sample'] = ''.join(chr(c) for c in sorted(mapping) if c >= 32 and not 0xD800 <= c <= 0xDFFF)[:20]
         print(f'FONTTOOLS {version} {source.name} decompiled=all tables={sorted(font.keys())}', flush=True)
+        for tag in ('CFF ', 'CFF2'):
+            if tag in font:
+                cff = font[tag].cff
+                top = cff.topDictIndex[0]
+                chars = top.CharStrings
+                for name in chars.charStrings:
+                    chars[name].decompile()
+                print(f'OUTLINES {version} {source.name} tag={tag!r} version={cff.major}.{cff.minor} charstrings={len(chars.charStrings)} fvar={"fvar" in font} VarStore={hasattr(top, "VarStore")}', flush=True)
         for tag in ('head', 'maxp', 'hhea', 'OS/2', 'cmap', 'fvar', 'CFF2'):
             if tag in font:
                 table = font[tag]
@@ -128,3 +145,4 @@ for face in changed:
                     detail['subtables'] = [(t.platformID, t.platEncID, t.format, len(getattr(t, 'cmap', {}))) for t in table.tables]
                 print(f'TABLE {version} {source.name} {tag} {detail}', flush=True)
         font.saveXML(results / f'{version}-{source.name}.ttx', tables=['head', 'maxp', 'hhea', 'OS/2', 'cmap'])
+(results / 'changed.json').write_text(json.dumps(changed, indent=2))

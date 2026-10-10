@@ -20,6 +20,7 @@ const { chromium } = require('../../../build/browser/node_modules/playwright');
   for (let i = 0; i < changed.length; i++) {
     const face = changed[i];
     await page.setContent(`<style>@font-face {font-family: probe; src: url(http://127.0.0.1:${server.address().port}/${i})} #probe {font-family: probe; font-size:48px}</style><span id="probe">ABC abc 123 ☺ ★ 😀 ก 日</span>`);
+    if (face.sample) await page.locator('#probe').evaluate((node, sample) => { node.textContent += sample; }, face.sample);
     const loaded = await page.evaluate(async () => { await document.fonts.ready; return [...document.fonts].map(f => f.status); });
     const doc = await cdp.send('DOM.getDocument');
     const node = await cdp.send('DOM.querySelector', {nodeId: doc.root.nodeId, selector:'#probe'});
