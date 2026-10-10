@@ -4,6 +4,10 @@ The owner selected Q134 A and Q135 A on 2026-10-07. The current
 [split dependency contract and acceptance investigation](SPLIT-CONTRACT.md)
 owns their implementation status and measurement setup.
 
+The proposed [block fallback dependency design](FALLBACK-DESIGN.md) records the
+next relayout contract and owner choices before implementation; it does not
+claim the fallback cost target has been met.
+
 Earlier edit-cost evidence: [acceptance measurement](#final-source-acceptance-measurement),
 [correctness validation](#final-source-validation), and [owner ledger](#owner-ledger).
 
