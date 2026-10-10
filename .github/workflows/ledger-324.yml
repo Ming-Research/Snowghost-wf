@@ -1,0 +1,52 @@
+# Temporary, research branch only: checks that Whitefoot #324 removes the four
+# release/borrow narrowings in layout.take_prepared (structure.wf:509-512) by
+# compiling the same source with the release before #324 and with #324.
+name: ledger-324
+on:
+  push:
+    branches: [research/ledger-324]
+    paths: [.github/workflows/ledger-324.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ledger:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Compile with both releases and compare take_prepared
+        run: |
+          set -euo pipefail
+          mkdir -p results
+          installed=''
+          for pin in wf-ef4a73b56044 wf-87fa2524f4da; do
+            printf 'release = %s\n' "$pin" > whitefoot.pin
+            make -s compiler
+            manifest=build/whitefoot/$pin/whitefoot-release.json
+            major=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["linux_llvm_major"])' "$manifest")
+            if [ "$major" != "$installed" ]; then make -s toolchain; installed=$major; fi
+            wfc=$PWD/build/whitefoot/$pin/whitefootc
+            out=$PWD/results/$pin
+            mkdir -p "$out"
+            (cd renderer && "$wfc" --cache "$out/cache" --fragments function --par --par-ledger --emit-llvm --graph modules.wfg --entry layout_oracle -o "$out/layout_oracle" > "$out/ledger.txt" 2> "$out/stderr.txt")
+            rm -rf "$out/cache"
+            echo "== $pin"
+            echo "narrowed lines: $(grep -c 'narrowed' "$out/ledger.txt" || true)"
+            grep -n 'narrowed' "$out/ledger.txt" || true
+            echo "-- structure.wf:50[0-9]|51[0-9] lines"
+            grep -nE 'structure\.wf:(50[0-9]|51[0-9])\b' "$out/ledger.txt" || true
+            ll=$(find "$out" -name '*.ll' | head -5)
+            echo "llvm files: $ll"
+            for f in $ll; do
+              awk '/^define .*take_prepared/{f=1} f{print} f&&/^}/{f=0}' "$f" > "$out/take_prepared.ll" || true
+            done
+            echo "take_prepared lane calls:"; grep -oE '@wf__par_(acquire_lane|publish|join)' "$out/take_prepared.ll" | sort | uniq -c || true
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ledger-324
+          path: results/
