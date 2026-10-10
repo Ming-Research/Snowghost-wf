@@ -201,3 +201,44 @@ new branch. The existing read-only Whitefoot clone in `.git` supplies the
 normative specification at `78223721f77db615c950b6df1bcc690629f9fe4b`; no
 Whitefoot source enters the tracked tree. Step 2 starts with the prepared
 growth-preservation witness before any broad storage rewrite.
+
+### Hosted growth refusal
+
+2026-10-10 23:15 UTC: Hosted proof collection
+[38094056612](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38094056612)
+at `2083610c8cc1e5477bed68fc90ad01a9999ddd30`, using
+`wf-78223721f77d`, refuses the unchanged `grow-inverse.wf` with exit 1:
+
+```text
+research/investigations/m2-paged/grow-inverse.wf:20:3: error[RANGE-3]: UndischargedRangeFact
+  source:   return unit;
+  marker:   ^^^^^^^^^^^^
+  fact: inv
+  site: a return
+  missing: `c^.targets.inner[c^.order.inner[k].Open.block].entry_slot == k` (line 13)
+  mechanical_fix: establish the fact before this site: a range `requires`, a range invariant of the enclosing counted loop, or a guard that excludes the uncovered elements
+```
+
+This blocks step 2, including order storage, and therefore renderer owner-motion
+parallelization and candidate acceptance. `sequence_reserve` in
+`renderer/layout/sequence.wf` grows the owner sequence before insertion while
+retaining earlier entries; the same-structure Paged replacement needs this
+operation. OP-10 says `grow_paged` moves no existing element, but PRE-1
+publishes only capacity and unchanged length, and RANGE-2 forgets the written
+cell contents. This is a specified proof limitation, not evidence that the
+compiler violates v0.121. A loop invariant must be proved on entry (RANGE-3);
+simply restating the lost relation after growth cannot recover it. No runtime
+check, redundant write, fixed capacity, proof-only data or alternate storage
+representation is added. The minimal witness remains unchanged for the
+owning language session. Proposed deferral key: `sg-paged-grow-inverse`, P1;
+reopen when the pinned release can prove this exact writer and still rejects
+a corrupted inverse, then resume the full renderer writer audit and gates.
+
+The same run found a fixture syntax error in `natural-paged.wf`: GRAM-9 does
+not admit a constructor in a call's atom argument. The control now binds
+each Block and Flow value before passing it to `place_back`, as the ordinary
+grammar requires; its values, inverse and writer are unchanged. Until its
+rerun passes, it supplies no ledger, emission or runtime evidence.
+Hosted [check 38094056543](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38094056543)
+passed at `2083610c8cc1e5477bed68fc90ad01a9999ddd30`. This is prerequisite
+validation only; no renderer storage has moved.
