@@ -798,7 +798,7 @@ compatibility positions, split endpoints and baseline entries are still ranks;
 the block, paragraph and child-context records also carry local entry slots.
 The indirect payload writes still need a Whitefoot disjointness proof;
 child-context publication still follows child slots. Both limitations are
-recorded in [the TODO](../../../docs/todo.md) and must be resolved before
+recorded in [the historical backlog](https://github.com/Ming-Research/Snowghost-wf/blob/8f973e691e18f7322c39e2adbb2a8d4647865079/docs/todo.md) (the owner-motion dependency is now `sg-inverse-storage`) and must be resolved before
 claiming the full step's independence and storage-permutation checks.
 Step 2's source encodes reference-walker outputs through `geometry.wf`.
 The walker still performs every potentially saturating layout operation in
@@ -3005,7 +3005,7 @@ builder already supplies those facts. Source inspection finds
 spaces, and `stack_flow` passing its single `basis_height` to ordinary block
 height resolution. Its open-block frames track widths but not a nested
 height basis. That is a concrete risk for the nested 200/100/50 fixture,
-recorded in [the TODO](../../../docs/todo.md); no local run establishes the
+subsequently settled by [the independent full-layout probe](#q139-implementation-independent-full-layout-probe); at this point no local run established the
 actual mismatch. Before implementing admission, CI must compare nested and
 auto-intermediate full builds with independent expected rectangles. If they
 disagree, repair full resolution and its consumers; do not encode the wrong
@@ -4146,9 +4146,7 @@ Whitefoot side, and authorized Snowghost to use the specified form now.
 `grid_pass` borrows each complete proposal segment with `&s[i]`;
 `grid_reduce_proposals` borrows it before reading its length or element.
 This changes neither the item-owned storage nor the sizing semantics or
-dependencies and adds no run-time check or data. The short
-[status-board item `sg-wfreq-segment-place`](https://claude.ai/artifact/7tocXS3iUdthCLCQCMd3ip) calls
-for switching back when natural direct access is admitted. Every other
+dependencies and adds no run-time check or data. Every other
 natural-form refusal remains a stop. Exact-head compilation, Chromium
 results, executable mutation detection and cost still require hosted evidence.
 
@@ -4358,10 +4356,8 @@ computed-give and nested-call controls still reject as intended. Its design
 check passes 21 tests, 7 nodes, depth 1 and 64 Decisions against base 60.
 These results supersede the pending compiler-boundary claims in the earlier
 handoff subsections; runtime, mutation and cost evidence remain separate.
-The resolved constructor entry leaves the branch-local TODO. The segment
-access and computed-give follow-ups are status-board items
-`sg-wfreq-segment-place` and `sg-wfreq-give-carrier`; the branch adds no
-repository TODO entries for them.
+The resolved constructor entry leaves the branch-local TODO. The temporary segment and computed-give forms are superseded by the
+v0.117 adoption recorded below.
 
 ### First compiled matrix and repairs, 2026-10-09
 
@@ -4824,6 +4820,19 @@ M2 and final have equal named held/flow/reference/grid/line-breaking call totals
 
 The final full-layout instruction profile [37943505181](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37943505181) uses `af335c51cb2f037cab05b8c5d5c797266a7e551c`. Empty-phase removal leaves 784,781,675 instructions per Apollo11 layout, 3,089 line-finishing calls, eight natural child measurements and three final layouts. It skips 28 of 62 proposal phases, preserving the required nonempty distributions. The original-page and 36-family fixture job in [37943702867](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37943702867) validates `c1b42b22924c2fc439881d13210efb0e3a098e10`: grid heights 133/173/133 px, the outer flex peer at 8 px throughout, and the inserted min-content flexible-track width 426.625 px match Chromium in both modes. Original blocks splice 20/20 for ECMA262, 60/60 for HTML5 and 38/60 for Apollo11, whose remaining paths are 18 reason-9, two reason-7 and two reason-3 refusals per mode. The same run detects all 22 Q140 mutations along with the complete M2/Q139 matrix.
 
-The owner ruled all branch decisions on 2026-10-08/09. The item-owned proposal/first-baseline evidence and enclosing-flex proof prerequisites are resolved by the fixture, mutation and cost evidence above; the remaining sentence-edit cost stays open under `paged-overlap-regression`, within 2x main, to be remeasured after Whitefoot #275. The shared comparator's terminal-height completeness contract remains `sg-bl-comparator-complete`; Q140's mutation caller keeps its complete-dump guard. Segment access and computed-give follow-ups remain `sg-wfreq-segment-place` and `sg-wfreq-give-carrier` until the approved natural forms land in Whitefoot. The inherited CSS Grid 11.7 maximum chain remains `sg-bl-grid-fr-max`.
+The owner ruled all branch decisions on 2026-10-08/09. The item-owned proposal/first-baseline evidence and enclosing-flex proof prerequisites are resolved by the fixture, mutation and cost evidence above; the remaining sentence-edit cost stays open under `paged-overlap-regression`, within 2x main, to be remeasured after Whitefoot #275. The shared comparator's terminal-height completeness contract remains `sg-bl-comparator-complete`; Q140's mutation caller keeps its complete-dump guard. The inherited CSS Grid 11.7 maximum chain remains `sg-bl-grid-fr-max`.
 
 The permanent `.github/workflows/q140.yml` replaces the temporary baseline workflow. It runs every grid family, Chromium comparison, final-space lifetime and original-page block check on each selected push/PR and manual dispatch, with no matrix opt-out. `falsify-m2` calls it with all Q140 mutations enabled. A sibling of Q139 keeps the two fixture entry points independent while sharing Q140's build with its mutation jobs. The original Apollo11 capture and its artifact manifest are preserved under `tests/layout/fixtures/apollo11/`, so the gate does not depend on an expiring Actions artifact; CI verifies the same three input hashes before checking the unchanged block paths. The finite attribute, baseline, cost, edit-profile, profile and segment-reproduction workflows and their three dedicated diagnostic helpers are retired; the dated results and run links above remain evidence. Earlier temporary-workflow instructions in this investigation describe those historical runs.
+
+
+### Released natural grid forms
+
+The wf-41f46e60030c adoption restores direct segment length and element
+reads in `grid_reduce_proposals` and computed `give` expressions for both
+first-baseline selectors in `flex_publish_first_baseline`. Whitefoot v0.112
+transports the computed integer result's relations; v0.117 admits the
+segment as a direct length or element base. `grid_pass` still borrows each
+complete segment because `grid_propose` needs the range reference. These
+changes retire the two temporary forms under status-board item
+`sg-grid-natural-forms`; their earlier refusals above remain dated evidence.
+Hosted validation and any refusal are recorded in Draft PR 55.

@@ -5,7 +5,7 @@ alias Styles = pkg::style::Styles;
 
 fn no_boundary_visits() -> made: BoundaryVisits pure {
   doc "Empty physical-work counters for one attempted boundary update.";
-  let empty = BoundaryVisits(entries: 0_u64, blocks: 0_u64, indexes: 0_u64, fallbacks: 0_u64, reason: 0_u32);
+  let empty = BoundaryVisits(entries: 0_u64, blocks: 0_u64, indexes: 0_u64, fallbacks: 0_u64, reason: 0_u32, frontier_refusals: 0_u64, frontier_reasons: 0_u32);
   return empty;
 }
 
@@ -16,7 +16,9 @@ fn add_boundary_visits(first: BoundaryVisits, second: BoundaryVisits) -> made: B
   let indexes = first.indexes +sat second.indexes;
   let fallbacks = first.fallbacks +sat second.fallbacks;
   let reason = imax(first.reason, second.reason);
-  let total = BoundaryVisits(entries: entries, blocks: blocks, indexes: indexes, fallbacks: fallbacks, reason: reason);
+  let frontier_refusals = first.frontier_refusals +sat second.frontier_refusals;
+  let frontier_reasons = ior(first.frontier_reasons, second.frontier_reasons);
+  let total = BoundaryVisits(entries: entries, blocks: blocks, indexes: indexes, fallbacks: fallbacks, reason: reason, frontier_refusals: frontier_refusals, frontier_reasons: frontier_reasons);
   return total;
 }
 
@@ -95,6 +97,7 @@ fn paragraph_output(paragraph: &Paragraph) -> made: SequenceOutput reads(paragra
   }
   let count = paragraph^.lines.inner.len;
   if count > 0_u64 {
+    set output.placed = 1_u64;
     set output.through = False();
     set output.fragment_first = 1_u8;
     set output.fragment_last = 1_u8;
@@ -132,6 +135,15 @@ fn paragraph_output(paragraph: &Paragraph) -> made: SequenceOutput reads(paragra
     set output.barriers = 5_u32;
   }
   return output;
+}
+
+fn position_block_output(output: SequenceOutput, inside: &SequenceOutput, measured: BlockOutput) -> made: SequenceOutput reads(inside) {
+  doc "Positions the three motion fields of an already composed, unshifted block transfer. The remaining fields do not read offset, natural or motion_known and remain exact. A block_output result is unshifted because its first lift uses offset zero.";
+  let positioned = output;
+  set positioned.natural_floor = imin(inside^.natural_floor, measured.natural);
+  let shifted = shift_motion(output: positioned, delta: measured.offset);
+  set shifted.motion_known = band(inside^.motion_known, measured.motion_known);
+  return shifted;
 }
 
 fn lift_block_output(inside: &SequenceOutput, measured: BlockOutput) -> made: SequenceOutput reads(inside) {
@@ -179,13 +191,7 @@ fn lift_block_output(inside: &SequenceOutput, measured: BlockOutput) -> made: Se
     set output.fragment_first = 1_u8;
     set output.fragment_last = 1_u8;
   }
-  let interior_floor = imin(inside^.natural_floor, measured.natural);
-  set output.natural_floor = interior_floor;
-  let shifted = shift_motion(output: output, delta: measured.offset);
-  set output.natural_floor = shifted.natural_floor;
-  set output.float_reach = shifted.float_reach;
-  let known = band(inside^.motion_known, measured.motion_known);
-  set output.motion_known = known;
+  set output = position_block_output(output: output, inside: inside, measured: measured);
   let free_transfer = band(output.free_transfer, measured.own_free);
   set output.free_transfer = free_transfer;
   let barriers = imax(output.barriers, measured.own_barriers);
@@ -194,6 +200,9 @@ fn lift_block_output(inside: &SequenceOutput, measured: BlockOutput) -> made: Se
     set output.ordinary = False();
   }
   set output.travel = output.travel +sat measured.extra_travel;
+  set output.placed = 1_u64;
+  set output.opens = 1_u64;
+  set output.positioned = inside^.positioned;
   return output;
 }
 
@@ -295,6 +304,12 @@ fn block_output(block: &Block, styles: &Styles, inside: &SequenceOutput, basis_h
 }
 
 fn prepare_boundary_entry(context: &Context, item: Flow, styles: &Styles, destination: &BoundaryReduction) -> result: unit reads(context), reads(styles), writes(destination.own) {
+  doc "Prepares one reference entry with the context's current frame.";
+  let frame = flow_frame(styles: styles, style: context^.style, space: context^.space, width: context^.width);
+  return prepare_boundary_entry_at(context: context, item: item, styles: styles, content_top: frame.content_top, destination: destination);
+}
+
+fn prepare_boundary_entry_at(context: &Context, item: Flow, styles: &Styles, content_top: i32, destination: &BoundaryReduction) -> result: unit reads(context), reads(styles), writes(destination.own) {
   doc "Prepares a paragraph, child, float or out-of-flow transfer independently at one event rank. A block waits for its nested reduction; synthesized Close ranks are unused.";
   let own = pending_output(events: 1_u64);
   match item {
@@ -326,6 +341,7 @@ fn prepare_boundary_entry(context: &Context, item: Flow, styles: &Styles, destin
         set own.last_float = handle;
         set own.floats = 1_u64;
         set own.barriers = 1_u32;
+        set own.placed = 1_u64;
       }
     }
     Out(..) => {
@@ -334,11 +350,12 @@ fn prepare_boundary_entry(context: &Context, item: Flow, styles: &Styles, destin
       set own.events = 1_u64;
       set own.ordinary = False();
       set own.barriers = 5_u32;
+      set own.positioned = 1_u64;
     }
     Close(..) => {
     }
   }
-  let motion = entry_motion(context: context, item: item, styles: styles);
+  let motion = entry_motion_at(context: context, item: item, styles: styles, content_top: content_top);
   set own.natural_floor = motion.natural_floor;
   set own.float_reach = motion.float_reach;
   set own.motion_known = motion.motion_known;
@@ -402,7 +419,7 @@ fn reduce_sequence(context: &Context, sequence: &EntrySequence, root: u32, style
           }
           set measured.natural = natural;
           set measured.motion_known = observed.motion_known;
-          let lifted_motion = lift_block_output(inside: &inside, measured: measured);
+          let lifted_motion = position_block_output(output: own, inside: &inside, measured: measured);
           set own.natural_floor = lifted_motion.natural_floor;
           set own.float_reach = lifted_motion.float_reach;
           set own.motion_known = lifted_motion.motion_known;
@@ -552,13 +569,14 @@ fn store_block_reduction(block: &Block, ranks: &BoundaryRanks, reduced: &[Bounda
 fn publish_boundaries(context: &Context, events: &[Flow], styles: &Styles, basis_height: i32) -> result: unit reads(events), reads(styles), writes(context) {
   doc "Finishes full and partial reference walks with independent leaf transfer preparation, one post-order semantic reduction and independent page publication. The incremental boundary path never calls this full-context operation.";
   let count = flow_length(context: context);
+  let frame = flow_frame(styles: styles, style: context^.style, space: context^.space, width: context^.width);
   let empty = empty_output();
   let no_block = empty_block_output();
   let missing = BoundaryReduction(own: empty, total: empty, block: no_block);
   let reduced = box_array_filled::<BoundaryReduction>(count: count, value: missing);
   for (at in 0_u64..count) {
     if at < events^.len {
-      prepare_boundary_entry(context: context, item: events^[at], styles: styles, destination: &reduced.inner[at]);
+      prepare_boundary_entry_at(context: context, item: events^[at], styles: styles, content_top: frame.content_top, destination: &reduced.inner[at]);
     }
   }
   let ranks = boundary_ranks(context: context);
@@ -614,12 +632,15 @@ fn reference_item_output(context: &Context, item: Flow, styles: &Styles, basis_h
         }
         set measured.natural = natural;
         set measured.motion_known = observed.motion_known;
-        let lifted_motion = lift_block_output(inside: &inside, measured: measured);
+        let lifted_motion = position_block_output(output: own, inside: &inside, measured: measured);
         set own.natural_floor = lifted_motion.natural_floor;
         set own.float_reach = lifted_motion.float_reach;
         set own.motion_known = lifted_motion.motion_known;
-        set context^.blocks.inner[at].boundary = own;
-        set context^.blocks.inner[at].output = measured;
+        settle_open_semantics(context: context, at: at);
+        if at < context^.blocks.inner.len {
+          set context^.blocks.inner[at].boundary = own;
+          set context^.blocks.inner[at].output = measured;
+        }
       } else {
         return own;
       }
@@ -821,6 +842,7 @@ fn context_size_output(child: &Context, styles: &Styles, height: i32, baseline: 
   set output.heights = own_height_summary(context: child, styles: styles);
   set output.count = 1_u64;
   set output.events = 1_u64;
+  set output.placed = 1_u64;
   if child^.split_head {
     set output.fragment_sources = 1_u64;
     set output.fragment_first = 2_u8;
@@ -977,8 +999,9 @@ fn boundary_output(sequence: &EntrySequence, slot: u32, own: Bool, visits: &Boun
   return output;
 }
 
-fn boundary_set(sequence: &EntrySequence, slot: u32, output: SequenceOutput, visits: &BoundaryVisits) -> result: unit reads(sequence.span), writes(sequence.nodes), writes(visits) {
-  doc "Repairs one changed entry and its logarithmic AVL path. Each lookup opens only topology or the transfer consumed by the join.";
+fn boundary_set(sequence: &EntrySequence, slot: u32, output: SequenceOutput, visits: &BoundaryVisits) -> result: unit reads(sequence.span), reads(sequence.range_actions), writes(sequence.nodes), writes(visits) {
+  doc "Repairs one changed entry and its logarithmic AVL path. The path is exposed first, so the replaced transfer is stored relative to an ancestor chain that holds no pending range action and every join reads children relative to its node. Each lookup opens only topology or the transfer consumed by the join.";
+  range_expose(sequence: sequence, slot: slot, visits: visits);
   let cursor = slot;
   let own_field = True();
   let total_field = False();
@@ -1034,10 +1057,10 @@ fn boundary_rank(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -
   return rank;
 }
 
-fn boundary_sequence_update(sequence: &EntrySequence, slot: u32, output: SequenceOutput, delta: i64, visits: &BoundaryVisits) -> made: Box<Slots<BoundaryMove>> writes(sequence), writes(visits) {
-  doc "Repairs the balanced reduction, then down-sweeps only the intersecting direct suffix. Since the changed solid entry preserves its struts, every later entering state changes by delta. Earlier entries are skipped using cached counts; the suffix reduction repairs each intersected AVL node once while emitting moves in order, and equal-height baseline edits make no sibling list.";
+fn boundary_sequence_update(sequence: &EntrySequence, slot: u32, output: SequenceOutput, delta: i64, visits: &BoundaryVisits) -> made: Box<Slots<EntryHandle>> writes(sequence), writes(visits) {
+  doc "Repairs the balanced reduction at the changed entry, then installs the ordinary exact translation (0, delta, 0, 0) and the equal semantic displacement on its direct suffix range. Fully covered subtrees take the action in O(1); the boundary path joins each intersected AVL node once. Returns the direct positioned entries of the range, which are settled explicitly rather than as placed range members; equal-height baseline edits install nothing.";
   let own_field = True();
-  let previous = boundary_output(sequence: sequence, slot: slot, own: own_field, visits: visits);
+  let previous = effective_output(sequence: sequence, slot: slot, own: own_field, visits: visits);
   let replacement = output;
   if output.motion_known {
   } else {
@@ -1046,65 +1069,53 @@ fn boundary_sequence_update(sequence: &EntrySequence, slot: u32, output: Sequenc
     set replacement.motion_known = previous.motion_known;
   }
   boundary_set(sequence: sequence, slot: slot, output: replacement, visits: visits);
-  let moves = box_slots_new::<BoundaryMove>(capacity: 0_u64);
+  let positioned = box_slots_new::<EntryHandle>(capacity: 0_u64);
   if delta != 0_i64 {
     let rank = boundary_rank(sequence: sequence, slot: slot, visits: visits);
     let after = rank +sat 1_u64;
     let root = sequence^.root;
-    let total = sequence_motion_suffix(sequence: sequence, root: root, skip: after, delta: delta, moves: &moves, visits: visits);
+    let geometry = Origin(x: 0_i64, y: delta, dx: 0_i64, dy: 0_i64);
+    let no = False();
+    let action = RangeAction(geometry: geometry, semantic: delta, basis: 0_i32, basis_set: no);
+    let total = install_range(sequence: sequence, root: root, skip: after, action: action, visits: visits);
+    range_positioned(sequence: sequence, root: root, skip: after, owner: no_index, handles: &positioned, visits: visits);
   }
-  return move moves;
+  return move positioned;
 }
 
-fn apply_boundary_move(context: &Context, translation: BoundaryMove) -> result: unit writes(context.blocks.inner), writes(context.paragraphs.inner), writes(context.children.inner), writes(context.boundary_visits.blocks) {
-  doc "Changes exactly one direct origin. A block move never opens descendants, and an unplaced lineless paragraph keeps its reference scratch origin.";
-  match translation.item {
-    Open(block: b) => {
-      let at = cvt::<u32, u64>(b);
-      if at < context^.blocks.inner.len {
-        set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
-        set context^.blocks.inner[at].y = context^.blocks.inner[at].y +sat translation.delta;
-        set context^.blocks.inner[at].output.offset = context^.blocks.inner[at].output.offset +sat translation.delta;
-        let shifted = shift_motion(output: context^.blocks.inner[at].boundary, delta: translation.delta);
-        set context^.blocks.inner[at].boundary = shifted;
-      }
-    }
-    Text(paragraph: p) => {
-      let paragraph_at = cvt::<u32, u64>(p);
-      if paragraph_at < context^.paragraphs.inner.len {
-        if context^.paragraphs.inner[paragraph_at].lines.inner.len > 0_u64 {
-          set context^.paragraphs.inner[paragraph_at].top = context^.paragraphs.inner[paragraph_at].top +sat translation.delta;
-          splice_move_atomics(context: context, paragraph: paragraph_at, delta: translation.delta);
-        }
-      }
-    }
-    Child(context: c) => {
-      let child_at = cvt::<u32, u64>(c);
-      if child_at < context^.children.inner.len {
-        set context^.children.inner[child_at].anchor.y = context^.children.inner[child_at].anchor.y +sat translation.delta;
-      }
-    }
-    Float(context: c) => {
-      let float_at = cvt::<u32, u64>(c);
-      if float_at < context^.children.inner.len {
-        set context^.children.inner[float_at].anchor.y = context^.children.inner[float_at].anchor.y +sat translation.delta;
-      }
-    }
+fn move_positioned_anchor(context: &Context, slot: u32, owner: u32, action: Origin, viewport_action: Origin) -> result: unit reads(context.entries.payloads), reads(context.entries.span), reads(context.blocks.inner), writes(context.boundary_visits.entries), writes(context.children.inner) {
+  doc "Settles one selected positioned entry of a translated range: block-owned anchors take the owner's local action and viewport anchors only the ordinary vertical movement. These are explicit exception writes, not inherited range membership.";
+  let item = reference_owner_payload(context: context, owner: owner, slot: slot);
+  match item {
     Out(context: c) => {
-      let out_at = cvt::<u32, u64>(c);
-      if out_at < context^.children.inner.len {
-        set context^.children.inner[out_at].anchor.y = context^.children.inner[out_at].anchor.y +sat translation.delta;
+      let at = cvt::<u32, u64>(c);
+      if at < context^.children.inner.len {
+        set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
+        let moved = if context^.children.inner[at].viewport_origin {
+          give origin_accumulate(owner: context^.children.inner[at].anchor, local: viewport_action);
+        } else {
+          give origin_accumulate(owner: context^.children.inner[at].anchor, local: action);
+        }
+        set context^.children.inner[at].anchor = moved;
       }
+    }
+    Open(..) => {
     }
     Close(..) => {
+    }
+    Text(..) => {
+    }
+    Child(..) => {
+    }
+    Float(..) => {
     }
   }
   return unit;
 }
 
 fn boundary_owner_update(context: &Context, owner: u32, slot: u32, output: SequenceOutput, delta: i64) -> result: unit writes(context) {
-  doc "Routes one local reduction and direct-sibling translation, without a context-wide coordinate conversion. The current indirect payload scatter still needs the step-3 distinct-slot proof.";
-  let moves = if owner == no_index {
+  doc "Routes one local reduction and its exact suffix range action, without a context-wide coordinate conversion or a write per following sibling. Only positioned entries of the range receive explicit anchor writes.";
+  let positioned = if owner == no_index {
     let delivered_102 = boundary_sequence_update(sequence: &context^.entries, slot: slot, output: output, delta: delta, visits: &context^.boundary_visits);
     give move delivered_102;
   } else {
@@ -1114,19 +1125,24 @@ fn boundary_owner_update(context: &Context, owner: u32, slot: u32, output: Seque
       let delivered_103 = boundary_sequence_update(sequence: &context^.blocks.inner[at].entries, slot: slot, output: output, delta: delta, visits: &context^.boundary_visits);
       give move delivered_103;
     } else {
-      let delivered_104 = box_slots_new::<BoundaryMove>(capacity: 0_u64);
+      let delivered_104 = box_slots_new::<EntryHandle>(capacity: 0_u64);
       give move delivered_104;
     }
   }
-  let count = moves.inner.len;
+  if delta != 0_i64 {
+    set context^.range_actions = True();
+    set context^.reference_dense = False();
+  }
+  let movement = Origin(x: 0_i64, y: delta, dx: 0_i64, dy: 0_i64);
+  let count = positioned.inner.len;
   for (position in 0_u64..count) {
-    let translation = moves.inner[position];
-    apply_boundary_move(context: context, translation: translation);
+    let handle = positioned.inner[position];
+    move_positioned_anchor(context: context, slot: handle.slot, owner: owner, action: movement, viewport_action: movement);
   }
   return unit;
 }
 
-fn boundary_path_ready(context: &Context, styles: &Styles, owner: u32, delta: i32, basis_height: i32) -> ready: Bool reads(context.blocks.inner), reads(context.restyled_blocks), reads(context.restyled_block), reads(styles), writes(context.boundary_visits.blocks) {
+fn boundary_path_ready(context: &Context, styles: &Styles, owner: u32, delta: i32, basis_height: i32) -> ready: Bool reads(context.blocks.inner), reads(context.restyled_blocks), reads(context.restyled_block), reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.entries.range_actions), reads(styles), writes(context.boundary_visits.blocks) {
   doc "Preflights only the ancestor chain before publishing a changed size. A changed clamp, unresolved edge, width input or stale output selects reference replay before any ancestor or sibling origin changes.";
   let cursor = owner;
   let limit = context^.blocks.inner.len;
@@ -1141,8 +1157,8 @@ fn boundary_path_ready(context: &Context, styles: &Styles, owner: u32, delta: i3
       return False();
     }
     set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
-    let measured = context^.blocks.inner[at].output;
-    let output = context^.blocks.inner[at].boundary;
+    let measured = block_measured(context: context, at: at);
+    let output = block_boundary(context: context, at: at);
     let snapshot = block_snapshot(block: &context^.blocks.inner[at]);
     if cursor == context^.restyled_block {
       set marked_seen = True();
@@ -1225,6 +1241,11 @@ fn propagate_boundary(context: &Context, owner: u32, slot: u32, output: Sequence
       return unit;
     }
     set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
+    settle_open_semantics(context: context, at: at);
+    if at < context^.blocks.inner.len {
+    } else {
+      return unit;
+    }
     let before = context^.blocks.inner[at].boundary;
     let measured = context^.blocks.inner[at].output;
     let root = context^.blocks.inner[at].entries.root;
@@ -1389,6 +1410,10 @@ fn boundary_update(context: &Context, styles: &Styles, document: &Document, font
     boundary_refusal(context: context, reason: 8_u32);
     return no, counts;
   }
+  if context^.empty_fragment_sources > 0_u64 {
+    boundary_refusal(context: context, reason: 8_u32);
+    return no, counts;
+  }
   if context^.fragments.inner.len > fragments {
     boundary_refusal(context: context, reason: 8_u32);
     return no, counts;
@@ -1450,11 +1475,12 @@ fn boundary_update(context: &Context, styles: &Styles, document: &Document, font
       set context^.paragraphs.inner[paragraph_at].dirty = False();
     }
   }
+  set context^.paragraph_frontier = ParagraphFrontier::Vacant();
   set context^.marked_paragraphs = 0_u32;
   set context^.marked_children = 0_u32;
   set context^.dirty = False();
   set context^.restyled_blocks = 0_u32;
-  set context^.boundary_dirty = True();
+  set context^.reference_dense = False();
   let yes = True();
   return yes, combined;
 }
@@ -1585,6 +1611,9 @@ fn moved_paragraph(context: &Context, styles: &Styles, document: &Document, font
   if context^.fragments.inner.len > allowed {
     return no, counts;
   }
+  if context^.empty_fragment_sources > 0_u64 {
+    return no, counts;
+  }
   set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
   let output = paragraph_output(paragraph: &context^.paragraphs.inner[at]);
   if output.through {
@@ -1603,7 +1632,9 @@ fn moved_paragraph(context: &Context, styles: &Styles, document: &Document, font
   let total_field = False();
   let old_root = boundary_output(sequence: &context^.entries, slot: context^.entries.root, own: total_field, visits: &context^.boundary_visits);
   propagate_boundary(context: context, owner: owner, slot: slot, output: output, delta: delta);
+  let old_topology_dirty = context^.boundary_dirty;
   let extra = splice_finish(context: context, old_root: old_root, delta: delta, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  set context^.boundary_dirty = old_topology_dirty;
   let combined = extra;
   set combined.contexts = combined.contexts +sat 1_u64;
   set combined.paragraphs = combined.paragraphs +sat 1_u64;
@@ -1737,4 +1768,10 @@ fn boundary_counts(layout: &Layout) -> (entries: u64, blocks: u64, indexes: u64,
   doc "Boundary-path visits from contexts actually updated in the last edit; a fallback disqualifies a bounded-work claim and reference work is not included.";
   let visits = layout^.last_update.work;
   return visits.entries, visits.blocks, visits.indexes, visits.fallbacks, visits.reason;
+}
+
+fn frontier_counts(layout: &Layout) -> (refusals: u64, reasons: u32) reads(layout) {
+  doc "Preserves dirty-frontier refusal evidence through the full replay that follows it; it does not infer a reason from the final geometry.";
+  let visits = layout^.last_update.work;
+  return visits.frontier_refusals, visits.frontier_reasons;
 }

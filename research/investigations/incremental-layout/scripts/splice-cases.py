@@ -126,6 +126,11 @@ several paragraphs before undoing them in reverse order, and makes later
 reference restarts consume geometry translated by earlier edits. It targets
 stale global reference scratch that an immediate edit/undo pair can hide.
 
+The edit-reference-frame kind uses the same cascade with nonzero relative
+owner offsets and context content padding. A restart converts open ancestors
+to stack scratch before a later paragraph reads its old absolute placement;
+the captured old frame must survive that temporary representation.
+
 The positioned-isolated kind retains the original positioned edits and isolates
 the percentage-height fixture in its own flow root, so unrelated seams can
 reach anchor publication; the original positioned kind remains unchanged.
@@ -152,6 +157,7 @@ from edits import Tree
 
 CASES = {
     'edit-cascade': ('reference-suffix-reader',),
+    'edit-reference-frame': ('reference-old-frame-reader',),
     'edit-baseline': ('baseline-only',),
     'edit-height': ('height-only',),
     'edit-cost': ('transfer-relative-sibling', 'transfer-clear-expired',
@@ -289,8 +295,11 @@ def generate(tree, kind):
         lines.extend(('C %d %s' % (node, token), 'K %d %s' % (node, token)))
         lines.extend(('P 0', 'P 1', 'P 2'))
         return '\n'.join(lines) + '\n', ''
-    if kind == 'edit-cascade':
-        lines.append('S section{display:block}')
+    if kind in ('edit-cascade', 'edit-reference-frame'):
+        if kind == 'edit-reference-frame':
+            lines.append('S section{display:block;position:relative;top:13px;left:7px} body{padding-top:5px}')
+        else:
+            lines.append('S section{display:block}')
         prefix = 'A longer sentence moves the following retained paragraphs. ' * 5
         nodes = [marker(tree, case, role)['node'] for case in
                  ('transfer-clear-expired', 'transfer-float-expired',
@@ -369,7 +378,7 @@ def main():
     parser.add_argument('kind', choices=CASES)
     parser.add_argument('output', type=Path)
     args = parser.parse_args()
-    fixture_kind = {'edit-cascade': 'transfer', 'positioned-isolated': 'positioned', 'edit-cost': 'transfer', 'edit-baseline': 'style', 'edit-height': 'style'}.get(args.kind, args.kind)
+    fixture_kind = {'edit-reference-frame': 'transfer', 'edit-cascade': 'transfer', 'positioned-isolated': 'positioned', 'edit-cost': 'transfer', 'edit-baseline': 'style', 'edit-height': 'style'}.get(args.kind, args.kind)
     fixture = Path(__file__).resolve().with_name(fixture_kind + '-case.html')
     fixture = fixture.relative_to(Path.cwd())
     nodes = args.output.with_suffix(args.output.suffix + '.nodes')

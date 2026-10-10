@@ -21,7 +21,7 @@ MUTATIONS = {
     'omit-minimum-reader': ('height_basis', 'sizing_read_mask', 'set mask = mask + 2_u8;', 'set mask = mask + 0_u8;', 'sibling-limits', 'positive-path'),
     'omit-maximum-reader': ('height_basis', 'sizing_read_mask', 'set mask = mask + 4_u8;', 'set mask = mask + 0_u8;', 'sibling-limits', 'positive-path'),
     'omit-nested-reader': ('height_basis', 'context_height_summary', 'set inside = total.heights;', 'set inside = empty_height_summary();', 'auto-later-reader', 'path'),
-    'omit-float-reader': ('splice_motion', 'entry_motion', 'set output.heights = own_height_summary(context: &context^.children.inner[at], styles: styles);', 'set output.heights = empty_height_summary();', 'float-reader', 'path'),
+    'omit-float-reader': ('splice_motion', 'entry_motion_at', 'set output.heights = own_height_summary(context: &context^.children.inner[at], styles: styles);', 'set output.heights = empty_height_summary();', 'float-reader', 'path'),
     'context-height-basis': ('flow', 'prepare_spaces', 'set height = proof.content_height;', 'set height = content_height;', 'nested', 'chromium'),
     'flatten-auto-basis': ('flow', 'prepare_spaces', 'set height = proof.content_height;', 'if proof.content_height >= 0_i32 {\n            set height = proof.content_height;\n          }', 'auto-intermediate', 'chromium'),
     'indefinite-numeric-basis': ('height_basis', 'height_proof_summary', 'if proof.basis_state != 2_u8 {\n    return HeightSummary(consumers: readers, unproved: readers);\n  }', '', 'auto-later-reader', 'certificate'),

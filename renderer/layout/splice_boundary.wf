@@ -22,7 +22,7 @@ fn splice_sequence_plan(context: &Context, sequence: &EntrySequence, input: Spli
   }
   if removing {
     let own_field = True();
-    let removed_output = boundary_output(sequence: sequence, slot: selected, own: own_field, visits: visits);
+    let removed_output = effective_output(sequence: sequence, slot: selected, own: own_field, visits: visits);
     if removed_output.fragment_sources > 0_u64 {
       return Err<SplicePlan, u32>(error: 3_u32);
     }
@@ -323,7 +323,7 @@ fn splice_path_ready(context: &Context, steps: &[ContextStep], depth: u64, owner
 }
 
 fn splice_finish(context: &Context, old_root: SequenceOutput, delta: i32, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
-  doc "Settles a published root through step 4's existing finish operation; legacy natural-position scratch is invalidated for the next reference fallback.";
+  doc "Settles a published root through step 4's existing finish operation; structural compatibility ranks are invalidated for the next reference fallback.";
   let total_field = False();
   let after = boundary_output(sequence: &context^.entries, slot: context^.entries.root, own: total_field, visits: &context^.boundary_visits);
   let wide_baseline = after.last_baseline -sat old_root.last_baseline;
@@ -341,7 +341,9 @@ fn splice_finish(context: &Context, old_root: SequenceOutput, delta: i32, styles
     let positioned_counts = splice_position(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
     set extra = add_counts(first: counts, second: positioned_counts);
   }
+  set context^.flow_inputs.valid = False();
   set context^.boundary_dirty = True();
+  set context^.reference_dense = False();
   let first_visits = publish_flow_first_baseline(context: context);
   set context^.boundary_visits = add_boundary_visits(first: context^.boundary_visits, second: first_visits);
   return extra;
@@ -437,30 +439,26 @@ fn publish_splice_at(context: &Context, steps: &[ContextStep], depth: u64, input
   let frontier_at = cvt::<u32, u64>(input.frontier.block);
   if frontier_at < context^.blocks.inner.len {
     set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
-    set context^.blocks.inner[frontier_at].output.margin_top = input.frontier.margin_top;
-    set context^.blocks.inner[frontier_at].boundary = input.frontier.output;
-    let block = &context^.blocks.inner[frontier_at];
-    let retained = block_height_proof(block: block, styles: styles);
-    let proof = resolve_height_proof(styles: styles, style: block^.style, input: retained, width: block^.avail_width, height: block^.output.basis_height, forced: unknown);
-    store_height_record(record: &block^.height_proof, proof: proof);
-  }
-  let moves = plan^.moves.inner.len;
-  for (at in 0_u64..moves) {
-    let movement = plan^.moves.inner[at];
-    if input.owner == no_index {
-      boundary_set(sequence: &context^.entries, slot: movement.slot, output: movement.output, visits: &context^.boundary_visits);
-    } else {
-      let owner_at = cvt::<u32, u64>(input.owner);
-      if owner_at < context^.blocks.inner.len {
-        boundary_set(sequence: &context^.blocks.inner[owner_at].entries, slot: movement.slot, output: movement.output, visits: &context^.boundary_visits);
-      }
+    settle_open_semantics(context: context, at: frontier_at);
+    if frontier_at < context^.blocks.inner.len {
+      set context^.blocks.inner[frontier_at].output.margin_top = input.frontier.margin_top;
+      set context^.blocks.inner[frontier_at].boundary = input.frontier.output;
+      let block = &context^.blocks.inner[frontier_at];
+      let retained = block_height_proof(block: block, styles: styles);
+      let proof = resolve_height_proof(styles: styles, style: block^.style, input: retained, width: block^.avail_width, height: block^.output.basis_height, forced: unknown);
+      store_height_record(record: &block^.height_proof, proof: proof);
     }
-    apply_boundary_move(context: context, translation: movement.translation);
   }
+  publish_splice_moves(context: context, input: input, plan: plan);
   if input.owner != no_index {
     let owner = cvt::<u32, u64>(input.owner);
     if owner < context^.blocks.inner.len {
       set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
+      settle_open_semantics(context: context, at: owner);
+      if owner < context^.blocks.inner.len {
+      } else {
+        return lost_contexts, lost_paragraphs, context^.boundary_visits, empty_counts;
+      }
       let measured = context^.blocks.inner[owner].output;
       let output = lift_block_output(inside: &plan^.output, measured: measured);
       let outgoing_delta = if measured.fixed_height {
@@ -490,6 +488,81 @@ struct SpliceMove {
   supported: Bool;
 }
 
+fn publish_splice_moves(context: &Context, input: SpliceInput, plan: &SplicePlan) -> result: unit reads(plan), writes(context) {
+  doc "Publishes the planned direct suffix as one exact ordinary range action (0, delta, 0, 0) with the equal semantic displacement, instead of one origin and transfer write per sibling. The plan certified that every placed flow and float entry moves by delta; lineless Text is not a placed member and positioned entries take their own planned movement explicitly. The frontier entry's planned transfer replaces its point output after the range action.";
+  let count = plan^.moves.inner.len;
+  if count == 0_u64 {
+    return unit;
+  }
+  let first = plan^.moves.inner[0_u64];
+  let first_slot = first.slot;
+  let delta = cvt::<i32, i64>(plan^.delta);
+  let geometry = Origin(x: 0_i64, y: delta, dx: 0_i64, dy: 0_i64);
+  let no = False();
+  let action = RangeAction(geometry: geometry, semantic: delta, basis: 0_i32, basis_set: no);
+  let positioned = box_slots_new::<EntryHandle>(capacity: 0_u64);
+  if input.owner == no_index {
+    let rank = boundary_rank(sequence: &context^.entries, slot: first_slot, visits: &context^.boundary_visits);
+    let root = context^.entries.root;
+    let total = install_range(sequence: &context^.entries, root: root, skip: rank, action: action, visits: &context^.boundary_visits);
+    range_positioned(sequence: &context^.entries, root: root, skip: rank, owner: no_index, handles: &positioned, visits: &context^.boundary_visits);
+  } else {
+    let owner_at = cvt::<u32, u64>(input.owner);
+    if owner_at < context^.blocks.inner.len {
+      set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
+      let rank = boundary_rank(sequence: &context^.blocks.inner[owner_at].entries, slot: first_slot, visits: &context^.boundary_visits);
+      let root = context^.blocks.inner[owner_at].entries.root;
+      let total = install_range(sequence: &context^.blocks.inner[owner_at].entries, root: root, skip: rank, action: action, visits: &context^.boundary_visits);
+      range_positioned(sequence: &context^.blocks.inner[owner_at].entries, root: root, skip: rank, owner: input.owner, handles: &positioned, visits: &context^.boundary_visits);
+    }
+  }
+  if delta != 0_i64 {
+    set context^.range_actions = True();
+    set context^.reference_dense = False();
+  }
+  let selected = positioned.inner.len;
+  for (k in 0_u64..selected) {
+    let handle = positioned.inner[k];
+    let index = splice_move_index(context: context, owner: input.owner, slot: handle.slot, first: first_slot);
+    if index < count {
+      let movement = plan^.moves.inner[index];
+      let planned = Origin(x: 0_i64, y: movement.translation.delta, dx: 0_i64, dy: 0_i64);
+      move_positioned_anchor(context: context, slot: handle.slot, owner: input.owner, action: planned, viewport_action: planned);
+    }
+  }
+  if input.frontier.slot != no_index {
+    let frontier_index = splice_move_index(context: context, owner: input.owner, slot: input.frontier.slot, first: first_slot);
+    if frontier_index < count {
+      let frontier_move = plan^.moves.inner[frontier_index];
+      if input.owner == no_index {
+        boundary_set(sequence: &context^.entries, slot: frontier_move.slot, output: frontier_move.output, visits: &context^.boundary_visits);
+      } else {
+        let owner_at = cvt::<u32, u64>(input.owner);
+        if owner_at < context^.blocks.inner.len {
+          boundary_set(sequence: &context^.blocks.inner[owner_at].entries, slot: frontier_move.slot, output: frontier_move.output, visits: &context^.boundary_visits);
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn splice_move_index(context: &Context, owner: u32, slot: u32, first: u32) -> index: u64 reads(context.entries.nodes), reads(context.entries.root), reads(context.entries.span), reads(context.blocks.inner), writes(context.boundary_visits) {
+  doc "Locates one selected entry's planned movement by its transient rank after the published range start.";
+  if owner == no_index {
+    let start = boundary_rank(sequence: &context^.entries, slot: first, visits: &context^.boundary_visits);
+    let rank = boundary_rank(sequence: &context^.entries, slot: slot, visits: &context^.boundary_visits);
+    return rank -sat start;
+  }
+  let at = cvt::<u32, u64>(owner);
+  if at < context^.blocks.inner.len {
+    let start = boundary_rank(sequence: &context^.blocks.inner[at].entries, slot: first, visits: &context^.boundary_visits);
+    let rank = boundary_rank(sequence: &context^.blocks.inner[at].entries, slot: slot, visits: &context^.boundary_visits);
+    return rank -sat start;
+  }
+  return 18446744073709551615_u64;
+}
+
 fn splice_move(sequence: &EntrySequence, rank: u64, after: u64, joined: SequenceOutput, expected_delta: i64, frontier: SpliceFrontier) -> made: SpliceMove reads(sequence) {
   doc "Computes one direct sibling's new entering edge independently from cached prefixes. Every placed flow or float entry must share the final delta, preserving moved exclusions; positioned and lineless entries do not constrain that equality. Duplicated logarithmic metadata reads avoid ordering sibling computations.";
   let visits = no_boundary_visits();
@@ -497,7 +570,7 @@ fn splice_move(sequence: &EntrySequence, rank: u64, after: u64, joined: Sequence
   let item = splice_payload(sequence: sequence, slot: slot, visits: &visits);
   set visits.entries = visits.entries +sat 1_u64;
   let own_field = True();
-  let own = boundary_output(sequence: sequence, slot: slot, own: own_field, visits: &visits);
+  let own = effective_output(sequence: sequence, slot: slot, own: own_field, visits: &visits);
   let supported = True();
   if own.through {
     let text = match item {

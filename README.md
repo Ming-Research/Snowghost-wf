@@ -64,7 +64,7 @@ does not yet paint.
   - the Rust shell, with rasterization, compositing, windows and input;
   - the JavaScript interpreter.
 
-[`docs/todo.md`](docs/todo.md) lists the known defects and the Whitefoot
+[The shared status board](https://claude.ai/artifact/7tocXS3iUdthCLCQCMd3ip) lists the known defects and the Whitefoot
 features Snowghost is waiting for.
 
 ## How it is built

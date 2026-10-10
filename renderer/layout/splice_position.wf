@@ -24,6 +24,54 @@ fn empty_splice_position() -> made: SplicePosition pure {
   return SplicePosition(active: no, owner: origin, normal: point, visual: point, anchor_found: no, anchor_left: 0_i32, anchor_top: 0_i32, anchor_width: 0_i32, anchor_height: 0_i32);
 }
 
+fn splice_position_frame(context: &Context, styles: &Styles, block: u32) -> (owner: Origin, found: Bool, left: i32, top: i32, width: i32, height: i32) reads(context), reads(styles) {
+  doc "Resolves published owner and nearest positioned containing-block origins in one immutable parent walk. Separate accumulators preserve the original local-to-root association; each effective local origin is read once. Raw and hybrid phases retain their phase-specific readers.";
+  if context^.local_geometry {
+  } else {
+    let owner = block_origin(context: context, block: block);
+    let (found, left, top, width, height) = chain_anchor(context: context, styles: styles, block: block);
+    return owner, found, left, top, width, height;
+  }
+  let owner = zero_origin();
+  let anchor = zero_origin();
+  let anchor_at = no_index;
+  let cursor = block;
+  let count = context^.blocks.inner.len;
+  for (step in 0_u64..count) {
+    let at = cvt::<u32, u64>(cursor);
+    if at < context^.blocks.inner.len {
+      if anchor_at == no_index {
+        let group = box_of(styles: styles, style: context^.blocks.inner[at].style);
+        if group.position != position_static {
+          set anchor_at = cursor;
+        }
+      }
+      let local = block_local(context: context, at: at);
+      set owner = origin_accumulate(owner: local, local: owner);
+      if anchor_at != no_index {
+        set anchor = origin_accumulate(owner: local, local: anchor);
+      }
+      set cursor = context^.blocks.inner[at].parent;
+    } else {
+      break;
+    }
+  }
+  let at = cvt::<u32, u64>(anchor_at);
+  if at < context^.blocks.inner.len {
+    let edges = border_edges(styles: styles, style: context^.blocks.inner[at].style);
+    let visual = origin_visual(value: anchor);
+    let position = content_position(value: visual, dx: context^.content_dx, dy: context^.content_dy);
+    let left = position.x +sat edges.left;
+    let top = position.y +sat edges.top;
+    let across = horizontal(edges: edges);
+    let down = vertical(edges: edges);
+    let width = context^.blocks.inner[at].width -sat across;
+    let height = context^.blocks.inner[at].height -sat down;
+    return owner, True(), left, top, width, height;
+  }
+  return owner, False(), 0_i32, 0_i32, 0_i32, 0_i32;
+}
+
 fn splice_position_plan(context: &Context, styles: &Styles, at: u64) -> made: SplicePosition reads(context), reads(styles) {
   doc "Reads only one child and its block ancestry. Its accumulated anchor preserves static-position axes after a direct or enclosing-block move; the final containing block supplies explicit-inset axes.";
   if at < context^.children.inner.len {
@@ -39,7 +87,7 @@ fn splice_position_plan(context: &Context, styles: &Styles, at: u64) -> made: Sp
     return empty_splice_position();
   }
   let block = context^.children.inner[at].block;
-  let owner = block_origin(context: context, block: block);
+  let (owner, found, left, top, width, height) = splice_position_frame(context: context, styles: styles, block: block);
   let basis = if context^.children.inner[at].viewport_origin {
     give zero_origin();
   } else {
@@ -50,7 +98,6 @@ fn splice_position_plan(context: &Context, styles: &Styles, at: u64) -> made: Sp
   let visual = origin_visual(value: accumulated);
   let moved_normal = content_position(value: normal, dx: context^.content_dx, dy: context^.content_dy);
   let moved_visual = content_position(value: visual, dx: context^.content_dx, dy: context^.content_dy);
-  let (found, left, top, width, height) = chain_anchor(context: context, styles: styles, block: block);
   let yes = True();
   return SplicePosition(active: yes, owner: owner, normal: moved_normal, visual: moved_visual, anchor_found: found, anchor_left: left, anchor_top: top, anchor_width: width, anchor_height: height);
 }
@@ -106,7 +153,7 @@ fn splice_position(context: &Context, styles: &Styles, document: &Document, font
   for (at in 0_u64..count) {
     if at < context^.children.inner.len {
       if plans.inner[at].active {
-        splice_position_certificate(context: context, at: at);
+        splice_position_certificate(context: context, at: at, captured_owner: plans.inner[at].owner);
       }
     }
   }
@@ -114,25 +161,8 @@ fn splice_position(context: &Context, styles: &Styles, document: &Document, font
   return total;
 }
 
-fn splice_move_atomics(context: &Context, paragraph: u64, delta: i64) -> result: unit reads(context.paragraphs.inner), writes(context.children.inner) {
-  doc "Moves only the atomic child anchors named by a directly translated paragraph. Each atomic belongs to one paragraph and is emitted once by its line's consumed object mark; a translated block already moves these anchors through ownership and never calls this helper. Indirect stable child slots retain the existing scatter proof boundary.";
-  if paragraph < context^.paragraphs.inner.len {
-  } else {
-    return unit;
-  }
-  let count = context^.paragraphs.inner[paragraph].atomics.inner.len;
-  for (at in 0_u64..count) {
-    let atomic_item = context^.paragraphs.inner[paragraph].atomics.inner[at];
-    let child = cvt::<u32, u64>(atomic_item.context);
-    if child < context^.children.inner.len {
-      set context^.children.inner[child].anchor.y = context^.children.inner[child].anchor.y +sat delta;
-    }
-  }
-  return unit;
-}
-
-fn splice_position_certificate(context: &Context, at: u64) -> result: unit writes(context) {
-  doc "Recomputes the settled positioned anchor's exact arithmetic charge and joins a changed charge through its owner ancestry with zero geometric delta. Exact equality leaves every output field unchanged, so its existing ancestor reduction remains valid. Leaf writes follow independent anchor settlement and precede dependent ancestor reductions; the current sequential AVL repairs retain the existing scatter limitation.";
+fn splice_position_certificate(context: &Context, at: u64, captured_owner: Origin) -> result: unit writes(context) {
+  doc "Recomputes the settled positioned anchor's exact arithmetic charge using its plan's parent origin, which remains unchanged by child-only settlement and zero-delta certificate publication. A changed charge joins through owner ancestry with zero geometric delta. Exact equality leaves every output field unchanged, so its existing ancestor reduction remains valid. Leaf writes follow independent anchor settlement and precede dependent ancestor reductions; the current sequential AVL repairs retain the existing scatter limitation.";
   if at < context^.children.inner.len {
   } else {
     return unit;
@@ -141,16 +171,16 @@ fn splice_position_certificate(context: &Context, at: u64) -> result: unit write
   let slot = context^.children.inner[at].entry_slot;
   let own_field = True();
   let output = if owner == no_index {
-    give boundary_output(sequence: &context^.entries, slot: slot, own: own_field, visits: &context^.boundary_visits);
+    give effective_output(sequence: &context^.entries, slot: slot, own: own_field, visits: &context^.boundary_visits);
   } else {
     let owner_at = cvt::<u32, u64>(owner);
     if owner_at < context^.blocks.inner.len {
-      give boundary_output(sequence: &context^.blocks.inner[owner_at].entries, slot: slot, own: own_field, visits: &context^.boundary_visits);
+      give effective_output(sequence: &context^.blocks.inner[owner_at].entries, slot: slot, own: own_field, visits: &context^.boundary_visits);
     } else {
       give empty_output();
     }
   }
-  let travel = child_motion_travel(context: context, at: at);
+  let travel = child_motion_travel_with_owner(context: context, at: at, owner: captured_owner);
   if output.travel == travel {
     return unit;
   }

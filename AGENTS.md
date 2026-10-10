@@ -79,8 +79,8 @@ speed decides only between candidates of equal dependencies.
 
 Live trees: the root node files under `design/` other than `log.md`, each
 with its subdirectory, found by the Makefile. Change log: `design/log.md`.
-Research record: `research/investigations/`. Maintained TODO: `docs/todo.md`,
-which also holds Whitefoot requirements. Form and readiness checks:
+Research record: `research/investigations/`. Maintained TODO: the [shared status board](https://claude.ai/artifact/7tocXS3iUdthCLCQCMd3ip),
+including Whitefoot requirements; cite each open item by its board key. Form and readiness checks:
 `make design-lint` and `make design-ready`, running `lint.py` from the
 `design/skill/` submodule of Design-skill, which Snowghost never edits.
 
@@ -137,7 +137,7 @@ PR's review section.
 
 Snowghost follows [whitefoot-kit/downstream.md](whitefoot-kit/downstream.md):
 the pin, experiment pins for an unmerged Whitefoot change, Whitefoot gaps
-recorded under *Whitefoot requirements* in `docs/todo.md`, and upgrades.
+recorded by key on the shared status board, and upgrades.
 When an upgrade changes the compiler's code generation, its PR compares the
 renderer's full-build and per-edit costs before and after on the same source
 and machine. A change to the shared rules is made in Whitefoot-kit and adopted
@@ -152,5 +152,5 @@ Whitefoot gap filed.
 
 `README.md` introduces and navigates; this file holds the goal and project
 rules; `design/` the decisions and their log; `docs/review-checklist.md` the
-review items; `docs/todo.md` open defects and Whitefoot requirements until
-resolved; `research/investigations/` questions, experiments and results.
+review items; the shared status board holds open defects and Whitefoot
+requirements; `research/investigations/` questions, experiments and results.

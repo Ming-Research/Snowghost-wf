@@ -51,8 +51,8 @@
 # PAGES replaces the directory of the real pages and their sheets,
 # build/research/concurrency by default; a worktree whose build directory
 # links to another checkout's needs a copy outside the link, since the driver
-# opens no path through a symbolic link (docs/todo.md, Whitefoot
-# requirements).
+# opens no path through a symbolic link (follow-up
+# sg-fraga-host-symlink).
 #
 # UA replaces the user-agent sheet, a path relative to the repository, for a
 # diagnostic run.
