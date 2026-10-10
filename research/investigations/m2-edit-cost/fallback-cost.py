@@ -155,6 +155,8 @@ def construction_variant(tree, name):
         old_end = before.index('\nfn structure_changed(', old_start)
         fresh = before[old_start:old_end].replace('reconstruction_route_bound', 'fresh_route_bound')
         wrapper = source[start:source.index('  let old_count =', start)]
+        wrapper = wrapper.replace('reads(context), reads(layout), reads(paths)',
+                                  'reads(context), reads(layout.routes.len)')
         wrapper += ('  let fresh = fresh_route_bound(context: context);\n'
                     '  return layout^.routes.len +sat fresh;\n}\n\n')
         source = source[:start] + wrapper + fresh + source[end:]
