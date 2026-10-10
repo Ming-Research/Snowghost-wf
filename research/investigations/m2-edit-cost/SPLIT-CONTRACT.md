@@ -4713,8 +4713,11 @@ individual round differences are not allocation-only deltas.
 | Sequential | 80,668 | 103,084 | 103,800 | 99,728 | 4.08% |
 | Four workers | 83,092 | 108,820 | 106,796 | 104,692 | 2.01% |
 
-These maxima and construction savings pass the reservation criterion for
-this composition only. Removing supplier-count scratch and restoring its
-constructor changes allocation, so keeping the reservation in the final
-renderer remains conditional on the repeated comparison. No final cost,
-RSS or semantic claim is made before that collection completes.
+The construction saving passes, but the memory verdict is unresolved:
+paired sequential rounds range from 1.95% to 6.37% higher RSS, with two
+above 5%. The ratio of separate maxima alone therefore does not establish
+the intended memory bound. Removing supplier-count scratch and restoring
+its constructor changes allocation, so keeping the reservation in the final
+renderer remains conditional on the repeated comparison, with the paired
+spread reported explicitly. No final cost, RSS or semantic claim is made
+before that collection completes.
