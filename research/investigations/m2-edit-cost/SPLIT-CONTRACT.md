@@ -3146,3 +3146,30 @@ buffers. Stable actual inputs with a local dirty consumer support examining
 bounded publication; changed consumed inputs reject a wholesale skip. The
 trace is injected only in the hosted checkout and never enters timing builds.
 Its ordinary first forward/inverse pair must still match fresh layout.
+
+### Full-publication repeated computations (2026-10-10)
+
+The isolated update instruction profile in hosted run
+[38017280898](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38017280898)
+locates substantial extra work in boundary publication. Before measuring a
+repair, the comparison is the same handoff source with and without two local
+removals of duplicate computation, with a handoff twin and unchanged compiler,
+inputs and interleaved rounds. Reject either claimed saving if its instruction
+cost does not fall or the twin-controlled native measurements do not separate;
+reject correctness if any existing geometry, summary or identity gate differs.
+
+Full publication reads one context's style, space and width without writing
+any of those inputs during its leaf-preparation loop. Its `flow_frame` and
+therefore `content_top` are equal for every iteration; compute that value once
+and pass it to the independent leaf calls. Other callers still read the current
+frame at their call. No cached value crosses an edit or a context mutation.
+
+`block_output` first lifts a block with offset zero and an absent natural
+floor. The full and partial reference publishers then repeat the entire lift
+only to read three motion fields after filling the measured offset, natural
+floor and motion-known flag. The other fields do not read those three inputs.
+Reuse the already composed unshifted transfer and run the identical motion
+projection once with the new inputs: minimum natural floor, sentinel-preserving
+saturating shift, and conjunction of motion-known flags. Preserve the existing
+join association, saturation, admission, invalidation and publication extent.
+These local computations do not change a design choice or add a retained cache.

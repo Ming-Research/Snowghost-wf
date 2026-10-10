@@ -51,7 +51,14 @@ jobs:
             source: 8f973e691e18f7322c39e2adbb2a8d4647865079
             optional: false
           - name: merge
+            reuse_run: 38017678473
             source: 4528e007bcc7559d91725cc81fb0a075ff6c1efe
+            optional: false
+          - name: fixed
+            source: HEAD
+            optional: false
+          - name: fixedtwin
+            source: HEAD
             optional: false
     steps:
       - uses: actions/checkout@v4
@@ -82,7 +89,7 @@ jobs:
             cat build/driver/seq-build.log
             exit "$(cat build/driver/seq-build.status)"
           fi
-          test ! -s build/driver/source.diff
+          if [ "$BUILD_NAME" != merge ]; then test ! -s build/driver/source.diff; fi
           test "$(cat build/driver/seq-build.status)" = 0
           test "$(cat build/driver/par-build.status)" = 0
       - name: LLVM 22 and fonts
@@ -190,13 +197,13 @@ jobs:
         if: inputs.profile_only != true
         run: |
           set -euo pipefail
-          names='main maintwin premerge merge a atwin'
+          names='main maintwin premerge merge a atwin fixed fixedtwin'
           for name in $names; do
             test "$(cat build/drivers/driver-$name/seq-build.status)" = 0
             test "$(cat build/drivers/driver-$name/par-build.status)" = 0
           done
           if [ -s build/drivers/driver-layout/layout_oracle_par ]; then
-            names='main maintwin layout premerge merge a atwin'
+            names='main maintwin layout premerge merge a atwin fixed fixedtwin'
           else
             echo 'Layout control unavailable under the exact permitted patch; refusal retained.'
           fi
@@ -232,7 +239,9 @@ jobs:
           # and before preparation/layout. The initial layout never calls it.
           # First time one edit, then use the complete unchanged 60-edit script.
           sed -n '/^S /p' build/x5/scripts/apollo11-fontsize.edits > build/evidence/zero.edits
-          for name in main a; do
+          profile_names='main a'
+          if [ -s build/drivers/driver-fixed/layout_oracle_seq ]; then profile_names="$profile_names fixed"; fi
+          for name in $profile_names; do
             nm build/drivers/driver-$name/layout_oracle_seq > build/evidence/$name-symbols.txt
             grep -F ' wf_layout.update' build/evidence/$name-symbols.txt
             for size in zero sample full; do
@@ -252,6 +261,10 @@ jobs:
           print(sys.argv[1], seconds, 'seconds,', total, 'instructions')
           PYEOF
             done
+            # Reset call counters at update entry and dump at its return. A
+            # zero-instruction startup dump cannot subtract elided call counts.
+            prefix=build/evidence/isolated-$name
+            WF_WORKERS=4 /usr/bin/time -p -o "$prefix.time" valgrind --tool=callgrind --collect-atstart=no --toggle-collect=wf_layout.update --zero-before=wf_layout.update --dump-after=wf_layout.update --callgrind-out-file="$prefix.callgrind" build/drivers/driver-$name/layout_oracle_seq edittime build/evidence/sample.edits "${args[@]}" > "$prefix.raw" 2> "$prefix.stderr"
           done
       - name: Count refusal reasons at the existing sequential function boundary
         run: |
