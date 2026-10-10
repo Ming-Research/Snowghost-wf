@@ -64,18 +64,18 @@ Writer families to discharge, including propagated error exits:
 
 | Writer | Obligation |
 | --- | --- |
-| build.wf `new_context`, block/paragraph/child construction and `finish_build`; sequence.wf `new_sequence`, `pending_append`, `append_flow`, `record_child_entry`, `finish_sequence` | Empty domains establish the invariant; publish pending entries and their matching owner/slot fields together; sealing transfers the established relation. |
+| build.wf `new_context`, block/paragraph/child construction and `finish_tree_sequences`; sequence.wf `new_sequence`, `pending_append`, `append_flow`, `record_child_entry`, `finish_sequence` | Empty domains establish the invariant; publish pending entries and their matching owner/slot fields together; sealing transfers the established relation. |
 | sequence.wf `sequence_reserve`, `insert_before`, `remove`, rotations and balance | Growth preserves all initialized payloads; append establishes the new inverse; removal excludes retired entries; AVL rewiring preserves slot identities and inverse fields. |
 | build.wf `push_item`/`push_or_fail` and every target-pool append | Growth preserves old targets and their fields; appending a new target must not activate a previously out-of-bounds order entry with a wrong inverse. |
-| splice_publish.wf `relocate_splice`, `publish_splice_payloads`, `retire_splice_payloads`, `retire_splice_child`, `retire_splice_atomics` and their splice_apply.wf callers | Private relocation rebases identities; publication transfers order and targets between owners; retirement removes the corresponding live relation before clearing inverse fields. Both source and destination must remain valid. |
+| splice_publish.wf `relocate_splice`, `publish_splice_payloads`, `retire_splice_payloads`, `retire_splice_child`, `retire_splice_atomics` and their splice.wf/splice_boundary.wf callers | Private relocation rebases identities; publication transfers order and targets between owners; retirement removes the corresponding live relation before clearing inverse fields. Both source and destination must remain valid. |
 | structure.wf context replacement/retirement and route publication | Kept outside identities remain unchanged; replacing a Context preserves its parent-owned inverse while establishing its internal one. |
 | boundary.wf/reference.wf geometry and summary writers, range.wf action writers, prep/flow/update child and paragraph writers | Preserve inverse fields and order; narrow effect rows and checked contracts must carry that preservation through helpers. Geometry-only writes cannot introduce an order dependency. |
-| boundary_checks.wf and other synthetic constructors | Establish the same relation as ordinary construction; no special test-only path. |
+| boundary_checks.wf, frontier.wf and range.wf synthetic constructors | Establish the same relation as ordinary construction; no special test-only path. |
 
 RANGE-2 explicitly forgets whole-window facts at non-tail operations,
 including `grow_paged`. Before a broad port, a minimal Context witness
-tests preservation through growth and a loop attempting to carry the
-unchanged inverse afterward. OP-10 promises that growth moves no existing
+tests preservation through growth; a separate natural motion control carries
+the inverse through its counted-loop invariant. OP-10 promises that growth moves no existing
 element, but the published growth contract states only capacity and length.
 If that sound writer cannot establish the exit invariant, stop this step
 and retain its exact hosted diagnostic; do not repair it by redundant
@@ -97,8 +97,9 @@ driver. Record every round and use paired candidate/base ratios; do not
 compare absolute times between machines. Extend only ambiguous cells.
 
 Measure full style and full layout for ecma262, html5 and apollo11 in
-sequential and four-worker modes, plus every X5 edit kind (from its actual
-script inventory), preserving full script ordinals and separating style
+sequential and four-worker modes, plus every X5 edit kind (`word`,
+`sentence`, `colour`, `fontsize`, `rootfont`, `block`, from run.sh),
+preserving full script ordinals and separating style
 from layout edit time. Report full-build costs including box construction,
 not just the layout kernel. For each workload/mode define noise as the
 maximum absolute deviation from 1 of both twin/original ratios across
@@ -127,3 +128,65 @@ writer. A minimal proof witness is not renderer emission evidence.
 No design log entry is added. Any new design choice stays proposed in
 layout.md, and its implemented-status wording must match what actually
 lands. The fallback-design branch's files remain outside this task.
+
+## Progress and branch disposition
+
+2026-10-10 22:52 UTC: The investigation and two proof programs are written;
+no renderer code has changed. Their compiler outcomes, ledger, emission and
+runtime results are unverified. The temporary hosted workflow records raw
+statuses; its job succeeding means evidence collection, not proof acceptance.
+No local build, check, test or measurement has run.
+
+The first SSH push was rejected as non-fast-forward. The requested remote
+branch already names `ee58302d1f9efcf50fa9832acdb729794f868c46`, an older
+Paged experiment, rather than a branch from the requested base. No force
+push or merge was attempted. Hosted compilation, the Draft PR and subsequent
+integration await the branch disposition below. The potential growth proof
+limitation is a specification-based hypothesis until the pinned release
+has compiled the witness; it is not yet a reported compiler refusal.
+
+### Replace the older experiment branch?
+
+**Background.** `research/m2-paged` already contains an October 7 experiment
+pinned to an older experimental compiler. Git rejects the new branch's
+ordinary push. Merging that history into the requested 030e4dd-based task
+would entangle unrelated earlier work; pushing another branch is outside
+the task's explicit restriction.
+
+**Options.** A (recommended): authorize replacement with an exact
+`--force-with-lease=refs/heads/research/m2-paged:ee58302d1f9efcf50fa9832acdb729794f868c46`.
+This preserves the requested base and branch name, but moves the published
+reference away from the old experiment; its old tip is recorded here and
+remains in the local clone. The lease refuses intervening changes.
+B: authorize a different work-branch name, preserving the old reference
+at the cost of changing the requested branch. C: preserve both local work
+and the existing remote branch and stop; hosted validation and delivery
+remain blocked.
+
+**Confidence 5/5.** Git's non-fast-forward rejection and the fetched tip
+establish the collision. Whether the old branch should be replaced belongs
+to the owner; evidence of an active consumer would favor B.
+
+### Read-only review and stopping status
+
+2026-10-10 22:53 UTC: A separate reviewer inspected the complete four-file
+diff from `030e4dd4081c9c15699363bdfa0e57c53a7f761d` to
+`a9edebcf1a6d6cc4ce4e45d6aca703c734dcf24a`, plus the investigation's working
+changes. Scope included the owner and project instructions, relevant
+pipeline/layout decisions, C3 source, released inverse probes, affected
+storage definitions, pinned specification and hosted workflow. No execution
+was performed and there were no findings within this limited scope.
+G2/G3, DC1/DC2, R3, T4 and repository/workflow hygiene passed within scope;
+G1/DC3/C4 were not applicable. DC4 and validation remain unverified.
+The implementing pass separately corrected two source names in the writer
+inventory and the description of which probe contains the loop.
+
+Stopping reason: the owner must authorize a disposition of the existing
+remote branch before the task can reach hosted CI. Nothing has moved to
+Paged in the renderer. The target inverse, its writer inventory, criteria
+and hosted probe workflow are prepared, but neither probe has compiled.
+There is no established Whitefoot refusal to file, no renderer ledger or
+emission evidence, no semantic mutation detection, no gate run ID, no
+timing table and no performance verdict. No pin, submodule, design tree or
+fallback-design file changed; no Draft PR was opened from the old remote
+branch. The remaining adoption and validation work retains its full scope.
