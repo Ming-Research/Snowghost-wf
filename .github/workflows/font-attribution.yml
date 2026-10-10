@@ -2,13 +2,23 @@
 name: font-attribution
 on:
   workflow_dispatch:
+    inputs:
+      driver_run:
+        description: Reuse the seven frozen attribution builds from this run
+        required: false
+        default: ''
+      profile_only:
+        description: Profile archived main and handoff binaries without repeating timing
+        type: boolean
+        default: false
   push:
     branches: [research/m2-frag-a]
 permissions:
   contents: read
+  actions: read
 jobs:
   build:
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[font-attribution]')
+    if: inputs.driver_run == '' && (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[font-attribution]'))
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     continue-on-error: ${{ matrix.optional }}
@@ -35,7 +45,7 @@ jobs:
             source: 8f973e691e18f7322c39e2adbb2a8d4647865079
             optional: false
           - name: merge
-            source: 4528e00
+            source: 4528e007bcc7559d91725cc81fb0a075ff6c1efe
             optional: false
     steps:
       - uses: actions/checkout@v4
@@ -79,10 +89,12 @@ jobs:
               s = s.replace('    BrokenPipe(code: host_code, origin: host_origin) => {', '    Cancelled() => {\n      return 0_u32;\n    }\n    BrokenPipe(code: host_code, origin: host_origin) => {')
               p.write_text(s)
           p = Path('build/tree/renderer/layout/geometry.wf')
-          s = p.read_text()
-          for call in ('counted_owned_block_origin(context: context, block: block)', 'counted_retained_block_origin(context: context, block: block, previous: previous)'):
-              s = s.replace('return ' + call + ';', 'let (origin, opened) = ' + call + ';\n    return origin, opened;')
-          p.write_text(s)
+          if p.exists():
+              import re
+              s = p.read_text()
+              for call in ('counted_owned_block_origin(context: context, block: block)', 'counted_retained_block_origin(context: context, block: block, previous: previous)'):
+                  s = re.sub(r'(?m)^( +)return ' + re.escape(call) + ';$', lambda m: m[1] + 'let (origin, opened) = ' + call + ';\n' + m[1] + 'return origin, opened;', s)
+              p.write_text(s)
           PYEOF
           git -C build/tree diff HEAD > build/driver/source.diff
           for mode in seq par; do
@@ -101,6 +113,7 @@ jobs:
           path: build/driver/
   measure:
     needs: build
+    if: always() && (needs.build.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.driver_run != ''))
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -109,6 +122,8 @@ jobs:
           submodules: true
       - uses: actions/download-artifact@v4
         with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.driver_run || github.run_id }}
           pattern: driver-*
           path: build/drivers
       - name: Fonts
@@ -116,7 +131,7 @@ jobs:
           set -euo pipefail
           sudo sh -c 'printf "%s\n" https://archive.ubuntu.com/ubuntu > /etc/apt/apt-mirrors.txt'
           sudo apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=30 update
-          sudo apt-get install -y --no-install-recommends valgrind fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          sudo apt-get install -y --no-install-recommends valgrind gdb fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
           chmod +x build/drivers/driver-*/layout_oracle_*
           uname -a | tee build/machine.txt
           lscpu | tee -a build/machine.txt
@@ -134,8 +149,10 @@ jobs:
           cp build/drivers/driver-main/layout_oracle_seq build/layout_oracle_seq
           sh research/investigations/incremental-layout/run.sh prepare apollo11
           mkdir -p build/evidence
+          head -n 2 build/x5/scripts/apollo11-fontsize.edits > build/evidence/sample.edits
           sha256sum build/x5/scripts/* build/research/concurrency/*.html renderer/style/ua.css > build/evidence/inputs.sha256
       - name: Bounded samples followed by two interleaved font-size rounds
+        if: inputs.profile_only != true
         run: |
           set -euo pipefail
           names='main maintwin layout premerge merge a atwin'
@@ -188,6 +205,38 @@ jobs:
           print(sys.argv[1], seconds, 'seconds,', total, 'instructions')
           PYEOF
             done
+          done
+      - name: Count refusal reasons at the existing sequential function boundary
+        run: |
+          set -euo pipefail
+          # On this x86-64 System V build the function receives its context
+          # pointer in rdi and its u32 reason in esi. Preserve its disassembly
+          # so that register decoding can be checked against the actual binary.
+          test "$(uname -m)" = x86_64
+          objdump -d --disassemble=wf_layout.boundary_refusal build/drivers/driver-a/layout_oracle_seq > build/evidence/refusal-disassembly.txt
+          cat > build/evidence/refusals.gdb <<'GDBEOF'
+          set pagination off
+          set confirm off
+          break 'wf_layout.update'
+          commands
+          silent
+          printf "UPDATE\n"
+          continue
+          end
+          break 'wf_layout.boundary_refusal'
+          commands
+          silent
+          printf "REFUSAL context=%p reason=%u\n", $rdi, $esi
+          continue
+          end
+          run
+          GDBEOF
+          args=(build/research/concurrency/apollo11.html renderer/style/ua.css 'wikibase.client.init&only=styles&skin=vector-2022=build/research/concurrency/apollo11-modules.css' 'modules=site.styles&only=styles&skin=vector-2022=build/research/concurrency/apollo11-site.css')
+          for size in sample full; do
+            script=build/evidence/sample.edits
+            if [ "$size" = full ]; then script=build/x5/scripts/apollo11-fontsize.edits; fi
+            WF_WORKERS=4 /usr/bin/time -p -o build/evidence/refusals-$size.time timeout 120 gdb -q -batch -x build/evidence/refusals.gdb --args build/drivers/driver-a/layout_oracle_seq edittime "$script" "${args[@]}" > build/evidence/refusals-$size.txt 2>&1
+            cat build/evidence/refusals-$size.time
           done
       - uses: actions/upload-artifact@v4
         if: always()

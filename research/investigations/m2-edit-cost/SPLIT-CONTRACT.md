@@ -1,6 +1,6 @@
 # Split fragment dependency contract (Q134 A; Q135 A)
 
-Current continuation: adopt wf-41f46e60030c (specification v0.117), merge the grid-splice base and test the owning-element sibling emission repaired by Whitefoot #316. Owner-motion writes and their proposed Context invariant remain unchanged and blocked on status-board card `sg-inverse-storage`. The [released inverse-proof continuation](#released-inverse-proof-and-recursive-order-storage) and [previous ten-cohort result](#root-font-continuation-ten-cohort-result) below retain their dated evidence. [Draft PR 55](https://github.com/Ming-Research/Snowghost-wf/pull/55) owns this continuation's delivery, validation and deferrals; no adoption merge is authorized.
+Current continuation: attribute and repair the Apollo11 font-size acceptance failure under wf-41f46e60030c (specification v0.117), preserving every correctness and performance criterion. Owner-motion storage is separately owned by status-board item `sg-pooled-store`: the owner ruled on 2026-10-09 that block order moves to built-in Paged and the inverse becomes a type invariant over its elements. The Whitefoot proof session owns `proof-q-aggregate-fill`; Snowghost does not depend on it. The [released inverse-proof continuation](#released-inverse-proof-and-recursive-order-storage) below retains historical diagnostics. [Draft PR 55](https://github.com/Ming-Research/Snowghost-wf/pull/55) owns this continuation's delivery, validation and deferrals; no adoption merge is authorized.
 
 ## Question and prior rejection criterion
 
