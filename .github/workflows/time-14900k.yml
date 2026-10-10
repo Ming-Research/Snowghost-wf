@@ -81,7 +81,7 @@ jobs:
           # measurement lays text out with the same faces as earlier 14900K runs
           # and the hosted runners; Ubuntu 26.04's fonts-unifont 16.0.04 ships an
           # unifont_upper_sample.otf with a malformed cmap that the font loader
-          # rightly refuses (research/investigations/fonts-ubuntu26). A private
+          # rightly refuses (research/investigations/fonts-ubuntu26/REPORT.md). A private
           # apt state reads the noble indexes without root, checked against the
           # system's Ubuntu archive key, with an empty package status so the
           # host's newer installed fonts are not taken as the candidates.
@@ -101,15 +101,15 @@ jobs:
             ls "${p}"_*.deb >/dev/null 2>&1 || apt-get download "$p" >/dev/null 2>&1 || echo "not downloadable: $p"
           done
           for d in *.deb; do dpkg -x "$d" "$deps/root"; done
-          # Playwright 1.56.0 names no build for Ubuntu 26.04; the 24.04 build of
-          # the same browser revision (chromium-1194) is installed instead, and
-          # ldd below still fails the step on any library it cannot resolve.
+          # Playwright 1.56.0 names no build for Ubuntu 26.04, so on any host other
+          # than 24.04 the 24.04 build of the same browser revision (chromium-1194)
+          # is installed; ldd below still fails the step on any library it cannot
+          # resolve.
           case "$(. /etc/os-release && echo "$VERSION_ID")" in
             24.04) ;;
             *) export PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64 ;;
           esac
           npx -y playwright@1.56.0 install chromium
-          ls -d "$HOME"/.cache/ms-playwright/* || true
           chrome=$(ls -d "$HOME"/.cache/ms-playwright/chromium-1194/chrome-linux*/chrome)
           lib="$deps/root/usr/lib/x86_64-linux-gnu:$deps/root/lib/x86_64-linux-gnu"
           if LD_LIBRARY_PATH=$lib ldd "$chrome" | grep 'not found'; then exit 1; fi
@@ -191,7 +191,17 @@ jobs:
           set -euo pipefail
           if [ -n "$CPUS" ]; then taskset -cp "$CPUS" $$ > /dev/null; fi
           mkdir -p results
-          { echo "cpus: ${CPUS:-unpinned}"; taskset -cp $$; cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null || true; cat /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || true; } > results/scheduling.txt
+          {
+            echo "cpus: ${CPUS:-unpinned}"
+            taskset -cp $$
+            echo "no_turbo: $(cat /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || echo unknown)"
+            for c in /sys/devices/system/cpu/cpu[0-9]*; do
+              f=$c/cpufreq
+              if [ -d "$f" ]; then
+                echo "${c##*/} governor $(cat "$f/scaling_governor") min_khz $(cat "$f/scaling_min_freq") max_khz $(cat "$f/scaling_max_freq") cur_khz $(cat "$f/scaling_cur_freq")"
+              fi
+            done
+          } > results/scheduling.txt
           # time_one NAME MODE PAGE KIND RUNS OUT RAW: one build's edit script,
           # its raw per-edit files kept under results/raw/RAW.
           time_one() {
