@@ -3137,3 +3137,12 @@ and the M2/Chromium dependency contract. Reject a proposed duplicate-work
 explanation if its same-source elimination does not remove the corresponding
 instructions, or if any required identity/fixture/mutation gate fails. The
 complete common-compiler acceptance remains required after a repair.
+
+The edit-only first-sample profile motivates a separate input trace at every
+flow update, full pre-pass and full summary publication. Record the actual
+current Space/FlowFrame against the last completed inputs, dirty consumers,
+intrinsic demand and every boundary-refusal reason in context-owned diagnostic
+buffers. Stable actual inputs with a local dirty consumer support examining
+bounded publication; changed consumed inputs reject a wholesale skip. The
+trace is injected only in the hosted checkout and never enters timing builds.
+Its ordinary first forward/inverse pair must still match fresh layout.
