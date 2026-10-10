@@ -58,7 +58,7 @@ for version in ('26.04', '24.04'):
 
 # Prepare a failure-report diagnostic, compiled after the independent probes.
 driver = Path('renderer/oracle/layout/layout.wf')
-source = driver.read_text()
+driver_source = driver.read_text()
 old = '''    Err(..) => {
       let code = fail(err: err, files: files, what: &fonts_word[0_u64..fonts_word.len]);
       return code;
@@ -84,7 +84,7 @@ new = '''    Err(error: problem) => {
     }
   }
   let viewport'''
-assert source.count(old) == 1
+assert driver_source.count(old) == 1
 
 # One small page is enough to load every face without repeating full layout.
 probe = Path('build/font-probe.html')
@@ -139,7 +139,7 @@ for face in changed:
 (results / 'changed.json').write_text(json.dumps(changed, indent=2))
 
 # Diagnostic only: preserve the existing error variant and exit status.
-driver.write_text(source.replace(old, new) + '\nconst diagnostic_refused: Array<u8, 14> = " Refused face=";\n\nconst diagnostic_unreadable: Array<u8, 17> = " Unreadable face=";\n')
+driver.write_text(driver_source.replace(old, new) + '\nconst diagnostic_refused: Array<u8, 14> = " Refused face=";\n\nconst diagnostic_unreadable: Array<u8, 17> = " Unreadable face=";\n')
 (results / 'diagnostic.patch').write_text(subprocess.check_output(['git', 'diff', '--', str(driver)], text=True))
 wfc = next(Path('build/whitefoot').glob('*/whitefootc')).resolve()
 subprocess.run([str(wfc), '--cache', str(Path('build/wf-cache').resolve()), '--fragments', 'function', '--graph', 'modules.wfg', '--entry', 'layout_oracle', '-o', '../build/layout_oracle_seq'], cwd='renderer', check=True)
