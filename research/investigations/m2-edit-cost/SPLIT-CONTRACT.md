@@ -2996,6 +2996,17 @@ without changing renderer storage or using runtime proof checks. Hosted probe 37
 `a range term calls a function`. This is a remaining representation/proof
 dependency, not a claim that v0.112 promises recursive predicates.
 
+On 2026-10-09 the owner chose to resolve this dependency by moving block
+order into Whitefoot's built-in `Paged` storage, which the hand-written
+SlotPages stand in for, and stating the inverse over `Paged` elements
+(status-board card sg-inverse-storage, A), instead of asking Whitefoot to
+admit recursive functions in range terms. Whitefoot's proof session confirmed
+that field paths through `Box`, `Paged` elements and enum payloads are range
+terms, that a type invariant on a `Box<Paged<T>>` reaches callers, and that
+facts established by `place_back` survive into callers; non-tail window
+operations still discard whole-window facts. That work is the `Paged`
+adoption (status-board item sg-pooled-store).
+
 No renderer parallelization, invariant-maintenance falsifier or acceptance
 recovery is claimed. Final-head correctness results and remaining gate
 failures are recorded in Draft PR 55; the complete gates remain required. Four-worker acceptance timing waits for
