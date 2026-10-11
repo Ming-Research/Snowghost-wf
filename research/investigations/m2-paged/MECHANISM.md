@@ -1,19 +1,21 @@
 # Mechanism of the owner-store regression
 
-Source investigation, 2026-10-11. **The regression is established; its time
-shares are not.** The strongest edit-path candidates are the extra dependent
-page lookup relative to the current single-leaf baseline, and optimization
-facts lost across that lookup. Fixed page geometry and additional allocations
-are strong construction/memory candidates. Source inspection does not yet
-choose (a) a Whitefoot gap, (b) a Snowghost usage problem, or (c) both.
+Source and CI-artifact investigation, 2026-10-11. **The regression and a
+Whitefoot optimization gap are established; their time shares are not.**
+Optimized candidate output writes reload page-directory entries across element
+writes where the base retains its array address. Point access adds a dependent
+page load, but removal of leaf dispatch can offset its instruction count.
+Fixed geometry and allocations remain construction/memory candidates. The
+artifact establishes (a) a Whitefoot gap in element/directory separation; it
+does not yet establish whether Snowghost usage also explains a material share.
 
-Recommendation: collect the isolated update profile and optimized address
-paths below before changing either implementation. If ordinary element writes
-lose header/page separation in optimized code, that is a Whitefoot code
-generation gap; changing Snowghost's spelling to conceal it is not the remedy.
+Recommendation: bring the verified element/directory separation gap to
+Whitefoot with the witness below, and complete the matched isolated update
+profiles before assigning its share of the regression. Changing Snowghost's
+spelling to conceal it is not the remedy.
 No renderer change, compiler run, build, test, or measurement was performed
-locally. The only local calculation applied the specification's layout-ceiling
-arithmetic to the declared fields; it is not a performance measurement.
+locally. Local calculations use declared layout ceilings and text processing
+of the downloaded CI artifact; they are not performance measurements.
 
 ## Scope and source coordinates
 
@@ -115,9 +117,10 @@ Hypothesis: stores through an opaque loaded page pointer may make LLVM
 conservatively reload the header's `len`, the Box's cell pointer, or directory
 entries, and prevent commoning/vectorization across field writes. Element
 storage and header/directory storage are actually disjoint; no growth happens
-in the dense publisher. **Whether these reloads survive optimization is
-unverified.** Read-only point helpers may optimize well even if write loops do
-not. Inspect both kinds rather than inferring all costs from bulk construction.
+in the dense publisher. **Page-entry reloads survive optimization in the frozen candidate output writer**,
+as detailed in the CI evidence below. This does not establish every possible
+header/cell/len reload or failed vectorization in every loop. Read-only point
+helpers must be assessed separately from write paths.
 
 ### Geometry, allocation and initialization
 
@@ -136,9 +139,9 @@ The native page length is the largest power of two fitting 4096 bytes of
 Sources: `3abffd8:renderer/layout/module.wfm:82–89,106–177` and
 `C:module.wfm:82–89,107–110,144–182,222–239,257–267,301–307`. Flow's ceiling
 includes the tag and **all six alternative payloads** under OP-9, even though
-the actual union needs only one. B is source-derived; actual element stride,
-page bytes and allocator size classes must be confirmed in CI's LLVM and
-allocation evidence. A four-slot Flow owner still reserves one 128-slot
+the actual union needs only one. B is source-derived; the artifact confirms node stride 528 and Flow stride 8
+in optimized address formation. Page bytes and allocator size classes still
+need confirmation from CI allocation evidence. A four-slot Flow owner still reserves one 128-slot
 physical page; a 128-slot node owner allocates 32 four-slot pages instead of
 the base's single 128-slot leaf. The fixed page policy therefore affects tiny
 payload owners and large metadata owners differently.
@@ -272,6 +275,127 @@ account is limited to that historical box experiment (README:105–125), not a
 share to apply to today's full layout or font-size edits. The two records do
 not contradict each other.
 
+## What CI run 38139461660 verifies
+
+Evidence: [CI run 38139461660](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38139461660),
+artifact `paged-mechanism`. Coordinates in this section refer to that artifact's
+files, not repository files; the artifact is not copied into this repository.
+Both optimized disassemblies are from the frozen measured sequential drivers.
+`base.ll` and `candidate.ll` are **conservative source lowering**, not optimized
+LLVM: the workflow requests `--emit-llvm`; `W:compiler/src/bin/whitefootc.rs:779–787`
+writes the module directly and returns before linking/optimization. They show
+where addresses originate, while the disassembly establishes which operations
+survive optimization.
+
+### Lookup cost depends on the access shape
+
+In `wf_layout.slot_links`, the valid initial-leaf address path is **12 executed
+non-padding instructions in base versus 11 in candidate**, through the element
+stride multiply, before the field-transfer instructions. Base coordinates:
+`base.disassembly.txt:337594–337595,337598–337600,337612–337618`; candidate:
+`candidate.disassembly.txt:337272–337282`. Candidate's page-specific work is a
+copy, `shr $2`, `and $3`, and directory-entry load at `13f796`; both then use
+`imul $528`. This replaces base tag load/compare/branch and empty-variant
+test/branch. Thus this representative point access has **net −1 instruction**,
+not a uniform additive lookup tax. It still accesses a page through a loaded
+directory entry rather than forming an inline Array address. Conditional
+branches fall from four to two on that path. No integer division or implicit
+bounds check appears. Lowering counterparts are `base.ll:425461–425549` and
+`candidate.ll:427283–427333`; these are not optimized instruction counts.
+
+The frequently sampled reads also remove dispatch work on valid initial-leaf
+paths. All counts exclude padding and assume the corresponding successful
+branch:
+
+| Optimized path | Base instructions | Candidate | Delta | Artifact disassembly coordinates |
+| --- | ---: | ---: | ---: | --- |
+| `sequence_select`, current node through liveness | 17 | 14 | −3 | base 340709–340713,340716–340718,340731–340739; candidate 340078–340091 |
+| `sequence_select`, left child through event count | 17 | 12 | −5 | base 340741–340745,340747–340749,340763–340771; candidate 340093–340104 |
+| Flow `slot_read$instance$510b5e22e4c688b6`, complete successful call | 21 | 15 | −6 | base 475342–475352,475364–475369,475377–475380; candidate 473530–473544 |
+
+`sequence_select` reuses cell and length between current-node and child
+accesses in one descent, and reuses each selected element address for its
+fields. Across descents, candidate still loads the invariant cell and len at
+`142273`/`142277` (`candidate.disassembly.txt:340081–340082`) despite no stores
+or calls in that loop. This is missed read-only hoisting, not evidence of
+post-write invalidation; the selected page/index changes and cannot simply be
+hoisted. Its conservative lowering is `candidate.ll:428476–428596` versus
+`base.ll:426721–426841`. The Flow reader's stride-eight multiplication folds
+into the memory operand. These hot reads weaken a blanket instruction-count
+explanation; dependent-load latency and physical locality remain candidates.
+
+The dense `wf_layout.store_reduction` loop is different. Base advances a
+contiguous node pointer by 528 bytes each iteration
+(`base.disassembly.txt:208669–208672`); candidate recomputes the metadata
+page/offset and payload page/offset at each slot
+(`candidate.disassembly.txt:208620–208643`). Through Flow dispatch, the base
+prefix has 12 executed instructions versus candidate's 24: **+12**. Own/total
+copy setup adds another three, the post-copy register restoration adds one,
+and the loop increment removes one: **+15 caller instructions per successfully
+published live slot**, along corresponding Flow branches, excluding identical
+copy bodies and once-per-call setup. Supporting ranges:
+`base.disassembly.txt:208703–208718` versus
+`candidate.disassembly.txt:208662–208681`. This count includes the reload
+below; hypotheses 1 and 2 must not double-count it. Lowering counterparts:
+`base.ll:252727–252954`, `candidate.ll:252756–252932`.
+
+### A narrow Whitefoot optimization gap survives
+
+`wf_layout.slot_store_output` retains its cell/header address in `%rbx` and
+its page index in `%r14`; it does **not** reload all headers, lengths or Box
+pointers after each write. However, the total-output branch loads the same
+page-directory entry after its output copy, writes `events`, reloads that
+unchanged directory entry, and writes `count`:
+
+- `candidate.disassembly.txt:337427–337435`: `13f9bc` copy call,
+  `13f9c1` page load, `13f9cb` element-field store, `13f9d0` identical page
+  load, `13f9d9` element-field store. There is no call, growth, index change
+  or directory mutation between the two scalar stores.
+- `base.disassembly.txt:337816–337822`: the base retains its contiguous leaf
+  address and combines the two weights with `movdqu`, `pshufd`, `movdqu`.
+- `candidate.ll:427626–427661` emits repeated Box/page addressing across
+  the copy and scalar writes. Optimization removes Box-pointer repetition,
+  but not the directory-entry repetition.
+
+Own-output publication also reloads the page once after its copy
+(`candidate.disassembly.txt:337416–337421` versus
+`base.disassembly.txt:337808–337812`). In `wf_layout.store_reduction`, the
+candidate similarly reloads the node page after the own copy before the total
+copy (`candidate.disassembly.txt:208668–208673`, `c3f89` → `c3f8e`); base
+retains `%rbp` across both (`base.disassembly.txt:208708–208714`). These are
+verified failures to preserve the semantic separation of directory storage
+and element storage. This is a Whitefoot optimization gap, with the minimal
+same-slot two-field witness below; a renderer spelling change would conceal it.
+The artifact does not prove that blanket directory `noalias` is safe, nor does
+it identify the exact metadata/lowering change that should supply the fact.
+
+### Dynamic scope and what remains unresolved
+
+Invocation controls, both native pilot rounds, all zero-work Callgrind
+controls and the base two-edit update profile passed. `phases.jsonl:1–2`
+records **2,862,479 and 2,866,420 instructions** for the two base updates.
+There is no matched candidate update profile yet, and no time-share inference
+is possible. In the base function attribution, `store_reduction` has only
+212 self instructions over two calls and `publish_boundaries` only 432 over
+two calls. The dense publisher example alone therefore cannot explain the
+first-pair regression. `sequence_select` (547,348 self instructions, 5,046
+calls) and `slot_read<all>` (131,796, 6,276 calls) merit priority in the matched
+comparison; inlined storage work is charged to its caller.
+
+The failed layout check confused requested markers with actual boundaries.
+Its retained dumps have four triggers, at line 14 of each part:
+`.1` before `build_boxes`, `.2` after `build_boxes`, `.3` after `pick_all`,
+`.4` after `lay_out`. `prepare_text` is inlined: the driver calls
+`prepare_context` directly. `.4:1844–1850` includes both preparation and layout,
+so it cannot be called an isolated layout kernel. The corrected profiler
+requires these four exact ordered triggers, nonzero measured intervals, and
+the named functions, including both `prepare_context` and `lay_out` in the
+combined interval. It still rejects missing/extra/wrong boundaries; the
+corrected invocation awaits CI. Full matched profiles must establish dynamic
+access counts, instruction excess outside these examples, allocation/growth
+placement and whether memory latency explains excess time with modest
+instruction differences. None of the +3%/+9% time shares is settled here.
+
 ## Ranked hypotheses and separating observations
 
 The order prioritizes explaining the font-size rejection. No additive
@@ -279,8 +403,8 @@ percentage shares can be inferred yet; these causes interact.
 
 | Rank | Hypothesis and plausible scope | Observation that separates it |
 | --- | --- | --- |
-| 1 | Extra dependent directory load and shift/mask in the now-paged owner leaf. Can explain both full and allocation-light replay; 9% is plausible if replay is concentrated in slot access, but not established. Evidence: base leaf `B:sequence.wf:185–189`, candidate `C:sequence.wf:182–185`, `W:paged.rs:43–63`, publisher comparison above. | Update-only excess instructions/cycles concentrate in `slot_cursor/output/view/geometry`, `reduce_sequence`, `store_reduction`, or their inlined callers, with comparable call/update counts and little allocator activity. Reject as dominant if those paths contribute little absolute excess. |
-| 2 | LLVM cannot retain header/directory/element separation across writes; repeated loads, guards or scalarized stores amplify the basic address cost. This is a potential Whitefoot gap, not established from raw emission. Evidence: `W:paged.rs:62`, `W:runs.rs:652–687`, `W:emitter.rs:1751–1778`; base/candidate publisher and bulk-node paths above. | Optimized disassembly has post-store header/page-pointer reloads or lost loop optimization absent from base; a minimal same-source compiler fix removes them and the isolated instruction excess without changing page geometry or algorithm. Reject this subcause where optimized loads are already commoned/hoisted. |
+| 1 | Extra dependent directory load and shift/mask in the now-paged owner leaf. Latency/locality can explain full and allocation-light replay; instruction-count dominance is weakened by the optimized hot read paths having fewer instructions. Dense publication adds 15 caller instructions/live slot, but is sparse in the retained base pilot. Evidence: base leaf `B:sequence.wf:185–189`, candidate `C:sequence.wf:182–185`, `W:paged.rs:43–63`, publisher comparison above. | Update-only excess instructions/cycles concentrate in `slot_cursor/output/view/geometry`, `reduce_sequence`, `store_reduction`, or their inlined callers, with comparable call/update counts and little allocator activity. Reject as dominant if those paths contribute little absolute excess. |
+| 2 | LLVM cannot retain header/directory/element separation across writes; repeated loads, guards or scalarized stores amplify the basic address cost. The directory-entry subcause is verified in run 38139461660; broader header reloads and its time share remain open. Evidence: `W:paged.rs:62`, `W:runs.rs:652–687`, `W:emitter.rs:1751–1778`; base/candidate publisher and bulk-node paths above. | Optimized disassembly has post-store header/page-pointer reloads or lost loop optimization absent from base; a minimal same-source compiler fix removes them and the isolated instruction excess without changing page geometry or algorithm. Reject this subcause where optimized loads are already commoned/hoisted. |
 | 3 | Fixed physical geometry, extra empty cells and many more allocations expand resident working set and allocator/free work. Strong for full construction and RSS; for replay only residency or actual timed construction can matter. Evidence: `B:sequence.wf:165–172,322–340`, `C:sequence.wf:165–172,307–324`, `W:paged.rs:143–167,270–315`. | Build/release call edges and allocation counts increase as predicted; retained update instruction counts stay close but cycles/load stalls/cache or dTLB misses increase. Separately count owner-size distribution and requested bytes. Reject startup allocator activity as explanation of an isolated update excess. |
 | 4 | Serial append initialization and power-of-two logical reservation add avoidable source work or expose a missing bulk-fill lowering. Strong for sealing/reconstruction; weak for a retained style edit unless constructors appear inside update. Evidence: `B:sequence.wf:322–334`, `C:sequence.wf:305–319,452–460`, `W:buffer.rs:281–309`, `W:runs.rs:451–495`. | `paged_fill/finish_sequence` dominate build excess, per-slot length loads/stores survive optimization, and the same functions appear in update if claimed there. Reject for the edit if its timed call graph contains no sealing/fill. A live-length-only diagnostic must preserve identities/output and run the full checks before it is called a usage fix. |
 | 5 | Eager reserve through doubled capacity and directory copying on growth. Valid construction/splice concern, probably small for this font-size path. Evidence: `B:sequence.wf:401–424,495–539`, `C:sequence.wf:384–398,463–473`, `W:paged.rs:193–233`. | Count growth calls, old/new page counts, pointer-copy bytes and newly allocated pages **inside** update. Zero calls reject it for that stage. Copies proportional to payload bytes would contradict the inspected lowering and require investigation; only directory-word copying is predicted. |
@@ -314,13 +438,19 @@ the full profile uses the complete X5 font-size script and preserves ordinals
 and counts. Verify base/candidate count equality, including refusals; otherwise
 different work rather than storage overhead must be investigated first.
 
-Use Callgrind instruction counts and call edges with collection toggled around
-`wf_layout.update` for font-size edits and `wf_layout.lay_out` for the layout
-kernel. A zero-edit/zero-repetition negative control must collect zero; a
-positive sample must collect nonzero. For construction/full costs retain
-whole-process profiles or before/after phase dumps covering `wf_layout.build_boxes`,
-the kernel, and teardown. `lay_out` alone excludes the box builder and text
-preparation; do not label it whole full layout. Full update dumps separate
+Use Callgrind instruction counts and call edges. Positive runs collect from
+startup, with before/after dumps isolating each `wf_layout.update` for
+font-size edits; zero-work controls start with collection disabled and toggle
+at the selected markers, and must collect zero. A positive sample must collect
+nonzero. For full-layout runs retain every startup and teardown dump. The
+frozen binary's layout driver inlines `prepare_text` and calls
+`prepare_context` directly, so the workflow uses four boundaries per
+repetition: before box construction, after box construction, after font
+picks, and after layout. Their three measured intervals are box construction,
+font picks with caller bookkeeping, and text preparation plus layout with
+caller bookkeeping. The last interval is not an isolated layout kernel.
+The script verifies this exact trigger sequence and the named functions in
+each interval; missing or extra boundaries fail. Full update dumps separate
 each ordinal from setup/style; `finish_style_edit` is broader than update.
 Callgrind instruction counts are not native time, cache stalls or four-worker
 scheduling evidence. Inspect self cost and call edges, not summed overlapping
@@ -330,8 +460,9 @@ The written workflow implements Callgrind phase profiles and optional
 whole-process perf stat for common hardware counters and page faults/context
 switches. The perf record, L1/dTLB events and native zero-work stat comparisons
 below are follow-up commands for the primary agent, not implemented workflow
-features. Workflow execution, marker survival, dump boundaries and control
-rejections remain unverified until CI runs.
+features. Run 38139461660 verified invocation/zero-work controls and base update
+boundaries. The corrected full-layout boundary mapping, matched candidate
+profiles and optional counters await a subsequent CI run.
 
 On a runner exposing PMU events, collect matched native `perf stat` groups:
 `cycles,instructions,branches,branch-misses`;
@@ -370,9 +501,11 @@ alone cannot establish them.
 ## Candidate Whitefoot gaps and minimal witnesses
 
 These are semantic witness **fragments**, not locally compiled programs or
-filed requests. Only the growth-inverse witness already has a hosted refusal.
+filed requests. The first gap has optimized renderer evidence from run 38139461660; its
+minimal witness still needs compilation and optimization acceptance in CI.
+Only the growth-inverse witness already has a hosted refusal.
 
-1. **Header/element separation missing from optimization (hypothesis).** A
+1. **Directory/element separation missing from optimization (verified in renderer).** A
    writer naturally expects an element field write not to mutate the window's
    header or its page directory:
 
@@ -395,9 +528,10 @@ filed requests. Only the growth-inverse witness already has a hosted refusal.
    retained directory/header invariance and reuse of each same-slot address.
    Use a write-through-`&Run<Cell>` subrange variant too; distinct subranges may
    share their directory. A blanket directory `noalias` is not acceptable.
-   If the missed optimization explains the renderer excess, file the minimal
-   witness with the instruction/assembly regression test and renderer criterion
-   as the acceptance test, not a Snowghost local-pointer workaround.
+   File the verified gap with the minimal witness and instruction/assembly
+   acceptance test; use the matched renderer profile to determine its time
+   share. The witness is not yet compiled. Do not use a Snowghost local-pointer
+   workaround to hide it.
 
 2. **Natural bulk initialization lacks a suitable lowering/API (hypothesis).**
 

@@ -138,12 +138,25 @@ def profile(label, cohort, operation, count, expected, zero=False):
     markers = ['wf_layout.update'] if operation == 'edittime' else [
         'wf_layout.build_boxes', 'wf_oracle.layout.pick_all',
         'wf_layout.prepare_text', 'wf_layout.lay_out']
+    if operation == 'edittime':
+        boundaries = [('before', 'wf_layout.update'), ('after', 'wf_layout.update')]
+        regions = [(1, 'wf_layout.update', ('wf_layout.update',))]
+    else:
+        # Frozen binaries inline prepare_text in drive.resume, calling
+        # prepare_context directly. The observed intervals are construction,
+        # then picks, then preparation plus layout, with caller bookkeeping.
+        boundaries = [('before', 'wf_layout.build_boxes'), ('after', 'wf_layout.build_boxes'),
+                      ('after', 'wf_oracle.layout.pick_all'), ('after', 'wf_layout.lay_out')]
+        regions = [(1, 'wf_layout.build_boxes', ('wf_layout.build_boxes',)),
+                   (2, 'wf_oracle.layout.pick_all', ('wf_oracle.layout.pick_all',)),
+                   (3, 'wf_layout.prepare_text+wf_layout.lay_out',
+                    ('wf_layout.prepare_context', 'wf_layout.lay_out'))]
     if zero:
         options = ['--collect-atstart=no'] + ['--toggle-collect=' + marker for marker in markers]
     else:
         options = ['--collect-atstart=yes']
-        for marker in markers:
-            options += ['--dump-before=' + marker, '--dump-after=' + marker]
+        for direction, marker in boundaries:
+            options += [f'--dump-{direction}={marker}']
     prefix = OUT / label
     result = run(label, ['valgrind', '--tool=callgrind', *options,
                          '--callgrind-out-file=' + str(prefix) + '.callgrind',
@@ -162,20 +175,28 @@ def profile(label, cohort, operation, count, expected, zero=False):
             raise ValueError(('startup entered negative control', label, total))
         return result
     parts = list(OUT.glob(label + '.callgrind.*'))
-    if len(parts) != 2 * expected * len(markers):
-        raise ValueError(('missing phase boundary, symbol may have been inlined', label, len(parts), expected, markers))
+    if len(parts) != expected * len(boundaries):
+        raise ValueError(('missing or extra phase boundary', label, len(parts), expected, boundaries))
+    for ordinal in range(expected):
+        for offset, boundary in enumerate(boundaries):
+            part = ordinal * len(boundaries) + offset + 1
+            path = OUT / f'{label}.callgrind.{part}'
+            triggers = re.findall(r'^desc: Trigger: --dump-(before|after)=(.+)$', path.read_text(), re.M)
+            if triggers != [boundary]:
+                raise ValueError(('unexpected phase boundary', label, part, boundary, triggers))
     rows, attribution = [], {}
     for ordinal in range(expected):
-        for phase, marker in enumerate(markers):
-            part = 2 * (ordinal * len(markers) + phase + 1)
+        for offset, phase, required_symbols in regions:
+            part = ordinal * len(boundaries) + offset + 1
             path = OUT / f'{label}.callgrind.{part}'
             total, own, calls, edges = accounting.callgrind(path)
-            if total <= 0 or not any(normalize(symbol) == marker for symbol in own.keys() | calls.keys()):
-                raise ValueError(('empty or unexpected measured phase', label, part, marker))
-            rows.append(dict(label=label, ordinal=ordinal + 1, phase=marker,
+            observed_symbols = {normalize(symbol) for symbol in own.keys() | calls.keys()}
+            if total <= 0 or not set(required_symbols) <= observed_symbols:
+                raise ValueError(('empty or unexpected measured phase', label, part, required_symbols))
+            rows.append(dict(label=label, ordinal=ordinal + 1, phase=phase,
                              instructions=total, dump=path.name))
             for symbol in own.keys() | calls.keys():
-                key = marker, normalize(symbol)
+                key = phase, normalize(symbol)
                 item = attribution.setdefault(key, dict(self_instructions=0, incoming_calls=0))
                 item['self_instructions'] += own[symbol]
                 item['incoming_calls'] += calls[symbol]
