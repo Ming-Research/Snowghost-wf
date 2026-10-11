@@ -587,11 +587,11 @@ slot 1 while `fresh.entries` still holds the original entry at slot 0. Its
 publication transaction that consumes the prepared source is a candidate to
 examine; no interface change or new design decision is made here. Narrowing
 the borrow merely to avoid the Context obligation would not repair that state.
-Two further language questions remain unverified: expressing the existing
-Boolean liveness guard in a range type invariant, and preserving old-element
-relations across the ordinary `sequence_reserve` and `push_item` helper
-boundaries. Neither is yet a compiler refusal; test their natural forms with
-minimal hosted witnesses before considering any implementation change.
+The hosted writer-boundary round below now establishes formation refusals
+for the existing Boolean liveness guard and old-element frame contracts,
+and an inverse refusal across ordinary `sequence_reserve`. The append helper
+has not yet reached that proof question because its reduced witness had an
+ownership-spelling mistake. These results block dependent implementation.
 The renderer's retained reference writer is `translate_reference_owner_suffix`,
 a sparse recursive AVL traversal; `translate_owner_suffix` names the small
 proof control, not a current renderer function. Its eventual parallel form
@@ -643,17 +643,178 @@ owner/order fields and runtime-capacity stores; no redundant inverse writes,
 new truth fields, substituted integer liveness or runtime uniqueness checks
 are introduced. No renderer interface or design-tree decision changes here.
 
-| Witness | Question and prior expected observation |
+The owner pushed the witnesses as `0d2be1757c0d168520bfd143d34b398fde69eecb`.
+The downloaded artifact from [proof run 38148527940](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38148527940)
+identifies that revision and experiment commit
+`174c2cd365902d5256848a65e2bcf5ee84becc3b`, specification v0.127.
+All nine samples returned 1. Workflow success means collection succeeded;
+it does not mean any of these nine sources was accepted.
+
+Classification: **1** is a witness mistake corrected here; **2** is a natural
+language limitation retained unchanged; **3** is an intended sound refusal.
+
+| Witness | Classification and consequence |
 | --- | --- |
-| [live-inverse-bare.wf](live-inverse-bare.wf) | Can the existing `nodes[k].links.live: Bool` directly guard the range type invariant? GRAM-5 requires comparisons, so formation may be refused. |
-| [live-inverse-equality.wf](live-inverse-equality.wf) | Can the same guard be written as `links.live == True()`? RANGE-1 excludes calls as range terms, so formation may be refused. |
-| [reserve-helper-boundary.wf](reserve-helper-boundary.wf) | Does field-scoped `sequence_reserve`, with unchanged-length contract, preserve the caller's inverse? The existing primitive growth witness is accepted; an ordinary helper call may instead lose its element facts at the caller exit. |
-| [reserve-helper-frame.wf](reserve-helper-frame.wf) | Can reserve state its natural old-element equality contract? RANGE-1 excludes entry images, so the proposed preservation clause may be refused at formation. |
-| [append-primitive.wf](append-primitive.wf) | Does primitive dynamic growth and target append preserve old in-bounds relations? It should accept: every existing order index is below the old target length, so no new target activates a previously out-of-bounds entry. |
-| [append-helper-boundary.wf](append-helper-boundary.wf) | Can the same old-target relation cross generic `push_item` and `push_or_fail`, with length-bound contracts and both normal and propagated-error exits? A helper-boundary refusal would be distinct from primitive append failure. |
-| [append-helper-frame.wf](append-helper-frame.wf) | Can generic append publish old-prefix equality? Its natural frame clause reads entry storage, excluded by RANGE-1. |
-| [publish-borrowed-invalid.wf](publish-borrowed-invalid.wf) | Does the checker reject changing the sole private root target's slot while its root entry remains live at slot zero? The source inverse is actually false at this borrowed exit, so it must be refused. |
-| [publish-consume.wf](publish-consume.wf) | Can publication consume/destructure one prepared root leaf, move its owned Paged entries, rebase its slot once and append it with matching destination order? It should accept if consuming transfers preserve the inherited parent fact; no redundant parent store repairs that fact. |
+| [live-inverse-bare.wf](live-inverse-bare.wf) | **2 — proof / checker-range facts:** range guards require comparisons, excluding the ordinary bare Bool guard. Keep unchanged. |
+| [live-inverse-equality.wf](live-inverse-equality.wf) | **2 — proof / checker-range facts:** the natural comparison with `True()` is excluded as a call. Keep unchanged. |
+| [reserve-helper-boundary.wf](reserve-helper-boundary.wf) | **2 — proof / checker-range facts:** an ordinary helper's write forgets payload facts; its unchanged-length contract does not preserve the inverse. Keep unchanged, paired with its natural frame below. |
+| [reserve-helper-frame.wf](reserve-helper-frame.wf) | **2 — proof / checker-range facts:** the old-element equality needed for the helper contract cannot read entry storage. Keep unchanged. |
+| [append-primitive.wf](append-primitive.wf) | **1 — witness mistake:** the reduced `Block` is copy; `move value` violates OWN-1. Change only the concrete argument to bare `value`. Primitive inverse preservation remains unverified; acceptance is still the prediction for the corrected source. |
+| [append-helper-boundary.wf](append-helper-boundary.wf) | **1 — witness mistake:** the same concrete copy-Block move is invalid. Change only that argument to bare `value`; keep generic `T: drop` moves. The helper's inverse obligation has not yet been tested. |
+| [append-helper-frame.wf](append-helper-frame.wf) | **2 — proof / checker-range facts:** generic old-prefix equality cannot read entry storage. Keep unchanged. |
+| [publish-borrowed-invalid.wf](publish-borrowed-invalid.wf) | **3 — intended sound refusal:** the source root inverse is false at its borrowed return after rebasing `entry_slot`. It fails precisely at that inverse obligation. Keep unchanged. |
+| [publish-consume.wf](publish-consume.wf) | **2 — proof / checker-range facts, storage-operation result transport:** the destination exit cannot recover the transferred Block's inherited parent fact. Keep unchanged; no redundant parent store. |
+
+The two copy-argument fixes change neither the inverse, storage shape,
+contracts nor effects. OWN-1 requires bare use of copy values, but explicitly
+allows generic `move` at concrete copy instances when the symbolic parameter
+is bounded `drop`. The actual renderer Block owns Paged entries and is affine;
+its real ownership spelling is not changed by fixing this scalar reduction.
+See [OWN-1 at the experiment commit](https://github.com/Ming-Research/Whitefoot/blob/174c2cd365902d5256848a65e2bcf5ee84becc3b/spec/kernel-spec.md#L652-L658).
+
+#### Exact hosted diagnostic excerpts
+
+Locations below are relative to `research/investigations/m2-paged/`;
+the artifact retains the full source lines, markers and mechanical repairs.
+These are observations of the pushed sources, including the two mistakes
+before correction, not predictions about the next revision.
+
+`live-inverse-bare`:
+
+```text
+live-inverse-bare.wf:25:138: error[GRAM-5]: UnexpectedToken
+  expected: ["<", ">", "==", "!=", "<=", ">="]
+  found: ","
+```
+
+`live-inverse-equality`:
+
+```text
+live-inverse-equality.wf:25:142: error[RANGE-1]: InvalidRangeClause
+  reason: a range term calls a function
+```
+
+`reserve-helper-boundary`:
+
+```text
+reserve-helper-boundary.wf:31:3: error[RANGE-3]: UndischargedRangeFact
+  fact: inverse
+  site: a return
+  missing: `c^.targets.inner[c^.sequence.payloads.inner[k].Open.block].entry_slot == k` (line 16)
+```
+
+`reserve-helper-frame`:
+
+```text
+reserve-helper-frame.wf:12:102: error[RANGE-1]: InvalidRangeClause
+  reason: a range term reads an entry image
+```
+
+`append-primitive`:
+
+```text
+append-primitive.wf:21:48: error[OWN-1]: MoveOfCopy
+```
+
+`append-helper-boundary`:
+
+```text
+append-helper-boundary.wf:61:74: error[OWN-1]: MoveOfCopy
+```
+
+`append-helper-frame`:
+
+```text
+append-helper-frame.wf:9:40: error[RANGE-1]: InvalidRangeClause
+  reason: a range term reads an entry image
+```
+
+`publish-borrowed-invalid`:
+
+```text
+publish-borrowed-invalid.wf:28:3: error[RANGE-3]: UndischargedRangeFact
+  fact: root_inverse
+  site: a return
+  missing: `c^.blocks.inner[c^.order.inner[k].Open.block].entry_slot == k` (line 18)
+```
+
+`publish-consume`:
+
+```text
+publish-consume.wf:52:3: error[RANGE-3]: UndischargedRangeFact
+  fact: root_inverse
+  site: a return
+  missing: `c^.blocks.inner[c^.order.inner[k].Open.block].parent == no_index` (line 20)
+```
+
+#### Rule ownership and next observation
+
+The liveness pair isolates a missing Boolean guard in the range language:
+[GRAM-5](https://github.com/Ming-Research/Whitefoot/blob/174c2cd365902d5256848a65e2bcf5ee84becc3b/spec/kernel-spec.md#L318-L321)
+requires a comparison, and
+[RANGE-1](https://github.com/Ming-Research/Whitefoot/blob/174c2cd365902d5256848a65e2bcf5ee84becc3b/spec/kernel-spec.md#L4089-L4102)
+admits noninteger equality only between element projections or live own
+bindings and excludes calls. `True()` is the correct Bool constructor under
+[PRE-1](https://github.com/Ming-Research/Whitefoot/blob/174c2cd365902d5256848a65e2bcf5ee84becc3b/spec/kernel-spec.md#L2393-L2396).
+[FORM-5](https://github.com/Ming-Research/Whitefoot/blob/174c2cd365902d5256848a65e2bcf5ee84becc3b/spec/kernel-spec.md#L117)
+provides no Boolean literal and
+[CONST-2](https://github.com/Ming-Research/Whitefoot/blob/174c2cd365902d5256848a65e2bcf5ee84becc3b/spec/kernel-spec.md#L635-L650)
+excludes enum constants. A Context invariant has no ordinary local truth
+binding. Neither sample has a misspelled constructor to repair; changing
+liveness storage or adding a truth field would conceal the limitation.
+
+For helper preservation,
+[RANGE-2](https://github.com/Ming-Research/Whitefoot/blob/174c2cd365902d5256848a65e2bcf5ee84becc3b/spec/kernel-spec.md#L4107-L4115)
+forgets locations written through an ordinary call and imports only declared
+postconditions. The reserve length contract is insufficient for contents;
+the two natural frame contracts state the missing old-element relation,
+but RANGE-1 excludes their entry-image reads. Ordinary
+[FN-9 relations](https://github.com/Ming-Research/Whitefoot/blob/174c2cd365902d5256848a65e2bcf5ee84becc3b/spec/kernel-spec.md#L1443-L1449)
+also exclude subscript datums, so scalar postconditions cannot express that
+old-element frame. This is a contract/range-fact
+expressibility gap, not evidence that primitive Paged growth loses facts.
+[ENT-5](https://github.com/Ming-Research/Whitefoot/blob/174c2cd365902d5256848a65e2bcf5ee84becc3b/spec/kernel-spec.md#L3608-L3618)
+and RANGE-2 preserve the primitive growth facts already observed in the
+accepted growth control. Corrected append-primitive should separate primitive
+append preservation from the ordinary helper boundary. Corrected
+append-helper-boundary may reach a RANGE-3 inverse refusal at a normal or
+propagated-error exit; the current OWN-1 refusal proves nothing about that.
+
+For consuming publication, the one-element source bounds and inverse are
+already requirements under
+[TYPE-11](https://github.com/Ming-Research/Whitefoot/blob/174c2cd365902d5256848a65e2bcf5ee84becc3b/spec/kernel-spec.md#L423-L427).
+They imply the sole source Block's `parent == no_index`. The consumed own
+source has no exit-state obligation; only the written destination Context
+owes the exit inverse. RANGE-2 treats an aggregate returned by a call as new
+storage. Its special `take_back` definition preserves the remaining prefix
+and length but supplies no relation from the returned aggregate to the old
+last element; [PRE-1's take_back contract](https://github.com/Ming-Research/Whitefoot/blob/174c2cd365902d5256848a65e2bcf5ee84becc3b/spec/kernel-spec.md#L2481-L2484)
+publishes only length. The destination parent refusal matches this missing
+returned-element transport. This attribution follows the specified proof
+surface; the exit log does not trace intermediate compiler states. No extra
+parent precondition is semantically needed, and a parent store would be
+redundant. Ownership transfer itself was not refused. The responsible area is
+proof/checker-range facts for storage-operation results, not paged/storage
+or Paged growth. These limitations are identified here; no request was filed
+into Whitefoot or the status board in this round.
+
+The borrowed control is a different, sound refusal: a still-live source
+order slot zero names a Block whose new slot is nonzero. TYPE-11 owes the
+source exit inverse and
+[RANGE-3](https://github.com/Ming-Research/Whitefoot/blob/174c2cd365902d5256848a65e2bcf5ee84becc3b/spec/kernel-spec.md#L4118-L4127)
+refuses exactly its `entry_slot == k` conclusion at return.
+
+Next CI should rerun all nine samples with the two copy arguments corrected.
+The unchanged seven should retain the recorded refusals; append-primitive
+should accept, while append-helper-boundary should reveal its first actual
+proof result. Any further refusal must be classified from its exact log,
+not counted as acceptance merely because the collection workflow is green.
+The existing growth/corrupt-inverse/natural-split assertions and recorder
+controls remain mandatory. No renderer writer, interface, pin, submodule or
+design-tree decision changes in this diagnostic round. Renderer invariant
+maintenance remains blocked by the Boolean and helper-contract gaps; the
+publication recommendation additionally needs returned-element proof
+transport and the owner's interface choice.
 
 `m2-paged-proof.yml` records each sample's raw status and complete diagnostic
 log, with acceptance/refusal summarized in `writer-boundaries.tsv`. An exit
@@ -663,29 +824,44 @@ samples; the earlier positive, negative and natural-split assertions remain
 mandatory. The same recorder's classification/rejection path also receives
 CI-only controls for a missing diagnostic, a crash status with diagnostic
 text, and missing status or log files. Their detection output is retained in
-`writer-boundary-controls.log`. If consuming publication is accepted, CI also builds and executes
+`writer-boundary-controls.log`. In the downloaded round, all four recorder
+controls detected their wrong or missing evidence. `gate.log` also confirms
+growth acceptance, corrupt-inverse refusal, natural control eligibility,
+emission and execution, and the established verifier controls. If consuming
+publication is accepted, CI also builds and executes
 its retained-prefix, transferred-geometry, stable-slot, target and owned-page
 observations. Its one-leaf scope does not prove nested relocation or parallel
-subtree publication. Every new outcome and exact refusal remains unobserved
-until the owner supplies this round's CI.
+subtree publication. The observed consume refusal means its build and runtime
+were not attempted in this round; no runtime publication result is claimed.
 
-The production invariant waits for these results: a rejected Boolean guard
-would affect every live/tombstone writer, and a rejected natural frame
-contract would affect reserve and target append callers independently of
-splice relocation. Keep the natural witness and diagnostic when either is
-refused, rather than choosing a different representation or spelling.
+The production invariant is blocked: the rejected Boolean guard affects
+every live/tombstone writer, and the rejected natural frame contracts affect
+reserve and target append callers independently of splice relocation. The
+natural witnesses and diagnostics remain unchanged; no different
+representation or spelling is adopted.
 
-A fresh read-only review, requested with `gpt-6.1-sol` at high effort, covered
-the complete working diff and all witness sources against `ff7933b`, relevant
+The pre-push read-only review, requested with `gpt-6.1-sol` at high effort,
+covered the complete witness-round diff against `ff7933b`, relevant
 design ancestors, the pinned proof rules and affected renderer boundaries.
 It found that the new refusal-classification gate lacked wrong/missing-input
 controls. Those controls now share the actual recorder's functions; focused
 rereview found no further findings within scope. Static G2/G3, DC1/DC2, R3,
 draft-pin T4 and repository hygiene passed; G1/DC3/C4 were not applicable.
-DC4, witness acceptance, proof transport, detector execution and runtime
-results remain unverified. No local compiler, build, test, check or
-measurement was run. Work stops for the owner's push and hosted witness
-results before choosing any production source update.
+It missed the two concrete copy-value moves now exposed by CI and corrected
+above. The downloaded diagnostics settle this round's nine refusals and
+detector execution; corrected append results, publication runtime and
+production inverse support remain unverified.
+
+A separate read-only diagnostic review, requested with `gpt-6.1-sol` at high
+effort, covered `0d2be1757c0d168520bfd143d34b398fde69eecb` plus this
+three-file diff, all nine sources and logs, manifest, controls, pinned rules,
+relevant design ancestors and affected renderer boundaries. It found no
+findings within scope. G2/G3, DC1/DC2, R3, draft-pin T4 and evidence/hygiene
+passed; G1/DC3/C4 were not applicable. DC4 remains unverified for corrected
+append acceptance and production/publication proof support. The reviewer
+ran `git diff --check` locally; no local compiler, build, test suite or
+measurement ran. Work stops for the owner's push of the two witness fixes
+and classification before dependent renderer changes.
 
 #### Where should the prepared splice's ownership be consumed?
 
@@ -699,8 +875,9 @@ while its source root order still names that root at slot zero. Returning a
 reusable `Context` at that point violates the proposed inverse. Preparation,
 route construction and preflight planning still need the valid private
 Context before it is consumed. The new borrowed witness represents this
-invalid exit; the consuming witness represents only one prepared leaf and
-has no hosted result yet.
+invalid exit and is refused for that intended reason. The consuming witness
+represents only one prepared leaf; its destination exit is refused for the
+inherited parent fact, exposing the returned-element proof gap above.
 
 **Options.**
 
@@ -733,8 +910,10 @@ has no hosted result yet.
   boundary rather than transported across another interface.
 
 **Confidence 3/5.** The source mismatch and the preparation dependencies are
-visible in the existing writers. The recommendation's proof transport and
-nested-subtree coverage depend on this witness and later hosted evidence.
+visible in the existing writers. The recommendation's proof transport
+is blocked by the hosted leaf refusal; nested-subtree coverage also remains
+unverified. This changes the proof evidence, not either candidate's true
+data dependencies.
 Neither alternative is adopted; the owner must choose before renderer
 publication interfaces change. Clearing the soon-dropped source solely to
 satisfy a borrowed exit is excluded by the task's redundant-write rule.
