@@ -72,7 +72,7 @@ Writer families to discharge, including propagated error exits:
 | boundary.wf/reference.wf geometry and summary writers, range.wf action writers, prep/flow/update child and paragraph writers | Preserve inverse fields and order; narrow effect rows and checked contracts must carry that preservation through helpers. Geometry-only writes cannot introduce an order dependency. |
 | boundary_checks.wf, frontier.wf and range.wf synthetic constructors | Establish the same relation as ordinary construction; no special test-only path. |
 
-RANGE-2 explicitly forgets whole-window facts at non-tail operations,
+In the starting v0.121 specification, RANGE-2 explicitly forgets whole-window facts at non-tail operations,
 including `grow_paged`. Before a broad port, a minimal Context witness
 tests preservation through growth; a separate natural motion control carries
 the inverse through its counted-loop invariant. OP-10 promises that growth moves no existing
@@ -543,3 +543,78 @@ Final record-head gates remain pending here and are recorded in the linked PR
 validation table when complete. Performance acceptance failed; eight timing
 cells remain unresolved. The owner-motion Decision is unchanged; no approval or
 design-log ruling is fabricated.
+
+### Experiment compiler: inverse continuation
+
+The owner's ruling on card sg-inverse-storage (choice A) places the inverse
+on Paged elements; `research/m2-paged-inverse` resumes that work on the
+existing per-owner Paged representation now that an experiment compiler
+keeps element facts across growth. The branch starts from the
+storage-only adoption and pins `wf-exp-174c2cd36590`: its release manifest
+names Whitefoot commit `174c2cd365902d5256848a65e2bcf5ee84becc3b`, specification
+v0.127. The earlier compiler was `wf-78223721f77d`, commit
+`78223721f77db615c950b6df1bcc690629f9fe4b`, specification v0.121. No submodule
+or design-tree decision changes in this continuation.
+
+The experiment's ENT-5 relocation rule preserves the initialized elements
+and length across `grow` and `grow_paged`; capacity facts and facts reached
+through invalidated references still die. The first CI round must accept
+the unchanged `grow-inverse.wf`, reject `grow-inverse-corrupt.wf` at its
+inverse obligation, and retain the natural control's permitted loop, split
+ledger, emitted LLVM and successful execution. Refusal of the corrupt proof
+sample is static proof evidence, separate from the existing semantic mutation
+matrix, which must still compile its mutants before detecting their faults.
+The temporary workflow calls `check-proof.py` to enforce these outcomes and
+reject altered copies of the evidence through the same verifier: failed or
+missing statuses, an accepted negative sample, an unrelated or incomplete
+diagnostic, missing eligibility or split evidence, and absent or empty LLVM.
+CI retains the verifier and detector-control output in `gate.log`; these
+controls run only in CI and do not rerun the compiler.
+
+Static comparison of the specifications, maintained language examples and
+standard-library interfaces found no necessary renderer compatibility edit.
+The added swap placement restriction does not affect the renderer's owning
+Box, aggregate or element exchanges. CI acceptance remains unverified; the
+renderer is unchanged in this first step. The production Context invariant,
+writer maintenance, owner-motion split evidence and production inverse-write
+mutation follow only after this compatibility/proof baseline passes.
+
+The writer audit identifies a real transient-state boundary to resolve before
+adding that invariant. With one live root entry `Open(block: 0)` at slot 0,
+`relocate_splice` can change the sole block's `entry_slot` to destination
+slot 1 while `fresh.entries` still holds the original entry at slot 0. Its
+`&Context` exit would therefore violate the proposed source inverse. A
+publication transaction that consumes the prepared source is a candidate to
+examine; no interface change or new design decision is made here. Narrowing
+the borrow merely to avoid the Context obligation would not repair that state.
+Two further language questions remain unverified: expressing the existing
+Boolean liveness guard in a range type invariant, and preserving old-element
+relations across the ordinary `sequence_reserve` and `push_item` helper
+boundaries. Neither is yet a compiler refusal; test their natural forms with
+minimal hosted witnesses before considering any implementation change.
+The renderer's retained reference writer is `translate_reference_owner_suffix`,
+a sparse recursive AVL traversal; `translate_owner_suffix` names the small
+proof control, not a current renderer function. Its eventual parallel form
+must preserve that traversal's work bound and account for descendant and
+atomic-child writes. The control's root scatter alone does not prove those
+additional accesses independent.
+
+The proof and timing workflows resolve the compiler from `whitefoot.pin`.
+The existing correctness workflows are wired to the inverse branch, retaining
+their full-matrix commit-message controls. The timing comparison still requires
+identical cohort pins: its historical base has the old pin, so it cannot
+measure this experiment without a separately prepared comparable baseline.
+No new timing result or change to the earlier rejection criterion is claimed.
+
+This first step awaits an owner commit/push and hosted CI results. No local
+compiler, build, test or measurement ran; no new compiler refusal or exact
+diagnostic is claimed before CI. No status board or approval log is written.
+
+A separate read-only review (requested model: `gpt-6.1-sol`, high effort)
+covered this first-step working diff
+against `a9f3a69`, including the untracked negative proof sample and evidence
+checker, relevant design ancestors, pinned proof rules and workflow consumers.
+It found missing wrong/missing-input controls for the new evidence gate;
+the shared verifier and hosted controls above address that finding, and a
+focused rereview found no further actionable findings. Hosted acceptance,
+control execution and the production inverse remain unverified.

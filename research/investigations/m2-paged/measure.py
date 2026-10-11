@@ -80,7 +80,8 @@ def main():
     machine['font_hashes'] = {str(p): digest(p) for p in Path('build/fonts').rglob('*') if p.is_file()}
     for tool in ('/usr/bin/clang', 'ld.lld'):
         machine[tool] = subprocess.check_output([tool, '--version'], text=True)
-    compiler_dir = Path('build/whitefoot/wf-78223721f77d')
+    release = Path('whitefoot.pin').read_text().strip().removeprefix('release = ')
+    compiler_dir = Path('build/whitefoot') / release
     machine['compiler_sha256'] = digest(compiler_dir / 'whitefootc')
     machine['compiler_manifest'] = json.loads((compiler_dir / 'whitefoot-release.json').read_text())
     (output / 'machine.json').write_text(json.dumps(machine, indent=2) + '\n')
