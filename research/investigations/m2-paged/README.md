@@ -1,9 +1,10 @@
 # Built-in pages and the owner-motion inverse
 
-The source comparison and pending CI attribution plan are in
+The source comparison, matched CI profile results and remaining attribution
+limits are in
 [Mechanism of the owner-store regression](MECHANISM.md). They reconcile this
-storage-only candidate with C3 and distinguish verified lowering from
-unmeasured time shares.
+storage-only candidate with C3 and distinguish measured instruction/allocation
+deltas from unresolved native time shares.
 
 ## Question and prior criterion
 

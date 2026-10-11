@@ -5,9 +5,10 @@ Whitefoot optimization gap are established; their time shares are not.**
 Optimized candidate output writes reload page-directory entries across element
 writes where the base retains its array address. Point access adds a dependent
 page load, but removal of leaf dispatch can offset its instruction count.
-Fixed geometry and allocations remain construction/memory candidates. The
-artifact establishes (a) a Whitefoot gap in element/directory separation; it
-does not yet establish whether Snowghost usage also explains a material share.
+Fixed geometry and allocations remain construction/memory candidates. The profiles establish both a Whitefoot directory-separation gap and added
+construction/release work from geometry and eager ownership. They do not
+identify their shares of the native timing regression; the sampled updates
+actually execute fewer instructions.
 
 Recommendation: bring the verified element/directory separation gap to
 Whitefoot with the witness below, and complete the matched isolated update
@@ -374,8 +375,8 @@ it identify the exact metadata/lowering change that should supply the fact.
 Invocation controls, both native pilot rounds, all zero-work Callgrind
 controls and the base two-edit update profile passed. `phases.jsonl:1–2`
 records **2,862,479 and 2,866,420 instructions** for the two base updates.
-There is no matched candidate update profile yet, and no time-share inference
-is possible. In the base function attribution, `store_reduction` has only
+This run has no matched candidate update profile. The subsequent run below
+supplies that comparison; neither run provides native time shares. In the base function attribution, `store_reduction` has only
 212 self instructions over two calls and `publish_boundaries` only 432 over
 two calls. The dense publisher example alone therefore cannot explain the
 first-pair regression. `sequence_select` (547,348 self instructions, 5,046
@@ -391,10 +392,231 @@ so it cannot be called an isolated layout kernel. The corrected profiler
 requires these four exact ordered triggers, nonzero measured intervals, and
 the named functions, including both `prepare_context` and `lay_out` in the
 combined interval. It still rejects missing/extra/wrong boundaries; the
-corrected invocation awaits CI. Full matched profiles must establish dynamic
+corrected invocation subsequently passed in run 38141932250. Full matched profiles must establish dynamic
 access counts, instruction excess outside these examples, allocation/growth
 placement and whether memory latency explains excess time with modest
 instruction differences. None of the +3%/+9% time shares is settled here.
+
+## Matched profiles from CI run 38141932250
+
+Evidence: [successful CI run 38141932250](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38141932250),
+artifact `paged-mechanism`. The invocation, negative controls and phase mapping
+now pass. Both pilot rounds have identical phase totals and identical function
+self costs/calls. Exclusive costs reconcile exactly with the raw summaries;
+function CSV sums reconcile with each selected phase. Counters are **Ir only**:
+no cache, branch, cycle or perf observations were collected. Do not interpret
+that absence as a PMU permission rejection. All four update-profile stderr
+files contain a nonfatal `brk segment overflow` warning despite exit zero;
+Valgrind's allocation environment is another reason not to treat its elapsed
+process time as native performance.
+
+### Phase totals and comparison with native time
+
+The font-size profile covers only `C/K 303118 x5f`, the first forward/inverse
+pair of the original 20-edit script. Each reports prepared 12, contexts 5,
+paragraphs 1 (`native-edits.jsonl` and profile raws). These do not represent the full-script work behind the recorded +9.08%.
+RESULTS averages all timed ordinals within a round and reports the median
+paired-round ratio; it does not take a median over individual updates.
+`scale-selection.json` records
+`full_requested: false` and a conservative 1,344.52-second full-process estimate
+above the 900-second cap. Successful CI did not run the complete edit script.
+
+| Interval | Base Ir | Candidate Ir | Delta Ir | Change |
+| --- | ---: | ---: | ---: | ---: |
+| Font-size update 1 | 2,862,479 | 2,572,663 | −289,816 | −10.1247% |
+| Font-size update 2 | 2,866,420 | 2,579,800 | −286,620 | −9.9992% |
+| Both updates | 5,728,899 | 5,152,463 | −576,436 | −10.0619% |
+| Box construction | 1,049,039,467 | 1,101,139,609 | +52,100,142 | +4.9665% |
+| Font picks/bookkeeping | 523,346 | 523,334 | −12 | −0.0023% |
+| Preparation + layout/bookkeeping | 8,760,622,178 | 8,756,355,120 | −4,267,058 | −0.0487% |
+| Selected full-layout intervals | 9,810,184,991 | 9,858,018,063 | +47,833,072 | +0.4876% |
+| After layout through termination | 359,464,599 | 384,260,759 | +24,796,160 | +6.8981% |
+
+Coordinates: `phases.jsonl:1–20`; each layout's undotted `.callgrind` final
+dump has the termination summary at line 18. Whole layout-process delta is
++72,629,212 Ir: selected intervals +47,833,072, final dump +24,796,160 and
+startup −20. Construction through termination adds +72,629,232 Ir (about
++0.7142% over its base sum), but includes global cleanup. The original full
+stage uses elapsed `T(repetitions)−T(0)`; this one-repetition artifact has no
+collecting zero-layout baseline for subtracting its instruction cleanup.
+Consequently +0.4876% is not a complete full-stage instruction comparison.
+Even including the additional destruction, instruction growth is much smaller
+than the native +3.31%. Memory/allocator latency, locality, branch behavior
+and native cycles per instruction must account for the remaining timing
+explanation, or a matched zero-subtracted native counter experiment must
+show a scope difference. Instructions alone do not predict that timing ratio.
+
+For the sampled two updates, instructions decline; they cannot explain the
+original +9.08% by increased executed work. That does not contradict RESULTS:
+the profile samples two small updates whereas RESULTS summarizes all 20.
+Moreover, the `U` timing encloses marking and font-pick work as well as
+`wf_layout.update`: `C:renderer/oracle/layout/edit.wf:1246–1259,1445–1478`.
+The profile isolates only `update`, so even matching ordinals would not yet
+match the entire timed interval. Profile both the enclosing interval and its
+components. Profile the original full-script ordinals, especially updates
+that do most work, with identical preceding edit state, before extrapolating. If those matched
+updates also shed instructions while taking longer, collect native cycles,
+cache/TLB and branch observations to distinguish latency from instruction
+count. This artifact supplies none of those counters.
+
+### Function accounting, with mixed mechanisms kept explicit
+
+[INSTRUCTION-DELTAS.csv](INSTRUCTION-DELTAS.csv) is a derived, exclusive
+self-cost table for every function with changed cost or call count in the
+selected intervals (171 rows, pilot round 0; round 1 repeats the same values).
+It includes exact base/candidate costs, calls and conservative hypothesis
+correspondence. It is not a copy of the raw artifact. Each phase's rows sum
+to the phase delta above. Unchanged functions are omitted. Anonymous address
+symbols stay unresolved; their addresses cannot identify equivalent cleanup
+routines between binaries.
+
+**Construction:** the following disjoint locations sum to +52,100,142 Ir.
+Percentages use the net construction delta; negative savings mean positive
+locations can sum to more than 100%. These are locations of changed work,
+not an experimentally isolated causal split.
+
+| Exclusive self-cost location | Delta Ir | Net-delta share | Hypothesis correspondence |
+| --- | ---: | ---: | --- |
+| Allocator and heap-accounting family | +43,136,741 | 82.796% | H3, added cells/pages and allocator consequences |
+| `finish_sequence` | +9,602,726 | 18.431% | H3/H4 allocation setup and append initialization, inseparable here |
+| `bulk_nodes` | +849,744 | 1.631% | H1/H2 paged addressing / optimization facts, inseparable here |
+| `new_block` + `new_context` | +740,040 | 1.420% | H3 eager empty-owner setup |
+| All remaining locations | −2,229,109 | −4.279% | Other, including copy/cleanup improvements |
+
+The allocator family's largest self deltas are `_int_malloc` +17,566,924,
+`malloc` +11,017,008, `_int_free` +4,828,117, `free` +3,458,364,
+`wf__heap_take` +2,274,048, `wf__heap_change` +1,947,260 and
+`wf__heap_give` +975,436. Its remaining names and deltas are in the derived
+CSV. Route-helper renames cancel exactly: `slot_read/write` become
+`route_slot_read/write`, respectively 97,642,107 and 73,543,156 instructions
+with identical calls. Counting those renames as added lookup work is wrong.
+
+**Two updates:** disjoint locations sum to −576,436 Ir.
+
+| Function family | Delta Ir | Correspondence |
+| --- | ---: | --- |
+| `sequence_select` + `nested_event` | −309,802 | H1/H2/inlining; selection is inlined into the candidate caller |
+| `slot_read` + `reference_child_event` | −214,596 | H1/inlining; disappearing helper cost is not abolished access |
+| `slot_view` + `owner_view` | −34,308 | H1/inlining |
+| `owner_store_actions` | −7,198 | H1/inlining into callers |
+| `store_reduction` + `publish_boundaries` | −26 | H1/H2/inlining |
+| Allocator/heap family | +1,540 | H3/allocator state unresolved; allocation counts unchanged |
+| Remaining functions | −12,046 | Other/mixed |
+
+**Preparation + layout:** disjoint locations sum to −4,267,058 Ir.
+
+| Function family | Delta Ir | Correspondence |
+| --- | ---: | --- |
+| `store_reduction` + `publish_boundaries` | +505,582 | H1/H2/inlining; normalize the +7,206,351/−6,700,769 symbol transfer |
+| `slot_read` | −4,402,629 | H1/inlining; some cost moves into callers |
+| `reduce_sequence` | −1,387,500 | H1/H2/consumer optimization, not isolated |
+| `fill_flow` | −554,511 | Other/mixed consumer change |
+| Allocator/heap family | +2,322,623 | H3/allocator state unresolved; allocation counts unchanged |
+| Remaining functions | −750,623 | Other/mixed |
+
+There is **no defensible separate percentage for H1 versus H2**, or H3
+versus H4 in `finish_sequence`, from these self costs. Each changed function
+contains multiple mechanisms, and optimization moves work across names.
+H5 has no established positive contribution: construction allocates its final
+capacity, and its extra allocations reconcile without any growth copies.
+This is not a measurement proving all growth paths cost zero.
+
+One H2 contribution can be counted directly: candidate publication executes
+its redundant between-copy directory reload **93,888 times** in preparation
+plus layout (12,587 root + 81,301 owner publications), and **twice** across
+the two updates. Raw evidence: candidate layout part `.4:4825–4858`, paired
+copy-site counts; candidate disassembly `209027–209036` and `209158–209167`,
+reloads at `c457a` and `c47a9`. Update parts `.2:3412–3424` and `.4:5370–5382`
+show one paired publication per update. These are 93,888 extra reload
+instructions, 0.001072% of that candidate phase's Ir, not H2's total cost or
+a wall-time bound. Other scalar-write reloads remain unquantified. This
+identified edge plainly cannot explain the +9% update regression by its
+instruction count; the compiler gap still needs closing.
+
+### Allocation attribution and the decision
+
+Construction's extra `wf__heap_take` calls reconcile completely:
+
+| Caller edge | Base | Candidate | Added takes |
+| --- | ---: | ---: | ---: |
+| `new_block` | 0 | 68,604 | 68,604 |
+| `new_context` | 234,991 | 255,425 | 20,434 |
+| `finish_sequence` | 88,676 | 189,142 | 100,466 |
+| All callers | 1,417,688 | 1,607,192 | 189,504 |
+
+Two eager empty stores per 34,302 blocks and 10,217 contexts add **89,038
+cell allocations** (46.985% of extra takes). Sealing adds **100,466 native
+page allocations** (53.015%); node pages hold four nodes. Those shares count
+allocation operations, not bytes, allocator instructions or time.
+During sealing, frees rise by 88,676: the initial two empty cells for each
+nonempty owner are discarded. At termination, extra frees are exactly
+100,828 = 100,466 pages + 362 retained empty cells. The latter equals
+89,038 initial empty cells minus 88,676 already freed at sealing. These
+counts verify H3 much more directly than a function-cost percentage does.
+
+The final dump's +24,796,160 Ir comprises allocator/heap +23,245,005,
+generated cleanup +1,551,144 and driver +11. The generated routines must be
+grouped across anonymous addresses. This broad termination region contains
+font/document cleanup as well as layout release; it supports additional H3
+release work, not a clean native time attribution.
+
+**Conclusion: both at the mechanism level, not a quantified split of the
+native regression.** (a) Whitefoot fails to preserve directory invariance
+across element writes; this gap is verified and must be filed independently
+of its small counted publication edge. (b) Snowghost eagerly constructs empty
+stores and initializes its entire reserved logical span; these source policies
+create avoidable construction work within ordinary Paged use. H3's physical
+four-node-page policy belongs to Whitefoot, rather than being fixable by a
+syntax change. The allocation-operation shares and exclusive function shares
+above are the shares this artifact establishes. H1/H2/H3/H4 native time shares
+and a full-script update instruction attribution remain unidentified.
+
+Intended-language comparisons to evaluate, not delivered fixes:
+
+- **Lazy owner-local presence**, `Option<Box<Paged<T>>>`, can remove the
+  89,038 initial cell allocations, 88,676 sealing frees and 362 final frees.
+  Construct final storage when that owner acquires elements. It adds an
+  owner-local presence branch, no shared pool/counter, no dependency between
+  independent owners. It changes representation and writer/proof interfaces;
+  preserve the Context inverse and validate absent-owner behavior. This
+  addresses eager Snowghost ownership, not the confirmed directory reload or
+  small-page policy. Keep that gap visible in every nonempty store.
+- **Initialize the live prefix** `count`, retaining capacity `page_width`,
+  instead of appending missing elements through the reserved span. This can
+  remove padding appends (H4), but not pages reserved by eager capacity (H3).
+  Current `slot_write` already initializes future prefixes
+  (`C:sequence.wf:452–470`). It retains owner-local append order required by
+  stable identities and adds no cross-owner dependency. Prove absent-slot,
+  tombstone and future-growth behavior before claiming the spelling fixes it;
+  do not use it to conceal an inefficient lowering of natural append loops.
+- **Compact/empty physical storage** requires a Whitefoot Paged policy
+  decision and semantic tests for B/page extents and nonmoving growth. Do not
+  restore a hand-written table or share a context-wide owner pool to hide it.
+- **H5 reserve/growth changes** are not justified by this profile. A later
+  comparison must show growth inside affected work and retain amortized cost
+  and stable slot identities; no global serial growth coordinator is needed.
+
+The directory witness is [element-directory.wf](element-directory.wf), kept
+with this investigation until the gap is resolved. It is a semantic library
+witness, not a claimed compiled reproducer. CI acceptance must (1) check it
+with the pinned compiler, (2) initialize at least two pages and verify two
+field writes at boundary/interior positions preserve all other values and
+len/cap, and (3) retain an optimized `touch` body and require one page-entry
+load for the same slot, not a reload between field stores. Inspect disassembly
+rather than conservative `--emit-llvm` output; ensure the witness function is
+retained instead of optimized away. Also test distinct Run subranges sharing
+a directory so the fix cannot use unsound blanket directory `noalias`.
+The separate growth-inverse witness and acceptance remain below. Bulk-fill
+and compact-page gaps remain candidates, not demonstrated compiler defects.
+
+The next attribution run must cover the original full-script font-size
+ordinals in bounded batches, prioritizing updates that do most work and
+retaining each ordinal's preceding edit state.
+Keep the twin/interleaving controls for native timing; collect matched native
+cycles/instructions and supported L1/LLC/dTLB/branch events, with a collecting
+zero-layout baseline and release included. Isolate a same-source Whitefoot
+metadata fix, then each owner-presence/live-prefix policy separately. Only
+those comparisons can assign causal shares of the original regression.
 
 ## Ranked hypotheses and separating observations
 
@@ -460,9 +682,9 @@ The written workflow implements Callgrind phase profiles and optional
 whole-process perf stat for common hardware counters and page faults/context
 switches. The perf record, L1/dTLB events and native zero-work stat comparisons
 below are follow-up commands for the primary agent, not implemented workflow
-features. Run 38139461660 verified invocation/zero-work controls and base update
-boundaries. The corrected full-layout boundary mapping, matched candidate
-profiles and optional counters await a subsequent CI run.
+features. Run 38141932250 verified the corrected boundaries and matched base/candidate
+pilot profiles. Complete-script updates, native hardware counters and
+same-source intervention comparisons remain unverified.
 
 On a runner exposing PMU events, collect matched native `perf stat` groups:
 `cycles,instructions,branches,branch-misses`;
