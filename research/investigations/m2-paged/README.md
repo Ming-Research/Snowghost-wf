@@ -386,3 +386,34 @@ are reused only when the measured ancestor's renderer, compiler pin and kit
 are unchanged. The artifact records the measured source revision separately
 from the workflow revision. This partitions elapsed work without changing
 the comparison or the prior criterion.
+
+#### Hosted pilot and full-matrix scale
+
+The [sample run 38096036798](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38096036798)
+built all four cohorts independently at base
+`030e4dd4081c9c15699363bdfa0e57c53a7f761d` and measured candidate
+`2c2c171911933aef499e0fb96a288643803eacd5`, using compiler
+`wf-78223721f77d`. Its GitHub-hosted Ubuntu 24.04 runner exposed four CPUs
+on an AMD EPYC 7763, Linux 6.17.0-1022-azure. The two smallest Apollo11
+sequential samples were:
+
+| Operation | First process ms | Second process ms |
+| --- | ---: | ---: |
+| Full style, one repetition | 214.290 | 218.915 |
+| Full layout, one repetition | 308.411 | 302.452 |
+| First two word edits | 329.581 | 326.703 |
+| First two sentence edits | 331.300 | 335.554 |
+| First two colour edits | 332.962 | 331.518 |
+| First two fontsize edits | 328.994 | 328.817 |
+| First two rootfont edits | 515.201 | 519.049 |
+| First two block edits | 404.224 | 406.203 |
+
+These are pilot process durations including startup, not acceptance-stage
+measurements or candidate/base ratios. Full-stage pilot spread is about 2%;
+the full matrix therefore uses 20 repetitions per full-stage process to
+reduce startup-subtraction sensitivity, three interleaved rounds, and each
+complete edit script. One job per page/mode bounds elapsed job duration;
+twins and candidate/base comparisons remain on that job's one machine.
+The sample's independent style builds took 156.03–173.40 seconds and layout
+builds 497.06–564.51 seconds. Binary and input hashes, every build log, raw
+samples and machine metadata are retained in the run's sample artifact.
