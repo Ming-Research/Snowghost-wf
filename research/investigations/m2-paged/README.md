@@ -336,8 +336,9 @@ Sparse route storage still represents absent prefixes without initializing
 those cells. Its former shared slot accessors now live with routes.wf; changing
 that representation is not required for the owner sequences and remains the
 proposed sg-paged-sparse-routes decision. No status board is changed in this run.
-The implementation and all final-head gates and timing remain unverified until
-hosted execution supplies evidence.
+The implementation, hosted evidence and failed performance criterion are
+recorded in the result section below; final record-head gates are tracked in
+the Draft pull request.
 
 Empty sequences start with zero-capacity built-in stores, so they allocate no
 payload pages before first insertion or sealing. The first insertion reserves
@@ -439,3 +440,106 @@ observes both its layout and style components. No original result or threshold
 is removed; all initial tables remain evidence. If the longer observation
 still cannot classify a cell, it remains unverified; a zero-resolution value
 is never converted to a pass.
+
+#### Storage-only result and continuation decision
+
+The same-structure candidate **fails the pre-written performance criterion**.
+The [complete timing and peak-RSS tables](RESULTS.md) retain the initial
+comparison and the focused extensions separately. The initial comparison
+rejects sequential ecma262 full layout and fontsize updates, and four-worker
+HTML5 full layout; longer selected observations also reject ecma262 four-worker full layout,
+Apollo11 sequential block updates and HTML5 fontsize updates in both modes. Remaining noisy cells
+cannot make these criterion failures pass. No storage redesign or threshold
+change is made in response.
+
+All requested correctness gates passed at measured renderer revision
+`2c2c171911933aef499e0fb96a288643803eacd5`:
+
+| Gate | Hosted run | Evidence |
+| --- | --- | --- |
+| check | [38096036768](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38096036768) | Graph acceptance, ordinary checks and design lint passed. |
+| layout-check | [38096036750](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38096036750) | The compiler accepted pkg::layout with --check-module. |
+| q139 | [38096070873](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38096070873) | Independent reference and retained-identity checks passed in both modes. |
+| q140 | [38096072343](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38096072343) | Complete fixture gate passed; its semantic mutations also ran in the complete matrix below. |
+| Complete oracles-m2 | [38096044985](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38096044985) | All 20 jobs passed, including Apollo11's original 60 edits and 44 splice follow-ups matching full rebuilds in both modes. |
+| Complete falsify-m2 | [38096043567](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38096043567) | All 168 jobs passed, including Q139/Q140 mutations, range/transfer faults and detector controls. |
+
+Final record-head validation is tracked in [Draft PR 61's validation table](https://github.com/Ming-Research/Snowghost-wf/pull/61).
+The complete mutation inventory still applies: every relevant anchor remains in
+a semantic helper, so no moved-storage mutation required respelling or removal.
+The range-context-basis and range-splice-geometry mutants produce their intended
+semantic failures; the legacy block detector observes two rebuild differences
+in its intended interior-block case. Compilation failure never substitutes
+for semantic detection.
+
+The existing growth witness remains refused in
+[hosted proof collection 38096036801](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38096036801):
+`grow-inverse.wf:20:3: error[RANGE-3]: UndischargedRangeFact`, at `return unit`,
+missing `c^.targets.inner[c^.order.inner[k].Open.block].entry_slot == k`.
+The collection job's success is not proof acceptance. No production inverse
+or new parallel owner-motion form is added, and no new sound natural-form
+refusal was encountered in the storage-only port.
+
+Proposed deferrals, not filed on a status board in this run:
+
+- `sg-paged-storage-cost` (P1): the candidate exceeds the unchanged full-layout
+  and edit-cost thresholds. The cause within allocation, prefix initialization, access or emitted
+  code is unverified; this is a performance lead, not a newly established
+  compiler defect. Reopen after the direction decision below: isolate a
+  minimal per-owner payload/metadata witness with the owning Paged session,
+  preserve ownership and workload semantics, and require the same full-page
+  criterion and correctness gates when verifying any fix.
+- `sg-paged-sparse-routes` (P2): absent high-water prefixes still use sparse
+  directories. Reopen only after the earlier representation card is ruled;
+  validate high-water construction cost, peak RSS and splice/fallback identity.
+- `sg-paged-small-edit-timing` (P2): some selected timing cells remain limited
+  by noise or integer-microsecond resolution. Keep their unresolved status;
+  further work is unnecessary to establish this candidate's rejection.
+  Reopen if the owner selects another adoption trial and these cells could
+  affect its verdict; improve the observation without omitting script
+  ordinals or changing the threshold, and demonstrate missing/wrong-record
+  detection before relying on the new observation.
+
+The existing `sg-paged-grow-inverse` (P1) is already filed with the owning
+Whitefoot session. Its minimal witness and acceptance condition remain the
+natural growth form preserving the element-content inverse under the pinned
+proof rules, followed by verification in the renderer's real writer families.
+It is independent of the new performance lead.
+
+**What should follow the failed Paged performance criterion?**
+
+**Background.** The per-owner Paged port preserves outputs and passes the
+required correctness gates, but fails the recorded full-layout and edit-cost
+thresholds. Its precise cost mechanism has not been isolated. Changing owner
+pooling, storage semantics or the acceptance threshold would start a different
+experiment and would not resolve this same-structure comparison's failed criterion.
+
+**Options.** A (recommended): keep this candidate Draft and ask the owning
+Whitefoot session to investigate the built-in storage cost using a minimal
+same-ownership witness before another adoption attempt, under proposed item
+`sg-paged-storage-cost`. This costs a focused hosted investigation and possibly
+a language/compiler change; the risk is that the measured overhead cannot be
+removed under the present representation. B: end this adoption attempt and
+retain the current baseline's hand-written owner stores. This avoids the
+measured regression but retains their maintenance and the blocked inverse
+proof; it yields no fix for the built-in representation's observed cost.
+
+**Confidence 4/5.** The measurements settle rejection under the agreed rule.
+The next investigation is recommended because the project exists to expose
+language/compiler limitations, but the cause and fixability of this overhead
+remain unknown. No new direction is selected in this run.
+
+A separate read-only review covered the complete diff from `030e4dd` through
+`d7e0a8c`, these completion records, relevant design ancestors and direct
+consumers, and the retained hosted gate and measurement evidence. It applied
+G1–G3, DC1–DC4, project checks R3/C4/T4 and the engineering evidence, experiment,
+design and hygiene rules. One finding (R1), the stale recursive-directory growth
+decision, was fixed by replacing that clause in place; focused follow-up review
+confirmed the correction. No findings remain within scope. Raw evidence
+inspection confirmed the independent cohorts, all twelve machine rows, rejection
+and unresolved cells, peak RSS, complete mutation inventory and Apollo11
+follow-ups. The review ran no builds, tests, checks or new measurements.
+Final record-head gates remain pending here and are recorded in the linked PR
+validation table when complete. Performance acceptance failed; eight timing
+cells remain unresolved. The owner-motion Decision is unchanged; no approval or
+design-log ruling is fabricated.
