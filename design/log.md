@@ -2,7 +2,7 @@
 
 Newest first. One entry per approved change of the tree: a dated title,
 `Nodes:` naming every node changed, `Owner-approved:` and `Summary:`;
-`skill/SKILL.md` owns the form.
+the design-tree part of the owner-wide agent instructions owns the form.
 
 ## 2026-10-11 Bound the structural restyle of next-sibling `+` chains by their length
 
