@@ -28,8 +28,11 @@ GEOMETRY = {'I1': (32768, 8, 64), 'D1': (32768, 8, 64), 'LL': (33554432, 16, 64)
 EVENTS = {'Ir', 'I1mr', 'ILmr', 'Dr', 'D1mr', 'DLmr', 'Dw', 'D1mw', 'DLmw', 'Bc', 'Bcm', 'Bi', 'Bim'}
 COMBINED = {'D1_read_write_misses': ('D1mr', 'D1mw'), 'LL_read_write_misses': ('DLmr', 'DLmw')}
 CACHE_ROWS = []
+# Callgrind 3.22's option trie can shadow a second function's before flag
+# when its after flag is registered. Keep styles' paired options first and
+# register each later function once; see MECHANISM's first memory-run diagnosis.
 U_BOUNDARIES = [('before', 'wf_layout.styles_restyled'), ('after', 'wf_layout.styles_restyled'),
-                ('before', 'wf_layout.update'), ('after', 'wf_layout.update')]
+                ('after', 'wf_layout.text.extend_picks'), ('after', 'wf_layout.update')]
 LAYOUT_BOUNDARIES = [('before', 'wf_layout.build_boxes'), ('after', 'wf_layout.build_boxes'),
                      ('after', 'wf_oracle.layout.pick_all'), ('after', 'wf_layout.lay_out')]
 
@@ -106,6 +109,21 @@ def cache_profile(path):
     return summary, own, calls, edges
 
 
+def boundary_parts(label, boundaries, repetitions, directory=OUT):
+    expected = [directory / f'{label}.callgrind.{number}'
+                for number in range(1, repetitions * len(boundaries) + 1)]
+    observed = set(directory.glob(label + '.callgrind.*'))
+    if observed != set(expected):
+        raise ValueError(('missing or extra cache boundary', label,
+                          sorted(path.name for path in set(expected) - observed),
+                          sorted(path.name for path in observed - set(expected))))
+    for index, path in enumerate(expected):
+        trigger = re.findall(r'^desc: Trigger: --dump-(before|after)=(.+)$', path.read_text(), re.M)
+        if trigger != [boundaries[index % len(boundaries)]]:
+            raise ValueError(('unexpected cache boundary', label, index + 1, trigger))
+    return expected
+
+
 def controls():
     events = ' '.join(sorted(EVENTS))
     vector = ' '.join('21' if event == 'Ir' else '3' for event in sorted(EVENTS))
@@ -164,8 +182,31 @@ def controls():
             except ValueError:
                 continue
             raise ValueError(('zero stage control accepted work', operation))
+    for case in ('valid', 'missing', 'extra', 'misordered'):
+        label = 'boundary-' + case
+        paths = []
+        for index, (direction, marker) in enumerate(U_BOUNDARIES * 2, 1):
+            path = directory / f'{label}.callgrind.{index}'
+            path.write_text(f'desc: Trigger: --dump-{direction}={marker}\n')
+            paths.append(path)
+        if case == 'missing':
+            paths[2].unlink()
+        elif case == 'extra':
+            (directory / f'{label}.callgrind.9').write_text(paths[-1].read_text())
+        elif case == 'misordered':
+            left, right = paths[1].read_text(), paths[2].read_text()
+            paths[1].write_text(right)
+            paths[2].write_text(left)
+        try:
+            boundary_parts(label, U_BOUNDARIES, 2, directory)
+        except ValueError:
+            if case == 'valid':
+                raise
+        else:
+            if case != 'valid':
+                raise ValueError(('cache boundaries accepted invalid sequence', case))
     allocation.controls(OUT / 'allocation-controls')
-    (directory / 'result.json').write_text(json.dumps({'status': 'passed', 'cases': 15}) + '\n')
+    (directory / 'result.json').write_text(json.dumps({'status': 'passed', 'cases': 19}) + '\n')
 
 
 def metadata():
@@ -316,7 +357,7 @@ def cache_deltas(selected):
     for scope in ('box_construction', 'font_picks_and_bookkeeping', 'preparation_and_layout'):
         groups['layout', 1, scope] = {}
     for ordinal in selected:
-        for scope in ('marking', 'font_picks_and_bookkeeping', 'update', 'substantive_U_sum_of_three_disjoint_parts'):
+        for scope in ('marking', 'font_picks_and_bookkeeping', 'update_and_bookkeeping', 'substantive_U_sum_of_three_disjoint_parts'):
             groups['edittime', ordinal, scope] = {}
     for row, functions in CACHE_ROWS:
         match = re.fullmatch(r'cache-(base|candidate)-(layout|edittime)', row['label'])
@@ -373,12 +414,10 @@ def cache_run(label, cohort, operation, count, selected=None, zero=False):
         return result, {}
     counts = validate_native(label, operation, count)
     repetitions = len(counts) if operation == 'edittime' else int(count)
-    parts = list(OUT.glob(label + '.callgrind.*'))
-    if len(parts) != repetitions * len(boundaries):
-        raise ValueError(('missing or extra cache boundary', label, len(parts)))
+    boundary_parts(label, boundaries, repetitions)
     regions = [(1, 'marking', ('wf_layout.styles_restyled',)),
                (2, 'font_picks_and_bookkeeping', ('wf_layout.text.extend_picks',)),
-               (3, 'update', ('wf_layout.update',))] if operation == 'edittime' else [
+               (3, 'update_and_bookkeeping', ('wf_layout.update',))] if operation == 'edittime' else [
         (1, 'box_construction', ('wf_layout.build_boxes',)),
         (2, 'font_picks_and_bookkeeping', ('wf_oracle.layout.pick_all',)),
         (3, 'preparation_and_layout', ('wf_layout.prepare_context', 'wf_layout.lay_out'))]
@@ -387,9 +426,6 @@ def cache_run(label, cohort, operation, count, selected=None, zero=False):
         combined_own, combined_calls = defaultdict(Counter), Counter()
         for offset, boundary in enumerate(boundaries):
             path = OUT / f'{label}.callgrind.{(ordinal - 1) * len(boundaries) + offset + 1}'
-            trigger = re.findall(r'^desc: Trigger: --dump-(before|after)=(.+)$', path.read_text(), re.M)
-            if trigger != [boundary]:
-                raise ValueError(('unexpected cache boundary', label, ordinal, trigger))
             geometry_header(path)
             cache_profile(path)  # Every part, including setup/inter-edit parts, reconciles.
         for offset, scope, required in regions:

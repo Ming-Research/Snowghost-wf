@@ -843,9 +843,10 @@ The original complete script hash is
 The possible pairs are 1–2 (node 303118), 3–4 (343539), 5–6 (217190), 7–8
 (414119), 9–10 (288562), 11–12 (224717), 13–14 (79145), 15–16 (147937),
 17–18 (221537), and 19–20 (217945). Their identities are verified from the
-matching script. Their timing rank is **not verified locally**: the retained
-matrix ZIP could not be extracted through the available network tools. The
-workflow resolves and records the choice before profiling. Thus no specific
+matching script. At plan-writing time their timing rank was **not verified locally**: the
+retained matrix ZIP could not be extracted through the available network tools.
+The workflow resolves and records the choice before profiling; the first memory
+run below now verifies that selection. Thus no specific
 pair is falsely declared dominant in this pre-run account. If it contributes
 little to the full-script total, this bounded experiment has limited coverage.
 
@@ -874,10 +875,12 @@ controls detect nonzero control collection, missing events, bad totals and
 missing self rows. Ordered nonzero phase boundaries remain required.
 
 Full-layout boundaries retain box construction, font picks, and text preparation
-plus layout separately. Font-size boundaries are before/after
-`wf_layout.styles_restyled` and before/after `wf_layout.update`. The three
-disjoint parts contain marking, font picks with intervening caller bookkeeping,
-and update; their sum is the substantive original U interval. This fixes the
+plus layout separately. The corrected font-size boundaries are before/after
+`wf_layout.styles_restyled`, after `wf_layout.text.extend_picks`, and after
+`wf_layout.update`. The three disjoint parts contain marking, font picks with
+intervening caller bookkeeping, and update with clock/caller bookkeeping; their
+sum is the substantive original U interval. The first memory-run diagnosis below
+explains why the earlier before-update option was replaced. This fixes the
 previous update-only scope. Frozen native code inlines the timestamp wrappers,
 so markers omit the small edge clock/argument bookkeeping. Preserve that
 qualification: only native stdout is the exact U timestamp interval
@@ -982,3 +985,132 @@ renderer table or a proposed serialization. The Whitefoot directory-separation
 gap remains established independently of this new, as-yet-unverified memory
 attribution. No workaround, pin change, request filing or approval-log edit is
 part of this round.
+
+
+## First hosted memory run: native result and boundary diagnosis
+
+Evidence: [CI run 38147376573](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38147376573),
+workflow revision `16970b3436c2db9aba1a8c7e8e78af480169805f`, uploaded
+`paged-memory` artifact. All filenames below are relative to its extracted
+`paged-memory/` directory; the artifact is not copied into this repository.
+The hosted machine was Ubuntu 24.04.5 on an AMD EPYC 7763 VM with four vCPUs;
+all drivers used `WF_WORKERS=1` (`machine.txt`, `metadata.json`). Frozen driver
+and input checks passed. No new performance measurement ran locally.
+
+### Why the pilot had six numbered parts
+
+`processes.jsonl` records cache-pilot-0 exiting zero after 393.656 seconds,
+without timeout. Its two original edits completed with matching counts.
+These six numbered files exist, each with its trigger at line 14:
+
+| Dump suffix | Trigger | Interval ending here |
+| --- | --- | --- |
+| `.1` | before `wf_layout.styles_restyled` | Initial state/style work |
+| `.2` | after `wf_layout.styles_restyled` | Edit 1 marking |
+| `.3` | after `wf_layout.update` | Edit 1 picks **and** update |
+| `.4` | before `wf_layout.styles_restyled` | Between-edit/style work |
+| `.5` | after `wf_layout.styles_restyled` | Edit 2 marking |
+| `.6` | after `wf_layout.update` | Edit 2 picks **and** update |
+
+The unsuffixed `cache-pilot-0.callgrind` is the termination residual, not a
+seventh numbered boundary. Neither before-update trigger exists. This is not
+an inlining failure: `.3:1396,2471` names `wf_layout.text.extend_picks` and
+`wf_layout.update`; its whole interval includes both functions.
+Geometry headers at lines 9–11 confirm the requested I1/D1/LL model, and line
+17 declares all 13 cache/branch events. Cache-zero passed before this pilot.
+These are real profiler compatibility observations, not paired miss evidence.
+
+The cause is the Valgrind 3.22.0 function-option trie, verified in its release
+source ([release-tag provenance](https://chromium.googlesource.com/external/sourceware.org/git/valgrind/+/refs/tags/upstream/VALGRIND_3_22_0)).
+The before/after styles flags combine on the initial full-name node. Adding
+before-update splits their common prefix. Registering after-update then
+allocates and prepends a **new** update suffix instead of descending into its
+existing node (`get_fnc2`,
+[clo.c:239–268](https://github.com/tomhughes/valgrind/blob/bd4db67b1d386c352040b1d8fab82f5f3340fc59/callgrind/clo.c#L239)).
+The matcher follows the first matching child
+([clo.c:368–376](https://github.com/tomhughes/valgrind/blob/bd4db67b1d386c352040b1d8fab82f5f3340fc59/callgrind/clo.c#L368)),
+so the new after-only node shadows the before flag. This also explains why
+the earlier update-only instruction profile's paired flags worked: its update
+node was the first function configuration. This is a profiler option defect,
+not evidence of a Whitefoot gap.
+
+The script replaces before-update with **after `wf_layout.text.extend_picks`**.
+Styles' paired options remain first; each later function is registered once.
+There are still four required triggers per edit, not acceptance of six out of
+eight. The three intervals remain marking, picks with caller bookkeeping,
+and `update_and_bookkeeping`; the last includes `stamp_picks` between picks
+and update (`renderer/oracle/layout/edit.wf:1448–1465`). Their sum has the same
+before-marking/after-update endpoints as the prior substantive U criterion.
+Full-layout boundaries and their scope are unchanged.
+
+`boundary_parts` requires the exact numbered filename set and exact ordered
+singleton trigger in every file. CI controls exercise a valid two-edit
+sequence and rejection of a deleted part, extra part and swapped triggers.
+Required component symbols, nonzero Ir, cache geometry and exclusive event
+conservation checks remain in place. Source inspection and read-only review
+verify this wiring; the corrected flags and new controls still await CI.
+
+### Completed native U meets the prior prerequisite
+
+`selection.json` chose **7–8**, `C 414119 x5f` / `K 414119 x5f`, without override.
+Its original baseline pair median was 238,116 microseconds, larger than pairs
+11–12 (236,577) and 13–14 (212,047). It covers **34.4131%** of summed original
+pair medians (691,934 microseconds); actual per-round coverage was
+34.6913%, 34.3889%, 34.4604%. Every new selected-prefix run replayed ordinals
+1–8. This is substantial coverage, not the complete 20-edit acceptance metric.
+
+`native-samples.jsonl`, the twelve `native-round-*-edittime-selected.raw`
+files and corresponding `.timed.json` files agree on original U timestamps:
+
+| Round | Base pair U, µs | Base twin | Candidate | Candidate twin | Candidate/base |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | 237,838 | 235,921 | 260,289 | 260,490 | 1.094396 |
+| 2 | 242,014 | 237,564 | 263,789 | 260,985 | 1.089974 |
+| 3 | 238,453 | 237,345 | 263,098 | 260,425 | 1.103354 |
+
+The **median paired ratio is +9.4396%**. Maximum absolute twin/original
+pair-U deviation is 1.8387%, so the 2% floor controls; every round's excess
+(9.4396%, 8.9974%, 10.3354%) exceeds it. Independently built twins also show
+candidate/base excesses in every round. The native matched-U prerequisite of
+the prior criterion is therefore **verified for this pair**. Counts match
+across all twelve runs: each selected ordinal reports 3 prepared, 5 contexts,
+3 paragraphs. Initial hashes/byte counts also match. This removes the old
+update-only scope mismatch for the native observation; it does not establish
+which memory mechanism caused the excess or its share of all 20 edits.
+Across all 24 selected-ordinal style records, marking is 9–16 microseconds
+and font picks round to zero microseconds. These reported components cannot
+account for the tens of milliseconds of pair excess; the residual update
+interval (including clock/caller bookkeeping) carries it. This narrows the
+scope concern for this costly pair without substituting for its cache profile.
+
+The separate-process stage subtraction is weaker (`native-stage-differences.json`):
+
+| Stage, T(1)−T(0) | Median paired candidate/base excess | Maximum twin deviation | Assessment |
+| --- | ---: | ---: | --- |
+| Box construction | +16.7034% | 28.6050% | Inconclusive |
+| Full layout including boxes | +3.7891% | 3.8095% | Inconclusive |
+
+Only one round of each stage exceeds its corresponding global noise band.
+Zero-process subtraction includes startup noise; it does not establish a new
+precise construction or full-layout regression on this runner. All zero-stage
+counts are zero contexts/paragraphs, while full-stage counts match across
+cohorts. Do not use these noisy stage values to confirm allocation latency.
+
+### Memory attribution remains inconclusive
+
+The artifact records exactly 66 completed processes: four native pilots, sixty
+native production runs, cache-zero and cache-pilot-0. It contains **no perf or
+DHAT measurement**: both occur later in `main`, after the second cache pilot
+and production cache passes. `allocation-controls/fixture.dhat.json` is
+synthetic reader-control input, not allocation evidence. No new allocation
+totals, byte peaks, native counters or paired cache-function deltas can be
+reported from this run; missing observations are unavailable, not zero.
+
+Thus the prior criterion's native-U prerequisite passes, but its locality,
+allocation-latency and neither-mechanism branches are all **inconclusive**.
+The single base pilot describes only ordinals 1–2 and has no candidate twin
+cache profile; it cannot test the selected-pair 10% miss-growth criterion.
+Existing run 3 allocation-count evidence and the established Whitefoot
+metadata gap stand unchanged. The next run must complete the corrected pilots,
+selected-pair cache comparison and allocation/counter passes before assigning
+memory causes. The 900-second per-process cap remains unchanged.
