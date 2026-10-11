@@ -211,8 +211,15 @@ def symbols(cohort):
     return names
 
 
+def called(cohort):
+    # A toggle fires only when the function is entered; an emitted symbol
+    # whose call sites were all inlined never is.
+    text = (OUT / 'drivers' / (cohort + '.objdump')).read_text()
+    return set(re.findall(r'\bcallq?\s+[0-9a-f]+ <([^>+]+)>', text))
+
+
 def choose_markers(emitted):
-    common = emitted['base'] & emitted['candidate']
+    common = emitted['base'] & emitted['candidate'] & called('base') & called('candidate')
     for stem in ('incremental_after', 'apply_incremental'):
         matches = sorted(s for s in common if re.search(r'\.' + stem + r'$', s))
         if len(matches) == 1:
