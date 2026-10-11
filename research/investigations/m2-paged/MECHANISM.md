@@ -5,14 +5,17 @@ Whitefoot optimization gap are established; their time shares are not.**
 Optimized candidate output writes reload page-directory entries across element
 writes where the base retains its array address. Point access adds a dependent
 page load, but removal of leaf dispatch can offset its instruction count.
-Fixed geometry and allocations remain construction/memory candidates. The profiles establish both a Whitefoot directory-separation gap and added
+The completed fixed-model cache experiment found only about 2% selected-U
+data-miss growth and did not cleanly reproduce the native excess beyond twin
+spread. Fixed geometry and allocations remain construction/memory candidates. The profiles establish both a Whitefoot directory-separation gap and added
 construction/release work from geometry and eager ownership. They do not
 identify their shares of the native timing regression; the sampled updates
 actually execute fewer instructions.
 
 Recommendation: bring the verified element/directory separation gap to
-Whitefoot with the witness below, and complete the matched isolated update
-profiles before assigning its share of the regression. Changing Snowghost's
+Whitefoot with the witness below. The matched profiles now exist, but neither
+predeclared positive attribution criterion passes; native latency or a
+same-source intervention is still needed before assigning regression shares. Changing Snowghost's
 spelling to conceal it is not the remedy.
 No renderer change, compiler run, build, renderer test or performance
 measurement was performed locally. The file-reader checks below ran locally
@@ -1211,3 +1214,221 @@ perf and DHAT outputs still do not exist in this failed run. Accordingly this
 validation fixes and checks the reader pipeline; it provides **no new causal
 memory attribution** or allocation/counter measurements. The prior criterion
 and the previous native selected-pair conclusion remain unchanged.
+
+## Completed memory experiment: unchanged prior assessment
+
+[CI run 38151508024](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38151508024),
+workflow revision `7de8eb9b20d8743eb5978acc39da157e92753a3e`, completed the memory
+job. The 389-file `paged-memory` artifact supplies the evidence below; it is
+not copied into this repository. Actual `machine.txt` identifies an Intel
+Xeon 6973P-C hosted VM, Linux 6.17.0-1022-azure. The AMD CPU in
+the `archive` field of `metadata.json` describes the earlier binary-producing runner, not
+this measurement host. Frozen cohorts, ecma262 input, sequential execution and
+`WF_WORKERS=1` are unchanged. The cache model remains D1/I1 32 KiB, eight ways,
+64-byte lines; LL 32 MiB, sixteen ways, 64-byte lines. All eleven paired cache
+cells completed with conserved function/event costs. No thresholds in
+[the prior criterion](#predictions-to-assess-before-assigning-causes) are changed.
+This result supersedes the earlier runs' unavailable cache/perf/DHAT evidence;
+their dated native observations remain separate measurements.
+
+### Native prerequisite and scope
+
+`selection.json` again selects original ordinals **7–8**, with prefix **1–8**
+replayed without omissions: `C 414119 x5f` and its inverse `K 414119 x5f`.
+They cover **34.4131%** of the original summed baseline pair medians, not the
+complete 20-edit average. The native raw U timestamps and
+`native-samples.jsonl` agree, and selected work counts match across cohorts:
+3 prepared, 5 contexts and 3 paragraphs per ordinal.
+
+| Round | Base pair U, µs | Base twin | Candidate | Candidate twin | Candidate/base excess |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | 229,542 | 189,496 | 235,235 | 206,963 | +2.4802% |
+| 2 | 180,657 | 189,813 | 219,664 | 222,685 | +21.5917% |
+| 3 | 187,103 | 191,091 | 214,634 | 230,240 | +14.7144% |
+
+Median paired excess is **14.7144%**. Applying exactly [RESULTS.md](RESULTS.md)'s
+original largest absolute twin/original deviation over both cohorts and every
+round, with a 2% floor, gives **17.4460%** (round 1 base twin). Only round 2
+exceeds that band. Twin candidate/base excesses are positive too (9.2176%,
+17.3181%, 20.4871%), but cannot replace this noise rule. Thus **this runner does
+not cleanly reproduce the matched U excess beyond twin spread**; inconsistent
+round classifications remain unverified. This does not overturn the earlier
+run's clean +9.4396% selected-pair result or the original +9.1% acceptance result.
+
+Separate-process stage subtraction from `native-stage-differences.json` is
+also noisy, and cannot establish where native latency occurs:
+
+| T(1)−T(0) stage | R1 / R2 / R3 candidate/base excess | Median paired excess | Maximum twin deviation |
+| --- | --- | ---: | ---: |
+| Box construction | +24.6434% / +20.1314% / +59.7022% | +24.6434% | 25.2071% |
+| Full layout including boxes | +5.1747% / +5.2021% / +10.6980% | +5.2021% | 5.2800% |
+
+Only round 3 exceeds each stage's global noise band. These process subtractions
+include startup noise and are not exact isolated phase timings.
+
+### Cache costs and function grouping
+
+`cache-phase-deltas.csv` and `cache-function-deltas.csv` provide these exclusive
+costs. D1 data misses mean D1mr+D1mw; LL data misses mean DLmr+DLmw. Selected
+substantive U sums its marking, picks/bookkeeping and update/bookkeeping parts
+for ordinals 7 and 8 once; aggregate rows are not added to their components.
+The same prefix state and simulated cache warmth precede both selected edits.
+Native U includes the small clock/edge bookkeeping omitted by these markers,
+as qualified in the scope definition above.
+
+| Scope | Ir base → candidate (change) | D1 data misses base → candidate (change) | LL data misses base → candidate (change) |
+| --- | --- | --- | --- |
+| U ordinal 7 | 544,435,393 → 531,984,677 (−2.287%) | 8,397,393 → 8,563,879 (+1.983%) | 6,321,113 → 6,442,978 (+1.928%) |
+| U ordinal 8 | 417,103,341 → 412,089,125 (−1.202%) | 6,924,285 → 7,069,386 (+2.096%) | 5,452,856 → 5,560,597 (+1.976%) |
+| Selected U pair | 961,538,734 → 944,073,802 (−1.816%) | 15,321,678 → 15,633,265 (+2.034%) | 11,773,969 → 12,003,575 (+1.950%) |
+| Box construction | 1,049,039,467 → 1,101,139,609 (+4.966%) | 8,964,515 → 9,071,556 (+1.194%) | 6,187,959 → 6,347,936 (+2.585%) |
+| Font picks/bookkeeping | 523,346 → 523,334 (−12 Ir) | 362 → 360 (−2) | 333 → 335 (+2) |
+| Preparation/layout | 8,760,622,178 → 8,756,355,120 (−0.049%) | 21,619,450 → 21,943,713 (+1.500%) | 9,747,251 → 9,872,293 (+1.283%) |
+| Full sum of three disjoint phases | 9,810,184,991 → 9,858,018,063 (+0.488%) | 30,584,327 → 31,015,629 (+1.410%) | 15,935,543 → 16,220,564 (+1.789%) |
+
+Instructions are lower in matched U and preparation/layout, but **not** in
+construction or the full sum. The small full instruction rise does not establish
+a time share. Neither U ordinal, construction nor preparation/layout reaches
+10% D1 or LL miss growth in this model.
+
+The following grouping uses exclusive symbol self costs, not inclusive edges.
+Gross positive means the sum of `max(candidate−base, 0)` **per function**;
+for U, each function is first summed over ordinals 7–8. Signed net includes
+negative deltas too. Symbols renamed or inlined between cohorts remain separate:
+gross cost is not a causal regression share. `wf_layout.*` consumers, publication
+and lookup callers form the layout group. Allocator functions include Whitefoot
+heap entry points and libc allocator internals; memory-copy/clear routines and
+other library/runtime work remain in **other**, because a memcpy self cost does
+not by itself identify an allocator caller.
+
+The exact allocator set is `__set_vma_name`, `_int_free`,
+`_int_free_maybe_consolidate`, `_int_free_merge_chunk`, `_int_malloc`,
+`_int_realloc`, `alloc_new_heap`, `alloc_perturb`, `arena_get_retry`, `free`,
+`malloc`, `malloc_consolidate`, `mmap`, `mprotect`, `munmap`, `munmap_chunk`,
+`realloc`, `sysmalloc_mmap.isra.0`, `unlink_chunk.isra.0`, `wf__heap_change`,
+`wf__heap_give`, `wf__heap_retake`, and `wf__heap_take`. VM helpers are included
+conservatively in this allocator group; this does not change either threshold
+verdict. File-only readers reconcile all 95 retained dumps' thirteen events
+against their footers, and all eleven phase rows' base/candidate/delta sums
+against exclusive function costs for Ir, D1 and LL.
+
+| Scope / group | D1 gross positive | D1 signed net | LL gross positive | LL signed net |
+| --- | ---: | ---: | ---: | ---: |
+| U / layout consumers, publication, lookup | 2,059,424 | +392,705 | 1,732,049 | +320,883 |
+| U / allocator | 1,536 | +1,101 | 46 | −47 |
+| U / other | 11 | −82,219 | 2 | −91,230 |
+| U / all functions | 2,060,971 | +311,587 | 1,732,097 | +229,606 |
+| Construction / layout consumers, publication, lookup | 338,213 | +100,275 | 193,691 | +118,113 |
+| Construction / allocator | 100,426 | +96,497 | 111,559 | +109,060 |
+| Construction / other | 2,863 | −89,731 | 0 | −67,196 |
+| Construction / all functions | 441,502 | +107,041 | 305,250 | +159,977 |
+| Preparation/layout / layout consumers, publication, lookup | 847,158 | +303,249 | 631,439 | +156,909 |
+| Preparation/layout / allocator | 106,398 | +101,428 | 11,180 | +11,074 |
+| Preparation/layout / other | 33,165 | −80,414 | 469 | −42,941 |
+| Preparation/layout / all functions | 986,721 | +324,263 | 643,088 | +125,042 |
+
+U gross positives are **99.925% D1 / 99.997% LL** in layout functions, but the
+large offsetting savings make the net only about 2%. In particular,
+`wf_layout.publish_boundaries` adds 705,588 D1 / 687,209 LL misses, while
+`store_reduction` saves 546,204 / 528,350. `owner_view` adds 410,651 / 318,417,
+while `slot_view` saves 394,020 / 292,223 and `slot_read<all>` saves
+350,565 / 209,352. `reduce_sequence` adds 294,805 / 192,105; `fill_flow` adds
+223,352 / 202,159. The other group is dominated by memcpy savings
+(−82,226 D1 / −91,211 LL). This reconciles the gross publication/lookup concern
+with the much smaller signed total; it does not establish H1 versus H2 shares.
+
+Construction's allocator gross share is **22.746% D1 / 36.547% LL**, below half
+on both events. `_int_malloc` adds 86,309 D1 / 77,161 LL misses;
+`finish_sequence` adds 76,548 / 102,807. Renamed route helpers must not be counted
+as pure new work: `route_slot_read<all>` adds 191,096 / 33,931 while old
+`slot_read<all>` saves 186,607 / 32,167. Preparation/layout's allocator gross
+share is 10.783% D1 / 1.738% LL; its nonallocator misses grow only about 1.17%
+D1 / 1.22% LL, below 10%.
+
+U does allocate, but does **not add allocator entry calls**: across both selected
+ordinals, each cohort has 1,079 `wf__heap_take`, 2,314 `wf__heap_change`,
+78 `wf__heap_retake`, 1,079 `wf__heap_give`, and 1,157 malloc/free calls each.
+Allocator self Ir falls 274,460 → 269,877 (−4,583); its net D1 miss increase is
+1,101 and LL decreases by 47. Startup's extra pages cannot therefore be called
+extra U allocation work. Their retained working set can still affect U.
+
+### Perf availability and DHAT
+
+All twelve hardware-group and software-only perf attempts exit **255** with
+`perf_event_paranoid=4` permission denial, as recorded in each
+`perf-*.status.json` and stderr. **No counters are available**: cycles,
+instructions, cache-misses, dTLB-load-misses and page-faults have no numeric
+base/candidate values or deltas. Even software-only page-faults is unavailable;
+there is no native corroboration of simulated misses or a measured TLB effect.
+
+DHAT base/candidate profiles completed for the entire prefix 1–8 process,
+including startup, initial layout, preceding edits and cleanup. Original
+`.dhat.json` program-point sums reconcile with summary JSON and stderr for
+all six totals. `allocation-deltas.json` records:
+
+| Metric | Base | Candidate | Delta |
+| --- | ---: | ---: | ---: |
+| Successful allocation events | 13,256,459 | 13,445,997 | +189,538 (+1.430%) |
+| Total requested bytes | 12,322,731,691 | 12,366,266,435 | +43,534,744 (+0.353%) |
+| Maximum simultaneous live requested bytes | 859,940,987 | 903,098,379 | +43,157,392 (+5.019%) |
+| Live blocks at respective byte peak | 1,485,552 | 1,586,380 | +100,828 (+6.787%) |
+| Exit requested bytes / blocks | 0 / 0 | 0 / 0 | 0 / 0 |
+
+All differences are Whitefoot heap-origin allocations; other origins are
+identical at 2,576 bytes and eleven events. These are requested heap bytes,
+**not RSS**, and block count at byte peak is not independently maximal block
+liveness. No per-U or construction-only DHAT allocation totals exist. Allocation
+volume and retained working set growth are verified; allocator latency is not.
+
+### Verdict under the unchanged predictions
+
+1. **Locality/miss growth: positive criterion not met.** U instructions are lower
+   and layout functions dominate gross positives, but net D1/LL growth is only
+   2.034% / 1.950%, below the required 10%. Construction and preparation/layout
+   also stay below 10%. Native U's noise prerequisite fails on this runner and
+   perf is unavailable. Large gross positives alone cannot satisfy the criterion.
+2. **Allocation latency: positive criterion not met.** DHAT confirms increased
+   events, bytes and liveness, and nonallocator preparation/layout is below
+   10% miss growth. However allocator construction gross shares are 22.746% /
+   36.547%, below the required half, and native box excess is not consistently
+   beyond twin noise. Counts support H3 construction work, but do not establish
+   allocation latency or its share of the original full-layout regression.
+3. **Neither observed mechanism accounts for the matched excess: conditional
+   screening conditions, not an established verdict.** Both U miss deltas are
+   below 10% and extra U allocator work is negligible. But this runner does not
+   cleanly reproduce matched native excess, which prediction 3 requires. Thus
+   its complete antecedent is not satisfied. The fixed model did not find large
+   miss growth; unavailable PMU leaves native TLB, prefetch, bandwidth, dependent
+   cache-hit latency and out-of-order overlap unverified. The original full
+   layout and html5 four-worker time shares also remain unverified.
+
+### Snowghost decision: two lines
+
+**(c) Both mechanisms exist; their causal shares of the regression remain unassigned.** Whitefoot's verified element/directory optimization gap has the `Paged<Cell>` two-field-write witness above: acceptance requires reuse of the same-slot page pointer across writes, without blanket directory `noalias`; this experiment does not show that gap caused the timed excess.
+**Usage remedy to evaluate:** represent an empty owner with an allocation-free optional/variant store and construct its owner-local Paged stores only when first needed, removing eager empty cells and replacement churn; no cross-owner dependency or serialization is added, only that owner's existing state transition. This removes that allocation source, not a demonstrated percentage of the regression. Preserve natural Paged writes and pursue their Whitefoot gap separately.
+
+The four-SequenceNode page is a **Whitefoot design policy applied to Snowghost's
+type-layout choice**, not a mistaken page-size parameter in Snowghost.
+Pinned `W:spec/kernel-spec.md:1164–1177` defines aggregate stride ceilings;
+OP-13 at `1231` fixes B as the largest power of two whose product with that
+ceiling fits 4096, identically on all qualified targets. Current
+`SequenceNode`'s 528-byte ceiling therefore forces B=4, and no writer-selected
+B is available. The frozen native node stride is also 528 bytes: eight nodes
+would require 4,224 bytes. Thus this node is not a case where a conservative
+ceiling alone unnecessarily shrinks an otherwise fitting native page.
+Snowghost owns the inline node fields (two 192-byte outputs,
+links and actions), while Whitefoot owns this fixed policy. Page geometry is
+implicated in the verified extra pages/liveness, **not yet in a causal native
+latency share**. A natural larger per-owner page needs a Whitefoot policy/API
+change; it is not achievable by merely requesting greater capacity.
+
+An alternative Snowghost shape to evaluate is splitting links and semantic
+outputs into separate owner-local stores with a shared slot identity. This adds
+no global dependency or imposed inter-owner order; same-slot output combinations
+still depend on the same links/outputs. It adds stores and lookup streams and
+requires proofs preserving slot correspondence, so it may worsen locality and
+is not a measured fix. It must be justified by independent data/use dependencies,
+not used to conceal the directory optimization gap. A policy/shape intervention
+and a compiler separation fix, each measured with twins, are still needed to
+remove sources independently and assign timing shares. No renderer, workflow,
+Whitefoot pin, submodule or approval-log changes are made in this round.
