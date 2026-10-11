@@ -5,6 +5,8 @@ No renderer instrumentation or compiler flags change generated code. One marker
 per process avoids Valgrind 3.22's option-trie shadowing. A common surviving
 text-update wrapper is preferred; otherwise sum separately gated text_changed
 and update replays of the same script. These scopes exclude timestamp calls.
+Each final output accumulates every marker invocation in the selected edits;
+toggle-only collection needs no numbered dump files.
 Call-edge Ir is inclusive: conserve only exclusive rows against totals:, never
 summary:. Inclusive rows overlap and do not describe causal cycle costs.
 """
@@ -140,6 +142,13 @@ def parse_objdump(text):
     return blocks
 
 
+def collected_scope(text, marker):
+    parsed = parse_callgrind(text)
+    if parsed['total'] <= 0 or marker not in (parsed['own'].keys() | {b for a, b in parsed['edges']}):
+        raise ValueError('collected scope lacks marker work')
+    return parsed
+
+
 def dry_run():
     # Hand-made, deliberately different summary: footer conservation is decisive.
     sample = ('positions: instr line\nevents: Ir Dr\nsummary: 999 0\n'
@@ -148,6 +157,22 @@ def dry_run():
     parsed = parse_callgrind(sample)
     if parsed['total'] != 21 or parsed['own']['wf_caller'] != 12 or parsed['edges']['wf_caller', 'wf_dom.set_links.body'] != 9 or parsed['calls']['wf_caller', 'wf_dom.set_links.body'] != 3:
         raise ValueError('valid sample lost self/inclusive/calls')
+    # Final files already sum the entered marker across all selected edits.
+    # Two hand-made final scopes aggregate without boundary descriptions.
+    second = sample.replace('wf_caller', 'wf_layout.update').replace('calls=3 ', 'calls=2 ')
+    combined = merge([collected_scope(sample, 'wf_caller'), collected_scope(second, 'wf_layout.update')])
+    if combined['total'] != 42 or combined['own']['wf_dom.set_links.body'] != 18 or combined['edges']['wf_layout.update', 'wf_dom.set_links.body'] != 9 or sum(combined['calls'].values()) != 5:
+        raise ValueError('final scope aggregation lost total/self/edge/call costs')
+    zero = 'positions: line\nevents: Ir\nsummary: 0\ntotals: 0\n'
+    if parse_callgrind(zero)['total'] != 0:
+        raise ValueError('valid zero-operation final output rejected')
+    for text, marker in [(zero, 'wf_layout.update'), (sample, 'missing_marker')]:
+        try:
+            collected_scope(text, marker)
+        except ValueError:
+            pass
+        else:
+            raise ValueError('empty or markerless collected final scope accepted')
     corrupt = [sample.replace('totals: 21', 'totals: 22'), sample.replace('totals: 21 0\n', ''),
                sample.replace('fn=(2)\n0x20 2 9\n', 'fn=(2)\n'),
                sample.replace('calls=3 0x20 2', 'calls=3 0x20'),
@@ -174,7 +199,7 @@ def dry_run():
             pass
         else:
             raise ValueError('corrupted objdump accepted')
-    print('hand-made controls: valid callgrind/objdump accepted; five callgrind and two objdump corruptions rejected')
+    print('hand-made controls: valid final scope aggregation/zero output/objdump accepted; five callgrind corruptions, two invalid collected scopes and two objdump corruptions rejected')
 
 
 def run(label, command, timeout):
@@ -279,8 +304,7 @@ def profile(label, cohort, page, script, markers, count, cap, inctime):
         # both toggle one process. Register only one marker in each command.
         pattern = marker[:-1] + '?'
         result = run(part, ['valgrind', '--tool=callgrind', '--collect-atstart=no',
-                           '--toggle-collect=' + pattern, '--dump-before=' + pattern,
-                           '--dump-after=' + pattern, '--callgrind-out-file=' + str(output),
+                           '--toggle-collect=' + pattern, '--callgrind-out-file=' + str(output),
                            *command(cohort, page, script)], cap)
         timed, other, styled, built = inctime.read(str(OUT / (part + '.stdout')), inctime.script_operations(str(script)))
         counts = {ordinal: row[1:] for ordinal, row in timed.items()}
@@ -289,23 +313,10 @@ def profile(label, cohort, page, script, markers, count, cap, inctime):
         if work_counts is not None and counts != work_counts:
             raise ValueError('scope replays differ in update work counts')
         work_counts = counts
-        expected = [Path(str(output) + '.' + str(n)) for n in range(1, 2 * count + 1)]
-        if set(OUT.glob(part + '.callgrind.*')) != set(expected):
-            raise ValueError('missing/extra dump boundaries: ' + part)
-        for offset, path in enumerate(expected):
-            triggers = re.findall(r'^desc: Trigger: --dump-(before|after)=(.+)$', path.read_text(), re.M)
-            direction = 'before' if offset % 2 == 0 else 'after'
-            if len(triggers) != 1 or triggers[0][0] != direction or triggers[0][1] not in (pattern, marker):
-                raise ValueError('wrong dump boundary: ' + str(path))
-            parsed = parse_callgrind(path.read_text())
-            if offset % 2:
-                if parsed['total'] <= 0 or marker not in (parsed['own'].keys() | {b for a, b in parsed['edges']}):
-                    raise ValueError('collected scope lacks marker work')
-                profiles.append(parsed)
-            elif parsed['total'] != 0:
-                raise ValueError('work escaped selected interval')
-        if parse_callgrind(output.read_text())['total'] != 0:
-            raise ValueError('final residual contains outside-interval work')
+        # The final output is the sum across all count marker invocations.
+        # Dump-before/after options failed to produce files on the hosted
+        # Valgrind; toggle-only collection retains the selected interval.
+        profiles.append(collected_scope(output.read_text(), marker))
         results.append(result)
     return merge(profiles), results, work_counts
 
@@ -407,13 +418,14 @@ def main():
         status = disassembly(emitted)
         markers = choose_markers(emitted)
         notes += ['Collected boundaries: `' + '`, `'.join(markers) + '`. '
-                  'Each marker toggles collection on entry/off return and dumps before/after; startup, input mutation, '
+                  'Each marker toggles collection on entry/off return. One final output per scope accumulates the inclusive marker work over all N selected edits; startup, input mutation, '
                   'initial layout, clocks and report/cleanup are excluded. '
                   + ('The common wrapper contains text_changed and update.' if len(markers) == 1 else
                      'Separate deterministic replays collect text_changed and update, then sum their disjoint scopes; inter-call wrapper bookkeeping is excluded.'),
-                  'All dump exclusive rows reconcile with their totals footer; summary metadata is not used for conservation.',
+                  'Every final output reconciles exclusive rows with its totals footer; summary metadata is not used for conservation.',
                   'set_links disassembly status: `' + json.dumps(status) + '`. Full caller functions include pre-call stack argument stores.']
-        (OUT / 'markers.json').write_text(json.dumps(dict(markers=markers, per_process_one_marker=True), indent=2) + '\n')
+        (OUT / 'markers.json').write_text(json.dumps(dict(markers=markers, per_process_one_marker=True,
+            collection='toggle-only; final output sums all selected edit invocations'), indent=2) + '\n')
         spec = importlib.util.spec_from_file_location('inctime', 'research/investigations/incremental-layout/scripts/inctime.py')
         inctime = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(inctime)
@@ -434,7 +446,7 @@ def main():
                 raise RuntimeError('insufficient budget for word pilots')
             # A zero-operation negative control rejects startup or initial
             # layout in the collected interval. Real pilots below reject a
-            # missing marker through their numbered boundaries.
+            # missing marker or empty collection in their final output.
             if page == 'apollo11':
                 for c in COHORTS:
                     for index, marker in enumerate(markers):
