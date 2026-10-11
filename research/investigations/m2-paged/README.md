@@ -417,3 +417,25 @@ twins and candidate/base comparisons remain on that job's one machine.
 The sample's independent style builds took 156.03–173.40 seconds and layout
 builds 497.06–564.51 seconds. Binary and input hashes, every build log, raw
 samples and machine metadata are retained in the run's sample artifact.
+
+#### Focused extension fixed before rerunning
+
+The first three-round comparison has unresolved Apollo11 cells in both modes
+and four-worker ecma262 cells. In particular, four-worker ecma262 full layout
+has a median paired ratio of 1.0456 with 2% twin noise, but round classifications
+disagree; this is unverified rather than a confirmed rejection. Apollo11 colour
+layout updates include zero-microsecond observations, so their ratios cannot
+be resolved from the first three rounds.
+
+Following the prior instruction to extend only ambiguous cells, the next
+comparison selects each unresolved full stage or edit kind. It uses 100
+full-stage repetitions and five complete script executions per cohort per
+round, still with three reversing interleaved rounds and all four cohorts
+on one runner per page/mode. The edit-kind cell is the mean over every timed
+ordinal of all five complete scripts in that round. Every repetition retains
+the existing ordinal, refusal and non-timing-count checks; the reporter also
+rejects missing or duplicated repetitions. Selecting an edit kind necessarily
+observes both its layout and style components. No original result or threshold
+is removed; all initial tables remain evidence. If the longer observation
+still cannot classify a cell, it remains unverified; a zero-resolution value
+is never converted to a pass.

@@ -67,9 +67,14 @@ def main():
     modes = (os.environ['MEASURE_MODE'],) if phase == 'matrix' else ('seq', 'par4')
     if any(p not in PAGES for p in pages) or any(m not in ('seq', 'par4') for m in modes):
         raise ValueError('unknown comparison cell')
+    cells = ('style', 'layout', *KINDS) if os.environ.get('MEASURE_CELLS', 'all') == 'all' else tuple(os.environ['MEASURE_CELLS'].split(','))
+    edit_repetitions = int(os.environ.get('EDIT_REPETITIONS', '1'))
+    if not cells or len(set(cells)) != len(cells) or any(c not in ('style', 'layout', *KINDS) for c in cells) or edit_repetitions < 1:
+        raise ValueError('invalid selected cells or edit repetition count')
     machine = dict(platform=platform.platform(), cpu=subprocess.check_output(['lscpu'], text=True),
                    compiler=Path('whitefoot.pin').read_text().strip(), revision=(ROOT / 'drivers/candidate.revision').read_text().strip(),
                    workflow_revision=os.environ['GITHUB_SHA'], pages=pages, modes=modes,
+                   cells=cells, edit_repetitions=edit_repetitions,
                    rounds=0 if phase == 'sample' else 3, repetitions=repetitions,
                    hashes={str(p): digest(p) for folder in ('drivers', 'inputs', 'scripts') for p in (ROOT / folder).glob('*') if p.is_file()})
     machine['font_hashes'] = {str(p): digest(p) for p in Path('build/fonts').rglob('*') if p.is_file()}
@@ -110,22 +115,27 @@ def main():
             for round_id in range(1, 4):
                 order = COHORTS if round_id % 2 else COHORTS[::-1]
                 for stage, operation in [('style', 'all'), ('layout', 'layout')]:
+                    if stage not in cells:
+                        continue
                     for cohort in order:
                         prefix = f'r{round_id}-{cohort}-{page}-{mode}-{stage}'
                         run(prefix + '-zero', cohort, stage, mode, page, operation, 0)
                         run(prefix + '-full', cohort, stage, mode, page, operation, repetitions)
                 for kind in KINDS:
+                    if kind not in cells:
+                        continue
                     script = ROOT / 'scripts' / f'{page}-{kind}.edits'
                     operations = parser.script_operations(script)
                     for cohort in order:
-                        prefix = f'r{round_id}-{cohort}-{page}-{mode}-edit-{kind}'
-                        raw, record = run(prefix, cohort, 'layout', mode, page, 'edittime', script)
-                        timed, other, styled, built = parser.read(raw, operations)
-                        if other or len(timed) != len(operations):
-                            raise ValueError(f'{prefix}: missing or refused timed edits')
-                        record.update(kind=kind, round=round_id, edits=timed, style=styled, structure=built)
-                        with (output / 'edits.jsonl').open('a') as out:
-                            out.write(json.dumps(record) + '\n')
+                        for repeat in range(1, edit_repetitions + 1):
+                            prefix = f'r{round_id}-{cohort}-{page}-{mode}-edit-{kind}' + (f'-e{repeat}' if edit_repetitions > 1 else '')
+                            raw, record = run(prefix, cohort, 'layout', mode, page, 'edittime', script)
+                            timed, other, styled, built = parser.read(raw, operations)
+                            if other or len(timed) != len(operations):
+                                raise ValueError(f'{prefix}: missing or refused timed edits')
+                            record.update(kind=kind, round=round_id, repeat=repeat, edits=timed, style=styled, structure=built)
+                            with (output / 'edits.jsonl').open('a') as out:
+                                out.write(json.dumps(record) + '\n')
 
 
 if __name__ == '__main__':

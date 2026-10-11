@@ -30,6 +30,13 @@ def cell(values, layout=False):
     return median(ratios), noise, classify(ratios, noise, layout)
 
 
+def grouped_rounds(rows, rounds, repeats):
+    ordered = sorted(rows, key=lambda e: (e['round'], e.get('repeat', 1)))
+    if [(e['round'], e.get('repeat', 1)) for e in ordered] != [(r, k) for r in range(1, rounds + 1) for k in range(1, repeats + 1)]:
+        raise ValueError('missing/duplicate edit round or repetition')
+    return [[e for e in ordered if e['round'] == r] for r in range(1, rounds + 1)]
+
+
 def controls():
     # Wrong results must change the classification; large noise never passes a
     # layout regression above 3%, and inconsistent rounds remain unverified.
@@ -42,12 +49,22 @@ def controls():
         if classify(ratios, noise, layout) != expected:
             raise ValueError('criterion control failed')
 
+    complete = [dict(round=r, repeat=k) for r in (1, 2) for k in (1, 2)]
+    if [len(g) for g in grouped_rounds(complete, 2, 2)] != [2, 2]:
+        raise ValueError('repetition grouping control failed')
+    for invalid in (complete[:-1], complete + [complete[0]]):
+        try:
+            grouped_rounds(invalid, 2, 2)
+        except ValueError:
+            pass
+        else:
+            raise ValueError('missing/duplicate repetition was accepted')
+
 
 def main():
     controls()
     root = Path(sys.argv[1])
     processes = [json.loads(line) for line in (root / 'processes.jsonl').read_text().splitlines()]
-    edits = [json.loads(line) for line in (root / 'edits.jsonl').read_text().splitlines()]
     indexed = {row['label']: row for row in processes}
     if len(indexed) != len(processes) or any(row['exit'] for row in processes):
         raise ValueError('duplicate process or failed command')
@@ -55,8 +72,11 @@ def main():
     rounds, repetitions = machine['rounds'], machine['repetitions']
     if rounds < 3:
         raise ValueError('incomplete round count')
+    repeats = machine.get('edit_repetitions', 1)
+    cells = machine.get('cells', ('style', 'layout', 'word', 'sentence', 'colour', 'fontsize', 'rootfont', 'block'))
+    edits = [json.loads(line) for line in (root / 'edits.jsonl').read_text().splitlines()] if any(k in cells for k in ('word', 'sentence', 'colour', 'fontsize', 'rootfont', 'block')) else []
     output = ['# Hosted Paged storage comparison', '',
-              f"Revision: {machine['revision']}; compiler: {machine['compiler']}; rounds: {rounds}; repetitions: {repetitions}.", '',
+              f"Revision: {machine['revision']}; compiler: {machine['compiler']}; rounds: {rounds}; repetitions: {repetitions}; complete edit-script repetitions per round: {repeats}.", '',
               'Full-stage milliseconds subtract T(0) from T(repetitions). Edits use the mean microseconds over the complete ordered script, separately for layout update and style_us. Tables show medians across rounds. Noise is the largest twin/original deviation across both pairs and all rounds, at least 2%. Different round classifications are unverified.', '',
               '| Page | Mode | Stage | Base ms | Candidate ms | Ratio | Noise | Verdict |',
               '|---|---|---|---:|---:|---:|---:|---|']
@@ -64,6 +84,8 @@ def main():
     for page in machine['pages']:
         for mode in machine['modes']:
             for stage in ('style', 'layout'):
+                if stage not in cells:
+                    continue
                 values, peaks = {}, {}
                 for cohort in COHORTS:
                     values[cohort], peaks[cohort] = [], []
@@ -80,8 +102,10 @@ def main():
     for page in machine['pages']:
         for mode in machine['modes']:
             for kind in ('word', 'sentence', 'colour', 'fontsize', 'rootfont', 'block'):
+                if kind not in cells:
+                    continue
                 selected = [e for e in edits if (e['page'], e['mode'], e['kind']) == (page, mode, kind)]
-                if len(selected) != rounds * 4:
+                if len(selected) != rounds * 4 * repeats:
                     raise ValueError('missing edit cell')
                 controls_row = selected[0]
                 for e in selected:
@@ -92,10 +116,9 @@ def main():
                         continue
                     values, peaks = {}, {}
                     for cohort in COHORTS:
-                        rows = sorted([e for e in selected if e['cohort'] == cohort], key=lambda e: e['round'])
-                        if [e['round'] for e in rows] != list(range(1, rounds + 1)):
-                            raise ValueError('missing/duplicate edit round')
-                        values[cohort] = [mean(v[0] for v in e['edits'].values()) if component == 'layout' else mean(v[3] for v in e['style'].values()) for e in rows]
+                        rows = [e for e in selected if e['cohort'] == cohort]
+                        groups = grouped_rounds(rows, rounds, repeats)
+                        values[cohort] = [mean(v[0] for e in group for v in e['edits'].values()) if component == 'layout' else mean(v[3] for e in group for v in e['style'].values()) for group in groups]
                         peaks[cohort] = [e['peak_rss_kib'] for e in rows]
                     ratio, noise, verdict = cell(values)
                     results.append(dict(page=page, mode=mode, kind=kind, stage=component, values=values, ratio=ratio, noise=noise, verdict=verdict))
