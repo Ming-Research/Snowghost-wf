@@ -552,3 +552,40 @@ Final record-head gates remain pending here and are recorded in the linked PR
 validation table when complete. Performance acceptance failed; eight timing
 cells remain unresolved. The owner-motion Decision is unchanged; no approval or
 design-log ruling is fabricated.
+
+## Element/directory alias acceptance experiment
+
+The temporary [paged-alias-check workflow](../../../.github/workflows/paged-alias-check.yml)
+checks request `sg-paged-elem-dir-alias` against experiment
+`wf-exp-e9d765cd6067` (Whitefoot #357), with `wf-78223721f77d` as the old control.
+It compiles [element-directory.wf](element-directory.wf) through each release's
+LLVM emission to an optimized native object. `touch` writes two fields of the
+same Paged element; `touch_grow` grows the directory between those writes.
+Acceptance requires one element-address page-pointer load for new `touch`,
+two for old `touch`, and a fresh load after intervening growth in both controls.
+A merged 16-byte store is recorded as desirable, not required. Growth preserves
+existing elements, so this control checks the requested directory-reload
+criterion; retaining an existing page pointer across growth is not by itself
+proof of an unsafe compiler.
+
+The job follows Whitefoot-kit's release checksum/manifest protocol and the
+standalone emission form in the inverse branch's `m2-paged-proof.yml`. It uses
+`-O2`, matching pinned Whitefoot `compiler/src/driver.rs:56`. Raw LLVM is
+retained; only witness linkage/noinline attributes are isolated before native
+optimization, following compiler tests at
+`compiler/src/backend/tests/arrays.rs:268–283,382–391`. Bodies and alias metadata
+are unchanged. [The reader](check-element-directory.py) records actual lookup
+and store instructions in `verdict.json`; unsupported instruction shapes fail
+for inspection rather than passing. It follows load origins into store
+addresses so directory-copy reads do not count as element lookups.
+
+The artifact `paged-alias-check` contains both objects, disassemblies, LLVM,
+release manifests/checksums and compiler/optimization logs. A branch-restricted
+push affecting the alias workflow, witness or reader runs this small job.
+The completed expensive memory/profile experiments now require explicit
+workflow dispatch; this push cannot restart them. No pin changes are made.
+Local `python3 -I check-element-directory.py self-test` exercises hand-made
+single-load merged and unmerged stores, old reloads, growth reloads and rejection
+controls. Actual witness compilation and release acceptance await hosted CI.
+Remove the temporary workflow/reader once their acceptance evidence is archived,
+before branch readiness; keep the semantic witness with the research record.

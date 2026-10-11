@@ -1,0 +1,110 @@
+# Temporary Whitefoot storage-alias acceptance check; remove before readiness.
+name: paged-alias-check
+on:
+  push:
+    branches: [research/m2-paged-mechanism]
+    paths:
+      - .github/workflows/paged-alias-check.yml
+      - research/investigations/m2-paged/element-directory.wf
+      - research/investigations/m2-paged/check-element-directory.py
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  alias:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download and verify both compiler releases
+        run: |
+          set -euo pipefail
+          output=build/paged-alias-check
+          mkdir -p "$output"
+          git rev-parse HEAD > "$output/revision.txt"
+          uname -a > "$output/machine.txt"
+          for release in wf-78223721f77d wf-exp-e9d765cd6067; do
+            mkdir -p "$output/$release"
+            (
+              cd "$output/$release"
+              for file in whitefootc-linux-x86_64.tar.gz SHA256SUMS whitefoot-release.json; do
+                curl -fsSL --retry 3 -o "$file" "https://github.com/Ming-Research/Whitefoot/releases/download/$release/$file"
+              done
+              test "$(grep -c '  whitefootc-linux-x86_64.tar.gz$' SHA256SUMS)" -eq 1
+              test "$(grep -c '  whitefoot-release\.json$' SHA256SUMS)" -eq 1
+              grep -E '  (whitefootc-linux-x86_64.tar.gz|whitefoot-release\.json)$' SHA256SUMS | sha256sum -c - > checksums.log
+              python3 -I - "$release" <<'PY'
+          import json
+          import sys
+          tag = sys.argv[1]
+          manifest = json.load(open('whitefoot-release.json'))
+          assert manifest['tag'] == tag, manifest
+          assert manifest['commit'].startswith(tag.rsplit('-', 1)[1]), manifest
+          assert isinstance(manifest['linux_llvm_major'], int), manifest
+          PY
+              tar -xzf whitefootc-linux-x86_64.tar.gz
+              test -x whitefootc
+              sha256sum whitefootc > compiler.sha256
+              rm whitefootc-linux-x86_64.tar.gz
+            )
+          done
+      - name: Match the releases' LLVM toolchain
+        run: |
+          set -euo pipefail
+          output=build/paged-alias-check
+          major=$(python3 -I - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('build/paged-alias-check')
+          majors = [json.loads((root / tag / 'whitefoot-release.json').read_text())['linux_llvm_major']
+                    for tag in ('wf-78223721f77d', 'wf-exp-e9d765cd6067')]
+          assert majors[0] == majors[1], ('compiler releases require different LLVM majors', majors)
+          print(majors[0])
+          PY
+          )
+          curl -fsSL --retry 3 -o "$output/llvm.sh" https://apt.llvm.org/llvm.sh
+          sudo bash "$output/llvm.sh" "$major"
+          sudo ln -sf "/usr/bin/clang-$major" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$major" /usr/bin/ld.lld
+          test "$(/usr/bin/clang -dumpversion | cut -d. -f1)" = "$major"
+          /usr/bin/clang --version >> "$output/machine.txt"
+          objdump --version >> "$output/machine.txt"
+      - name: Emit optimized objects and disassemble the witnesses
+        run: |
+          set -euo pipefail
+          output=build/paged-alias-check
+          source=research/investigations/m2-paged
+          cp "$source/element-directory.wf" "$output/"
+          python3 -I "$source/check-element-directory.py" self-test > "$output/parser-controls.log" 2>&1
+          for release in wf-78223721f77d wf-exp-e9d765cd6067; do
+            directory="$output/$release"
+            "$directory/whitefootc" --emit-llvm -o "$directory/element-directory.raw.ll" "$source/element-directory.wf" > "$directory/emission.log" 2>&1
+            # Retain the ordinary pointer ABI without caller specialization.
+            # Only visibility/noinline change; body optimizations remain enabled.
+            python3 -I "$source/check-element-directory.py" prepare "$directory/element-directory.raw.ll" "$directory/element-directory.ll" > "$directory/isolation.log" 2>&1
+            /usr/bin/clang -O2 -falign-functions=64 -Wno-override-module -x ir -c "$directory/element-directory.ll" -o "$directory/element-directory.o" > "$directory/object.log" 2>&1
+            objdump --no-show-raw-insn -dr "$directory/element-directory.o" > "$directory/disassembly.txt"
+          done
+          python3 -I "$source/check-element-directory.py" check "$output" > "$output/check.log" 2>&1
+      - name: Preserve an incomplete verdict if an earlier producer failed
+        if: always()
+        run: |
+          python3 -I - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('build/paged-alias-check')
+          root.mkdir(parents=True, exist_ok=True)
+          verdict = root / 'verdict.json'
+          if not verdict.exists():
+              verdict.write_text(json.dumps({'request': 'sg-paged-elem-dir-alias',
+                  'accepted': False, 'incomplete': True,
+                  'reason': 'An earlier producer failed; inspect emission/object/isolation and job logs.'}, indent=2) + '\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: paged-alias-check
+          path: |
+            build/paged-alias-check/
+            !build/paged-alias-check/**/whitefootc
+            !build/paged-alias-check/llvm.sh
