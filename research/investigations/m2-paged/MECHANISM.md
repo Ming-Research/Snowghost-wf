@@ -302,7 +302,12 @@ machine-code inspection.
 Start with **ecma262 sequential**, `WF_WORKERS=1`, because both its full layout
 and font-size update reject. Use `layout_oracle layout REPS PAGE UA
 SUFFIX=SHEET ...` and `layout_oracle edittime SCRIPT PAGE UA SUFFIX=SHEET ...`,
-the exact argument construction of `measure.py:28–38`. Run two one-layout
+the argument construction of `measure.py:27–46`, from the repository root.
+Every page, script, UA and mapped-sheet file path passed to the driver is
+relative to that root; the driver accepts RelativePath inputs rather than
+absolute filesystem paths (`renderer/oracle/support/support.wf:162–181`).
+The profiler reuses `measure.py`'s sheet mapping and records cwd, worker count,
+stderr text and its retained file beside each command and exit status. Run two one-layout
 and two first-font-size-pair samples, time them, and cap the next scale from
 those durations. Do not replace the acceptance script with a repeated pair:
 the full profile uses the complete X5 font-size script and preserves ordinals

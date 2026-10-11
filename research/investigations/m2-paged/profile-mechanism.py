@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import time
 
 ROOT = Path.cwd()
@@ -30,6 +31,7 @@ def load(name, path):
 
 inctime = load('inctime', 'research/investigations/incremental-layout/scripts/inctime.py')
 accounting = load('accounting', 'research/investigations/m2-edit-cost/fallback-cost.py')
+measurement = load('measurement', 'research/investigations/m2-paged/measure.py')
 
 
 def digest(path):
@@ -37,34 +39,69 @@ def digest(path):
 
 
 def driver(cohort):
-    return str(ARCHIVE / 'drivers' / f'{cohort}-layout-seq')
+    return str((ARCHIVE / 'drivers' / f'{cohort}-layout-seq').relative_to(ROOT))
+
+
+def file_argument(path):
+    path = Path(path)
+    return str(path.relative_to(ROOT) if path.is_absolute() else path)
 
 
 def command(cohort, operation, count):
-    inputs = ARCHIVE / 'inputs'
-    return [driver(cohort), operation, str(count), str(inputs / 'ecma262.html'),
-            'renderer/style/ua.css',
-            'assets/css/ecmarkup.css=' + str(inputs / 'ecma262-ecmarkup.css'),
-            'assets/css/print.css=' + str(inputs / 'ecma262-print.css')]
+    # Match the measured driver protocol. Its fs capability opens relative
+    # paths below cwd; absolute archive paths are not valid page/script inputs.
+    argument = file_argument(count) if operation == 'edittime' else str(count)
+    return [driver(cohort), operation, argument,
+            file_argument(ARCHIVE / 'inputs/ecma262.html'), *measurement.sheets('ecma262')]
 
 
-def run(label, args, timeout=180, required=True):
+def run(label, args, timeout=180, required=True, stdout_path=None):
     started = time.monotonic()
-    status, expired = None, False
-    with (OUT / (label + '.raw')).open('w') as stdout, (OUT / (label + '.stderr')).open('w') as stderr:
+    status, expired, spawn_error = None, False, None
+    stderr_path = OUT / (label + '.stderr')
+    stdout_path = stdout_path if stdout_path is not None else OUT / (label + '.raw')
+    with stdout_path.open('w') as stdout, stderr_path.open('w') as stderr:
         try:
             status = subprocess.run(args, stdout=stdout, stderr=stderr,
-                                    env=dict(os.environ, WF_WORKERS='1'), timeout=timeout).returncode
+                                    cwd=ROOT, env=dict(os.environ, WF_WORKERS='1'), timeout=timeout).returncode
         except subprocess.TimeoutExpired:
             expired = True
+        except OSError as problem:
+            spawn_error = str(problem)
     seconds = time.monotonic() - started
-    record = dict(label=label, command=args, seconds=seconds, exit=status, timeout=expired)
+    record = dict(label=label, command=args, cwd=str(ROOT), workers=1,
+                  seconds=seconds, exit=status, timeout=expired, spawn_error=spawn_error,
+                  stdout_path=file_argument(stdout_path),
+                  stderr_path=file_argument(stderr_path), stderr=stderr_path.read_text(errors='replace'))
     with (OUT / 'processes.jsonl').open('a') as output:
         output.write(json.dumps(record) + '\n')
     print(json.dumps(record), flush=True)
-    if required and (expired or status != 0):
+    if required and (expired or spawn_error is not None or status != 0):
         raise RuntimeError(('failed process', record))
     return record
+
+
+def invocation_controls():
+    """CI-only rejection witnesses for the previous absolute-path invocation."""
+    # The successful zero-work invocation checks the source-derived order and
+    # mappings without running a layout repetition. Normal pilots check edits.
+    native('invocation-relative-page', 'base', 'layout', 0)
+    absolute = command('base', 'layout', 0)
+    absolute[0] = str(ROOT / absolute[0])
+    absolute[3] = str(ROOT / absolute[3])
+    for index in (5, 6):
+        suffix, path = absolute[index].rsplit('=', 1)
+        absolute[index] = suffix + '=' + str(ROOT / path)
+    rejected = run('invocation-absolute-page', absolute, required=False)
+    if rejected['exit'] != 2 or rejected['stderr'] != 'layout_oracle: failed: page\n':
+        raise ValueError(('absolute page did not fail at the expected input boundary', rejected))
+    # PAGE is valid here, so an absolute script must fail at its own boundary.
+    script = ARCHIVE / 'scripts/ecma262-fontsize.edits'
+    absolute_script = command('base', 'edittime', script)
+    absolute_script[2] = str(script)
+    rejected = run('invocation-absolute-script', absolute_script, required=False)
+    if rejected['exit'] != 2 or rejected['stderr'] != 'layout_oracle: failed: edit script\n':
+        raise ValueError(('absolute script did not fail at the expected input boundary', rejected))
 
 
 def layout_counts(raw, count):
@@ -142,10 +179,9 @@ def profile(label, cohort, operation, count, expected, zero=False):
                 item = attribution.setdefault(key, dict(self_instructions=0, incoming_calls=0))
                 item['self_instructions'] += own[symbol]
                 item['incoming_calls'] += calls[symbol]
-            annotation = str(path) + '.annotation.txt'
-            with open(annotation, 'w') as output:
-                subprocess.run(['callgrind_annotate', '--inclusive=no', '--auto=no', '--threshold=99', str(path)],
-                               stdout=output, check=True)
+            run(f'{label}-part-{part}-annotation',
+                ['callgrind_annotate', '--inclusive=no', '--auto=no', '--threshold=99', str(path)],
+                stdout_path=Path(str(path) + '.annotation.txt'))
     with (OUT / 'phases.jsonl').open('a') as output:
         for row in rows:
             output.write(json.dumps(row) + '\n')
@@ -174,6 +210,11 @@ def main():
     if os.environ.get('GITHUB_ACTIONS') != 'true':
         raise ValueError('this investigation runs only in CI')
     OUT.mkdir(parents=True, exist_ok=True)
+    if sys.argv[1:] == ['--invocation-controls']:
+        invocation_controls()
+        return
+    if sys.argv[1:]:
+        raise ValueError('expected no arguments or --invocation-controls')
     machine = json.loads((ARCHIVE / 'sample/machine.json').read_text())
     # These are the inputs/checksums retained by the original frozen sample.
     inventory = {}
