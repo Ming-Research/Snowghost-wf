@@ -574,8 +574,8 @@ controls run only in CI and do not rerun the compiler.
 Static comparison of the specifications, maintained language examples and
 standard-library interfaces found no necessary renderer compatibility edit.
 The added swap placement restriction does not affect the renderer's owning
-Box, aggregate or element exchanges. CI acceptance remains unverified; the
-renderer is unchanged in this first step. The production Context invariant,
+Box, aggregate or element exchanges. The first hosted round accepts the
+unchanged renderer. The production Context invariant,
 writer maintenance, owner-motion split evidence and production inverse-write
 mutation follow only after this compatibility/proof baseline passes.
 
@@ -606,9 +606,22 @@ identical cohort pins: its historical base has the old pin, so it cannot
 measure this experiment without a separately prepared comparable baseline.
 No new timing result or change to the earlier rejection criterion is claimed.
 
-This first step awaits an owner commit/push and hosted CI results. No local
-compiler, build, test or measurement ran; no new compiler refusal or exact
-diagnostic is claimed before CI. No status board or approval log is written.
+The owner committed and pushed the first step as
+`ff7933bfc0f870fdf55bcfa981dfc1e2ae6f9cbf` and supplied these CI results:
+
+| Gate | Hosted run | Result supplied by owner |
+| --- | --- | --- |
+| Proof samples and evidence controls | [38143114752](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38143114752) | Growth accepted; corrupt inverse refused at its inverse obligation; natural control eligible/split; verifier controls passed. |
+| check | [38143114758](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38143114758) | Passed on the experiment compiler. |
+| layout-check | [38143114774](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38143114774) | Passed. |
+| oracles-m2 | [38143114771](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38143114771) | Passed. |
+| q139 percentage and retained identity | [38143114747](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38143114747) | Passed. |
+| q140 | [38143114763](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38143114763) | Passed. |
+| falsify-m2 | [38143114812](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38143114812) | Still running when the owner sent the continuation; completed mutants had passed. |
+
+The current session could not independently retrieve these runs because its
+GitHub API connection is unavailable. No local compiler, build, test or
+measurement ran, and no status board or approval log is written.
 
 A separate read-only review (requested model: `gpt-6.1-sol`, high effort)
 covered this first-step working diff
@@ -616,5 +629,112 @@ against `a9f3a69`, including the untracked negative proof sample and evidence
 checker, relevant design ancestors, pinned proof rules and workflow consumers.
 It found missing wrong/missing-input controls for the new evidence gate;
 the shared verifier and hosted controls above address that finding, and a
-focused rereview found no further actionable findings. Hosted acceptance,
-control execution and the production inverse remain unverified.
+focused rereview found no further actionable findings. The owner-supplied
+hosted results above settle the baseline acceptance and control execution;
+the production inverse remains unverified.
+
+### Natural writer-boundary witnesses, before renderer implementation
+
+The next hosted sample asks whether the existing liveness and helper
+boundaries admit the owner's invariant, and whether consuming publication
+fixes the source Context's invalid transient state. These sources are minimal
+semantic reductions, not alternate renderer implementations. All keep actual
+owner/order fields and runtime-capacity stores; no redundant inverse writes,
+new truth fields, substituted integer liveness or runtime uniqueness checks
+are introduced. No renderer interface or design-tree decision changes here.
+
+| Witness | Question and prior expected observation |
+| --- | --- |
+| [live-inverse-bare.wf](live-inverse-bare.wf) | Can the existing `nodes[k].links.live: Bool` directly guard the range type invariant? GRAM-5 requires comparisons, so formation may be refused. |
+| [live-inverse-equality.wf](live-inverse-equality.wf) | Can the same guard be written as `links.live == True()`? RANGE-1 excludes calls as range terms, so formation may be refused. |
+| [reserve-helper-boundary.wf](reserve-helper-boundary.wf) | Does field-scoped `sequence_reserve`, with unchanged-length contract, preserve the caller's inverse? The existing primitive growth witness is accepted; an ordinary helper call may instead lose its element facts at the caller exit. |
+| [reserve-helper-frame.wf](reserve-helper-frame.wf) | Can reserve state its natural old-element equality contract? RANGE-1 excludes entry images, so the proposed preservation clause may be refused at formation. |
+| [append-primitive.wf](append-primitive.wf) | Does primitive dynamic growth and target append preserve old in-bounds relations? It should accept: every existing order index is below the old target length, so no new target activates a previously out-of-bounds entry. |
+| [append-helper-boundary.wf](append-helper-boundary.wf) | Can the same old-target relation cross generic `push_item` and `push_or_fail`, with length-bound contracts and both normal and propagated-error exits? A helper-boundary refusal would be distinct from primitive append failure. |
+| [append-helper-frame.wf](append-helper-frame.wf) | Can generic append publish old-prefix equality? Its natural frame clause reads entry storage, excluded by RANGE-1. |
+| [publish-borrowed-invalid.wf](publish-borrowed-invalid.wf) | Does the checker reject changing the sole private root target's slot while its root entry remains live at slot zero? The source inverse is actually false at this borrowed exit, so it must be refused. |
+| [publish-consume.wf](publish-consume.wf) | Can publication consume/destructure one prepared root leaf, move its owned Paged entries, rebase its slot once and append it with matching destination order? It should accept if consuming transfers preserve the inherited parent fact; no redundant parent store repairs that fact. |
+
+`m2-paged-proof.yml` records each sample's raw status and complete diagnostic
+log, with acceptance/refusal summarized in `writer-boundaries.tsv`. An exit
+without the expected compiler diagnostic is an unclassified collection
+failure. Successful collection does not establish acceptance of these new
+samples; the earlier positive, negative and natural-split assertions remain
+mandatory. The same recorder's classification/rejection path also receives
+CI-only controls for a missing diagnostic, a crash status with diagnostic
+text, and missing status or log files. Their detection output is retained in
+`writer-boundary-controls.log`. If consuming publication is accepted, CI also builds and executes
+its retained-prefix, transferred-geometry, stable-slot, target and owned-page
+observations. Its one-leaf scope does not prove nested relocation or parallel
+subtree publication. Every new outcome and exact refusal remains unobserved
+until the owner supplies this round's CI.
+
+The production invariant waits for these results: a rejected Boolean guard
+would affect every live/tombstone writer, and a rejected natural frame
+contract would affect reserve and target append callers independently of
+splice relocation. Keep the natural witness and diagnostic when either is
+refused, rather than choosing a different representation or spelling.
+
+A fresh read-only review, requested with `gpt-6.1-sol` at high effort, covered
+the complete working diff and all witness sources against `ff7933b`, relevant
+design ancestors, the pinned proof rules and affected renderer boundaries.
+It found that the new refusal-classification gate lacked wrong/missing-input
+controls. Those controls now share the actual recorder's functions; focused
+rereview found no further findings within scope. Static G2/G3, DC1/DC2, R3,
+draft-pin T4 and repository hygiene passed; G1/DC3/C4 were not applicable.
+DC4, witness acceptance, proof transport, detector execution and runtime
+results remain unverified. No local compiler, build, test, check or
+measurement was run. Work stops for the owner's push and hosted witness
+results before choosing any production source update.
+
+#### Where should the prepared splice's ownership be consumed?
+
+**Question.** Should relocation and publication consume the prepared source
+within the destination publication transaction, or consume it at the earlier
+private relocation boundary and return its existing owned fields?
+
+**Background.** The current `relocate_splice(fresh: &Context, ...)` changes a
+prepared root's `entry_slot` from private slot zero to the destination slot,
+while its source root order still names that root at slot zero. Returning a
+reusable `Context` at that point violates the proposed inverse. Preparation,
+route construction and preflight planning still need the valid private
+Context before it is consumed. The new borrowed witness represents this
+invalid exit; the consuming witness represents only one prepared leaf and
+has no hosted result yet.
+
+**Options.**
+
+- **A (recommended): consume at destination publication.** The dependency
+  chain is preparation → route/preflight planning → consume/destructure →
+  independent payload rebasing → existing target-pool prefix appends →
+  matching owner-order linking → valid destination exit. Separate payloads
+  have no rebasing dependency on each other; their completed contents and
+  prefix publication determine when their order entries can be linked.
+  Source-invalid values remain local to one ownership transaction, and its
+  destination Context exit states the restored inverse. This requires
+  changing the publication interfaces and carrying the source ownership
+  through the checked target path. Nested targets and propagated exits still
+  need proof; the leaf witness cannot settle them.
+- **B: consume at private relocation and return the detached existing
+  fields.** The chain is preparation → route/preflight planning →
+  consume/destructure → independent payload rebasing → return those same
+  owned fields → existing target-pool prefix appends → matching order
+  linking → valid destination exit. This keeps relocation and publication
+  as separate helpers and adds no retained storage representation. It adds
+  a contract boundary that must describe the relation between multiple
+  returned stores and their scalar bases; contracts cannot refer back to
+  consumed source storage. Its interface and proof expressibility remain
+  unverified, and the owner must confirm that this transient interface
+  packaging fits the task's representation constraint before adoption. It
+  cannot serve as a workaround if Whitefoot refuses A's sound natural
+  transfer. Both candidates retain the same true prefix-append dependency;
+  no measured speed advantage is claimed. A is recommended because its
+  ownership and cross-field invariant are contained in the final publishing
+  boundary rather than transported across another interface.
+
+**Confidence 3/5.** The source mismatch and the preparation dependencies are
+visible in the existing writers. The recommendation's proof transport and
+nested-subtree coverage depend on this witness and later hosted evidence.
+Neither alternative is adopted; the owner must choose before renderer
+publication interfaces change. Clearing the soon-dropped source solely to
+satisfy a borrowed exit is excluded by the task's redundant-write rule.

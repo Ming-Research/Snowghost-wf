@@ -35,6 +35,99 @@ jobs:
             printf '%s\n' "$status" > "build/m2-paged-proof/$case.status"
             cat "build/m2-paged-proof/$case.log"
           done
+      - name: Record natural writer-boundary witnesses
+        env:
+          BOUNDARY_CASES: >-
+            live-inverse-bare live-inverse-equality
+            reserve-helper-boundary reserve-helper-frame
+            append-primitive append-helper-boundary append-helper-frame
+            publish-borrowed-invalid publish-consume
+        run: |
+          set -euo pipefail
+          release=$(sed -n 's/^release = //p' whitefoot.pin)
+          wfc=$(realpath "build/whitefoot/$release/whitefootc")
+          source=research/investigations/m2-paged
+          evidence=build/m2-paged-proof
+          for case in $BOUNDARY_CASES; do
+            status=0
+            /usr/bin/time -p "$wfc" --check --par-ledger "$source/$case.wf" > "$evidence/$case.log" 2>&1 || status=$?
+            printf '%s\n' "$status" > "$evidence/$case.status"
+            cat "$evidence/$case.log"
+          done
+          python3 - <<'PY'
+          import os
+          import re
+          import tempfile
+          from pathlib import Path
+          def read_classify(root, case):
+              status = 'missing'
+              try:
+                  status = int((root / f'{case}.status').read_text())
+                  log = (root / f'{case}.log').read_text()
+              except (OSError, ValueError):
+                  return case, 'unclassified failure', status
+              if status == 0:
+                  return case, 'accepted', status
+              if status == 1 and re.search(r'error\[[^]]+\]', log):
+                  return case, 'refused', status
+              return case, 'unclassified failure', status
+          def require_classified(outcomes):
+              unclassified = [case for case, verdict, _ in outcomes if verdict == 'unclassified failure']
+              if unclassified:
+                  raise ValueError('unclassified compiler evidence: ' + ', '.join(unclassified))
+          root = Path('build/m2-paged-proof')
+          outcomes = [read_classify(root, case) for case in os.environ['BOUNDARY_CASES'].split()]
+          rows = ['case\tverdict\texit\tdiagnostic_log\n']
+          for case, verdict, status in outcomes:
+              rows.append(f'{case}\t{verdict}\t{status}\t{case}.log\n')
+          summary = ''.join(rows)
+          (root / 'writer-boundaries.tsv').write_text(summary)
+          print(summary, end='')
+          require_classified(outcomes)
+          controls = [
+              ('exit 1 without diagnostic', '1\n', ''),
+              ('crash with diagnostic', '139\n', 'error[RANGE-3]: UndischargedRangeFact\n'),
+              ('missing status', None, 'error[RANGE-3]: UndischargedRangeFact\n'),
+              ('missing log', '1\n', None),
+          ]
+          detected = []
+          for label, status, log in controls:
+              with tempfile.TemporaryDirectory() as directory:
+                  sample = Path(directory)
+                  if status is not None:
+                      (sample / 'control.status').write_text(status)
+                  if log is not None:
+                      (sample / 'control.log').write_text(log)
+                  try:
+                      require_classified([read_classify(sample, 'control')])
+                  except ValueError:
+                      detected.append(f'detected {label}\n')
+                  else:
+                      raise SystemExit('recorder accepted wrong evidence: ' + label)
+          (root / 'writer-boundary-controls.log').write_text(''.join(detected))
+          print(''.join(detected), end='')
+          print('Witness outcomes recorded; collection success does not establish acceptance.')
+          PY
+      - name: Execute consuming publication if its proof is accepted
+        run: |
+          set -euo pipefail
+          evidence=build/m2-paged-proof
+          if [ "$(cat "$evidence/publish-consume.status")" -eq 0 ]; then
+            release=$(sed -n 's/^release = //p' whitefoot.pin)
+            wfc=$(realpath "build/whitefoot/$release/whitefootc")
+            status=0
+            /usr/bin/time -p "$wfc" --par --par-ledger -o "$evidence/publish-consume" research/investigations/m2-paged/publish-consume.wf > "$evidence/publish-consume-build.log" 2>&1 || status=$?
+            printf '%s\n' "$status" > "$evidence/publish-consume-build.status"
+            cat "$evidence/publish-consume-build.log"
+            test "$status" -eq 0
+            status=0
+            WF_WORKERS=4 "$evidence/publish-consume" > "$evidence/publish-consume-runtime.log" 2>&1 || status=$?
+            printf '%s\n' "$status" > "$evidence/publish-consume-runtime.status"
+            cat "$evidence/publish-consume-runtime.log"
+            test "$status" -eq 0
+          else
+            printf '%s\n' 'Execution awaits acceptance of the natural publication proof.' > "$evidence/publish-consume-runtime-not-attempted.txt"
+          fi
       - name: Reachable control emission and execution
         run: |
           set -euo pipefail
