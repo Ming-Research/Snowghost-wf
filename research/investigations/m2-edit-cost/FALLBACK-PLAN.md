@@ -244,6 +244,55 @@ diagnostics, never runtime dispatch keys for benchmark-specific behavior.
 The exact failing subguards and local checkpoint sizes must be traced before
 claiming coverage of a historical ID.
 
+### Increment 0 trace
+
+Before implementing increment 1, trace the 60 original Apollo11 X5 block
+operations against the preserved page capture and unchanged path inventory.
+The question is whether the 18 historical reason-9 refusals have a neutral
+complete-block source seam despite their geometry refusal, and how much source
+the exact fallback checkpoint rebuilds outside the edited subtree. The trace
+records actual failing guard locations and predicates, checkpoint identities,
+existing and constructed payload/route counts, source-neutral evidence, and
+the specific floats and consumers behind each reason-9 dependency.
+
+These criteria precede the run. If more than half of the 18 reason-9 operations
+require mixed-inline or stateful source repair, move the corresponding work
+from increment 4 or 9 ahead of neutral-source retention. Any source-neutral
+classification that lacks a complete seam/state proof leaves that operation
+unsettled; missing data does not count as neutrality. If reason 7's two edits
+require a different construction boundary, bring that required checkpoint work
+forward as well, since their reconstruction budget remains decisive. If the
+reason-9 cohort is predominantly neutral and rebuilds substantial unrelated
+source, keep increments 1 and 2 first. An error mapped to numeric reason 9 is
+reported separately and requires diagnosis before selecting float work.
+
+Diagnostic instrumentation follows `fallback-phase.py`: it is applied only to
+a private CI source tree, with exact guard anchors and an archived source diff.
+The ordinary renderer and oracle contain no switch, trace field or branch when
+this patch is absent. The diagnostic applies to structural edits generally;
+the workflow's Apollo script selects the observation cohort, not renderer
+behavior. Read-only source/geometry inspection adds trace work in that build
+without admitting a splice or altering reconstruction. Both ordinary and
+instrumented oracles must pass the unchanged path/correctness fixture and have
+equal ordinary checking output after diagnostic records are removed.
+
+The temporary `fallback-trace.yml` hosted workflow produces
+`fallback-trace.csv` and a summary grouped by exact guard and source scope.
+Its results are diagnostic evidence, not latency or instruction measurements.
+The workflow and its temporary helpers are removed before readiness after the
+evidence is archived. Hosted runners provide correctness, instruction counts
+and traces; later precise timing runs on the 14900K through the coordinator's queue.
+
+An unproved outside construction correspondence is reported separately from a
+demonstrated mixed-inline or counter/quote seam; it cannot by itself establish
+that wider reconstruction is necessary. Missing float-proof contributors fail
+the trace instead of supplying an inferred consumer.
+
+Results pending CI: source-neutral reason-9 operations __/18; reason-7 source
+scopes __; mixed-inline/stateful checkpoint requirements __; exact guard
+groups __; existing/constructed/outside-subtree counts __. The selected
+increment order remains pending these observations.
+
 ### Increment 1 — Retain complete-block source on a geometry refusal
 
 **Change.** Separate `structure_splice`'s source-neutral complete-block proof
@@ -309,7 +358,7 @@ reconstruction, preparation, layout and bridge costs separately for all
 reduced source/directory work, not reduced float replay or attainment of 1x.
 Reject source-retention benefit if unrelated directory copying remains the
 dominant path or source construction does not shrink. Two small forward/inverse
-pilots precede any larger batch; owner-driven CI alone runs them.
+pilots precede any larger batch; CI alone runs them.
 
 ### Increment 2 — Reuse ordinary interiors through changed float dependencies
 
@@ -550,7 +599,7 @@ required detection.
 
 ### Shared validation and cost protocol
 
-Owner-driven CI performs every build, compiler witness, renderer run, test and
+CI performs every build, compiler witness, renderer run, test and
 measurement; this planning round runs none. Reuse `.github/workflows/check.yml`,
 `oracles-m2.yml`, `falsify-m2.yml`, Q139/Q140 workflows and the existing
 `fallback-cost.py`/`fallback-phase.py` machinery where applicable. Amend harness
@@ -627,10 +676,11 @@ pinned syntax: `doc` fields, `else if`, and all constructor fields named.
 
 A witness lives in this project's investigation only while it demonstrates the
 downstream need. If CI shows an actual language/compiler gap, the primary
-session files it into Whitefoot with the smallest semantic program, pinned
-revision, direct compiler status, expected proof/permission and an acceptance
-test (including emitted parallel opportunity when relevant). This round makes
-no board writes and files no request. Whitefoot's own session changes its
+session writes the smallest semantic witness under this investigation and tells
+the owner, who files it into Whitefoot. Include the pinned revision, direct
+compiler status, expected proof/permission and an acceptance test (including
+emitted parallel opportunity when relevant). Continue other independent lines.
+This round makes no board writes and files no request. Whitefoot's own session changes its
 repository; Snowghost verifies the delivered fix with its witness and pinned
 compiler through CI. No storage migration or experiment pin is preauthorized
 by a refusal. Continue independent planning/implementation lines, and stop the
@@ -656,26 +706,19 @@ the existing publication functions. Keep `SlotPages`, `EntrySequence` and
 `RouteTable` backing internals unchanged. Block/Paragraph/Context payloads
 currently live in `Box<Slots<...>>` and are accessed through their existing
 typed owned slices; `sequence.wf` does not expose a borrowed generic payload
-accessor. The plan interprets the storage instruction as preserving those
-existing access paths and never inspecting new page internals. A literal ban
-on those current typed payload accesses cannot be implemented with today's
-API; it would require clarification before implementation, not an invented
-accessor or a silent storage rewrite. Paged remains later stacked work.
+accessor. The owner confirmed these existing access paths are allowed. Changing
+backing internals or adding a parallel storage layer is excluded. Paged remains
+later stacked work.
 
-**Measurement protocol clarification needed before timing.** The design's
-historical protocol says GitHub-hosted CI only; current owner-wide machine
-rules assign precise timing/performance measurement to the 14900K through CI.
-The owner drives CI in this task. Prepare correctness and instruction/proof
-evidence for hosted CI, and arrange precise timing through owner-scheduled
-14900K CI under the current machine rule, explicitly recording the selected
-protocol before measurements. Do not mix machines in a comparison or silently
-treat historical hosted timings as a current 14900K result. No run is requested
-or performed by this plan-only round.
+**CI and measurement protocol.** Hosted runners provide correctness,
+instruction counts and traces; precise timing runs on the 14900K
+through the coordinator's queue. Each comparison stays on one machine under
+matched conditions. Historical hosted timings are not current 14900K evidence.
 
 The following uncertainties must remain visible in implementation reports:
 
 1. **Exact source domains for the 22 edits.** The old reason is not an exact
-   failing guard. Increment 1 traces subguards and checkpoint boundaries. If
+   failing guard. Increment 0 traces subguards and checkpoint boundaries. If
    dominant reason-9 edits require stateful/mixed source reconstruction, move
    the necessary checkpoint increment forward before claiming early coverage;
    do not broaden neutrality by assumption. Missing exact checkpoints may
@@ -705,4 +748,4 @@ The following uncertainties must remain visible in implementation reports:
 This plan changes no compiler pin or submodule and files no Whitefoot gap.
 No tests, compiler runs, renderer runs or performance measurements have been
 performed for it; implementation acceptance remains unverified until the
-owner-driven CI experiments and completion review above.
+CI experiments and completion review above.

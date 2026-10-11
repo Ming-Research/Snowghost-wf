@@ -1,0 +1,93 @@
+# Temporary increment-0 diagnostic; retire after its evidence is archived.
+name: fallback-trace
+on:
+  push:
+    branches: [research/m2-fallback]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  trace:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+      - name: Pinned compiler, LLVM and oracle fonts
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          make -s compiler toolchain oracle-fonts
+      - name: Record inputs and prepare the private diagnostic source
+        run: |
+          set -euo pipefail
+          mkdir -p build/fallback-trace build/research/concurrency
+          git rev-parse HEAD > build/fallback-trace/revision.txt
+          git rev-parse HEAD:renderer >> build/fallback-trace/revision.txt
+          cat whitefoot.pin >> build/fallback-trace/revision.txt
+          git submodule status >> build/fallback-trace/revision.txt
+          uname -a > build/fallback-trace/machine.txt
+          lscpu >> build/fallback-trace/machine.txt
+          cat /etc/os-release >> build/fallback-trace/machine.txt
+          tar -xzf tests/layout/fixtures/apollo11/inputs.tar.gz -C build/research/concurrency
+          sha256sum -c tests/layout/fixtures/apollo11/inputs.sha256
+          git worktree add --detach build/trace-tree HEAD
+          python3 research/investigations/m2-edit-cost/fallback-trace-patch.py patch build/trace-tree --manifest build/fallback-trace/guards.json
+          git -C build/trace-tree diff HEAD > build/fallback-trace/diagnostic-source.diff
+          while IFS= read -r source; do
+            status=0
+            git diff --no-index -- /dev/null "build/trace-tree/$source" >> build/fallback-trace/diagnostic-source.diff || status=$?
+            test "$status" -eq 1
+          done < <(git -C build/trace-tree ls-files --others --exclude-standard renderer)
+          tar -czf build/fallback-trace/diagnostic-renderer.tar.gz -C build/trace-tree renderer
+          test -s build/fallback-trace/diagnostic-source.diff
+      - name: Build unchanged and diagnostic sequential oracles
+        run: |
+          set -euo pipefail
+          release=$(sed -n 's/^release = //p' whitefoot.pin)
+          trace_compiler=$(realpath "build/whitefoot/$release/whitefootc")
+          cp "build/whitefoot/$release/whitefoot-release.json" build/fallback-trace/
+          sha256sum "$trace_compiler" > build/fallback-trace/compiler.sha256
+          clang --version > build/fallback-trace/clang.txt
+          failed=0
+          for cohort in ordinary diagnostic; do
+            tree="$GITHUB_WORKSPACE"
+            if [ "$cohort" = diagnostic ]; then tree="$GITHUB_WORKSPACE/build/trace-tree"; fi
+            status=0
+            (cd "$tree/renderer" && "$trace_compiler" --cache "$RUNNER_TEMP/fallback-$cohort-cache" --fragments function --graph modules.wfg --entry layout_oracle -o "$GITHUB_WORKSPACE/build/fallback-trace/layout_oracle_$cohort") > "build/fallback-trace/$cohort-build.log" 2>&1 || status=$?
+            cat "build/fallback-trace/$cohort-build.log"
+            echo "$status" > "build/fallback-trace/$cohort-build.status"
+            if [ "$status" -ne 0 ]; then failed=1; fi
+          done
+          test "$failed" -eq 0
+      - name: Generate the canonical original Apollo11 block script
+        run: |
+          set -euo pipefail
+          cp build/fallback-trace/layout_oracle_ordinary build/layout_oracle_seq
+          sh research/investigations/incremental-layout/run.sh prepare apollo11
+          sha256sum build/x5/scripts/apollo11-block.edits build/research/concurrency/* build/fonts/* renderer/style/ua.css tests/layout/fixtures/apollo11/block-paths.json > build/fallback-trace/inputs.sha256
+      - name: Forward/inverse pilot then all 60 operations with fresh full layout
+        env:
+          WF_WORKERS: 1
+        run: |
+          set -euo pipefail
+          python3 research/investigations/m2-edit-cost/fallback-trace.py run --ordinary build/fallback-trace/layout_oracle_ordinary --diagnostic build/fallback-trace/layout_oracle_diagnostic --script build/x5/scripts/apollo11-block.edits --inventory tests/layout/fixtures/apollo11/block-paths.json --manifest build/fallback-trace/guards.json --out build/fallback-trace
+          python3 research/investigations/incremental-layout/scripts/inctime.py --check build/x5/scripts/apollo11-block.edits build/fallback-trace/ordinary.raw
+          python3 research/investigations/incremental-layout/scripts/inctime.py --check build/x5/scripts/apollo11-block.edits build/fallback-trace/diagnostic.ordinary
+          python3 research/investigations/incremental-layout/scripts/splice-cases.py --check-paths build/fallback-trace/expected.paths build/fallback-trace/ordinary.raw
+          python3 research/investigations/incremental-layout/scripts/splice-cases.py --check-paths build/fallback-trace/expected.paths build/fallback-trace/diagnostic.ordinary
+          python3 research/investigations/incremental-layout/scripts/roundtrip.py build/fallback-trace/ordinary.raw build/x5/scripts/apollo11-block.edits
+          python3 research/investigations/incremental-layout/scripts/roundtrip.py build/fallback-trace/diagnostic.ordinary build/x5/scripts/apollo11-block.edits
+          cat build/fallback-trace/fallback-trace.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fallback-trace-${{ github.sha }}
+          path: |
+            build/fallback-trace/
+            build/x5/scripts/apollo11-block.edits
+            build/x5/apollo11.nodes
+            build/x5/apollo11.dump
+            build/research/concurrency/
