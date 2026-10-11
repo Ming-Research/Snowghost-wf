@@ -1,0 +1,133 @@
+# Temporary hosted investigation: archive its artifact, then remove this
+# workflow and research/investigations/v127-inline-profile/profile.py.
+name: inline-profile
+on:
+  push:
+    branches: [research/v127-inline-profile]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: inline-profile-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  profile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 44
+    env:
+      BASE: 903dafc2f20452b2e6ea0362b4c259c112051c54
+      BASE_PIN: wf-78223721f77d
+      CANDIDATE_PIN: wf-exp-ce22645f11a0
+      WF_WORKERS: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Start bounded investigation and retain its source
+        run: |
+          set -euo pipefail
+          out=build/inline-profile
+          mkdir -p "$out/drivers" "$out/scripts" "$out/inputs" "$out/fonts" "$out/source"
+          # Leave several minutes before the 44-minute hard job limit for
+          # failure reporting, checksums and artifact upload.
+          echo "INLINE_DEADLINE=$(($(date +%s) + 38 * 60))" >> "$GITHUB_ENV"
+          cp .github/workflows/inline-profile.yml research/investigations/v127-inline-profile/profile.py "$out/source/"
+          printf '# Hosted v0.127 inline profile\n\nFAILED or incomplete: preparation/profiling has not completed. See step logs and retained process records.\n' > "$out/summary.md"
+          git rev-parse HEAD > "$out/candidate.revision"
+          git diff "$BASE" HEAD -- renderer whitefoot.pin whitefoot-kit > "$out/base-candidate-source.diff"
+          { uname -a; lscpu; cat /etc/os-release; } > "$out/machine.txt"
+
+      - name: Hosted profiler and the E1 Ubuntu noble font set
+        run: |
+          set -euo pipefail
+          remaining=$(($INLINE_DEADLINE - $(date +%s)))
+          timeout "$remaining" sudo apt-get -o Acquire::Retries=3 update
+          remaining=$(($INLINE_DEADLINE - $(date +%s)))
+          timeout "$remaining" sudo apt-get install -y --no-install-recommends valgrind binutils fonts-dejavu-core fonts-dejavu-mono fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          make -s oracle-fonts
+          test "$(find build/fonts -type f | wc -l)" -eq 47
+          cp build/fonts/* build/inline-profile/fonts/
+          dpkg-query -W 'fonts-*' > build/inline-profile/fonts-packages.txt
+          valgrind --version >> build/inline-profile/machine.txt
+
+      - name: Build each sequential E1 layout_oracle with its own pinned compiler
+        run: |
+          set -euo pipefail
+          out=$GITHUB_WORKSPACE/build/inline-profile
+          for cohort in base candidate; do
+            revision=$BASE
+            expected=$BASE_PIN
+            if [ "$cohort" = candidate ]; then revision=$(git rev-parse HEAD); expected=$CANDIDATE_PIN; fi
+            tree=$RUNNER_TEMP/inline-profile-$cohort
+            git worktree add --detach "$tree" "$revision"
+            git -C "$tree" submodule update --init whitefoot-kit design/skill
+            test "$(sed -n 's/^release = //p' "$tree/whitefoot.pin")" = "$expected"
+            git -C "$tree" rev-parse HEAD HEAD:renderer HEAD:whitefoot.pin HEAD:whitefoot-kit > "$out/drivers/$cohort.source.txt"
+            cp "$tree/whitefoot.pin" "$out/drivers/$cohort.whitefoot.pin"
+            # make compiler verifies the release archive; make toolchain reads
+            # that tree's manifest and installs its LLVM major before its build.
+            remaining=$(($INLINE_DEADLINE - $(date +%s)))
+            timeout "$remaining" make -s -C "$tree" compiler toolchain > "$out/drivers/$cohort.compiler.log" 2>&1
+            make -s -C "$tree" toolchain-check >> "$out/drivers/$cohort.compiler.log" 2>&1
+            wfc=$tree/build/whitefoot/$expected/whitefootc
+            cp "$tree/build/whitefoot/$expected/whitefoot-release.json" "$out/drivers/$cohort.compiler-release.json"
+            sha256sum "$wfc" > "$out/drivers/$cohort.compiler.sha256"
+            { /usr/bin/clang --version; ld.lld --version; } > "$out/drivers/$cohort.toolchain.txt"
+            remaining=$(($INLINE_DEADLINE - $(date +%s)))
+            # Keep the E1 flags exactly. These binaries retain named symbols as
+            # the m2-paged profiles did; no stripping or altered optimization.
+            (cd "$tree/renderer" && timeout "$remaining" "$wfc" --cache "$tree/build/whitefoot-cache" --fragments function --graph modules.wfg --entry layout_oracle -o "$out/drivers/$cohort-layout_oracle") > "$out/drivers/$cohort.build.log" 2>&1
+            nm -n -S "$out/drivers/$cohort-layout_oracle" > "$out/drivers/$cohort.nm"
+            objdump -d -C "$out/drivers/$cohort-layout_oracle" > "$out/drivers/$cohort.objdump"
+          done
+
+      - name: Capture the same page URLs and generate the unchanged E1 scripts
+        run: |
+          set -euo pipefail
+          data=build/research/concurrency
+          # The pinned html5 bytes must match. Apollo's revision-pinned article
+          # has request-dependent bytes: capture fresh once, as time-14900k's
+          # initial capture does, and retain identical inputs for both drivers.
+          mkdir -p "$data"
+          sed -n 's/^\(html5.html\|apollo11[^ ]*\) \([^ ]*\) \([^ ]*\)$/\1 \2 \3/p' research/investigations/concurrency/run.sh > build/inline-profile/page-source-pins.txt
+          test "$(wc -l < build/inline-profile/page-source-pins.txt)" -eq 4
+          while read -r name url pinned; do
+            remaining=$(($INLINE_DEADLINE - $(date +%s)))
+            test "$remaining" -gt 0
+            timeout "$remaining" curl -fsSL --retry 2 --max-time 60 -o "$data/$name" "$url" >> build/inline-profile/fetch.log 2>&1
+            if [ "$name" = html5.html ]; then
+              printf '%s  %s\n' "$pinned" "$data/$name" | sha256sum -c -
+            fi
+          done < build/inline-profile/page-source-pins.txt
+          test -f "$data/html5.html"
+          rm -f "$data"/*.unverified
+          cp "$data"/apollo11* "$data/html5.html" renderer/style/ua.css build/inline-profile/inputs/
+          cp build/inline-profile/drivers/base-layout_oracle build/layout_oracle_seq
+          remaining=$(($INLINE_DEADLINE - $(date +%s)))
+          timeout "$remaining" sh research/investigations/incremental-layout/run.sh prepare apollo11 html5 > build/inline-profile/prepare.log 2>&1
+          cp build/x5/scripts/* build/inline-profile/scripts/
+          cp build/x5/*.nodes build/x5/*.dump build/inline-profile/inputs/
+          cp research/investigations/incremental-layout/scripts/edits.py research/investigations/incremental-layout/scripts/inctime.py research/investigations/incremental-layout/run.sh build/inline-profile/source/
+
+      - name: Time 1-edit pilots, select bounded paired prefixes and profile
+        run: python3 -I research/investigations/v127-inline-profile/profile.py
+
+      - name: Retain checksums and publish the artifact summary
+        if: always()
+        run: |
+          set -euo pipefail
+          out=build/inline-profile
+          if [ -d "$out" ]; then
+            (cd "$out" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
+            if [ -f "$out/summary.md" ]; then cat "$out/summary.md" >> "$GITHUB_STEP_SUMMARY"; fi
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: inline-profile-${{ github.run_id }}
+          path: build/inline-profile/
+          compression-level: 1
+          if-no-files-found: error
