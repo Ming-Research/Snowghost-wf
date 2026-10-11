@@ -123,11 +123,15 @@ def parse_callgrind(text):
 def parse_objdump(text):
     blocks, current = {}, None
     for line in text.splitlines(keepends=True):
-        match = re.fullmatch(r'[0-9a-fA-F]+ <(.+)>:\s*', line.strip())
+        match = re.fullmatch(r'([0-9a-fA-F]+) <(.+)>:\s*', line.strip())
         if match:
-            current = match[1]
+            # Local symbols such as coroutine resume/destroy pieces repeat
+            # across modules; later copies are keyed by their address.
+            current = match[2]
             if current in blocks:
-                raise ValueError('duplicate disassembly function')
+                current = f'{current}@{match[1]}'
+                if current in blocks:
+                    raise ValueError('duplicate disassembly address')
             blocks[current] = line
         elif current:
             blocks[current] += line
@@ -160,7 +164,10 @@ def dry_run():
                    '0000000000000020 <wf_dom.set_links>:\n  20: c3 ret\n')
     if '(%rsp)' not in parse_objdump(disassembly)['wf_caller']:
         raise ValueError('valid objdump lost pre-call argument store')
-    for wrong in ('no functions\n', disassembly + '0000000000000030 <wf_caller>:\n'):
+    repeated = parse_objdump(disassembly + '0000000000000030 <wf_caller>:\n  30: c3 ret\n')
+    if '(%rsp)' not in repeated['wf_caller'] or '30: c3' not in repeated['wf_caller@0000000000000030']:
+        raise ValueError('repeated local label replaced the first function')
+    for wrong in ('no functions\n', disassembly + '0000000000000030 <wf_caller>:\n' * 2):
         try:
             parse_objdump(wrong)
         except ValueError:
