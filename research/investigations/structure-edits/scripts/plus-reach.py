@@ -1,7 +1,7 @@
 """CI fixtures for sg-bl-02-02's bounded structural + reaches.
 
 Run from the repository root:
-  python3 plus-reach.py LAYOUT STYLE OUTDIR [--pilot|--before|--mutant]
+  python3 research/investigations/structure-edits/scripts/plus-reach.py LAYOUT STYLE OUTDIR [--pilot|--before|--mutant]
 
 Each edit starts with a fresh page. Node identifiers come from LAYOUT's
 nodes mode, never from assumed parser allocation. Removal cases detach
