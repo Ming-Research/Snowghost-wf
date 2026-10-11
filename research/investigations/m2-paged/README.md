@@ -378,3 +378,11 @@ T(0) from T(repetitions), divided by repetitions. Per-round values are retained;
 paired-ratio medians and both independent twins determine the original noise
 rule. A cell whose round classifications disagree is unverified. RSS is the
 maximum process high-water mark across rounds, never a subtraction of peaks.
+
+The full hosted comparison uses one job per page/mode. Each job keeps base,
+base twin, candidate and candidate twin on the same runner for all three
+interleaved rounds; no ratios cross machines. The independent sample builds
+are reused only when the measured ancestor's renderer, compiler pin and kit
+are unchanged. The artifact records the measured source revision separately
+from the workflow revision. This partitions elapsed work without changing
+the comparison or the prior criterion.

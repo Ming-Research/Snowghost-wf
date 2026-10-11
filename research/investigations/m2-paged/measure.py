@@ -63,8 +63,13 @@ def main():
     os.environ['PHASE'] = phase
     output = ROOT / phase
     output.mkdir(parents=True, exist_ok=True)
+    pages = (os.environ['MEASURE_PAGE'],) if phase == 'matrix' else PAGES
+    modes = (os.environ['MEASURE_MODE'],) if phase == 'matrix' else ('seq', 'par4')
+    if any(p not in PAGES for p in pages) or any(m not in ('seq', 'par4') for m in modes):
+        raise ValueError('unknown comparison cell')
     machine = dict(platform=platform.platform(), cpu=subprocess.check_output(['lscpu'], text=True),
-                   compiler=Path('whitefoot.pin').read_text().strip(), revision=os.environ['GITHUB_SHA'],
+                   compiler=Path('whitefoot.pin').read_text().strip(), revision=(ROOT / 'drivers/candidate.revision').read_text().strip(),
+                   workflow_revision=os.environ['GITHUB_SHA'], pages=pages, modes=modes,
                    rounds=0 if phase == 'sample' else 3, repetitions=repetitions,
                    hashes={str(p): digest(p) for folder in ('drivers', 'inputs', 'scripts') for p in (ROOT / folder).glob('*') if p.is_file()})
     machine['font_hashes'] = {str(p): digest(p) for p in Path('build/fonts').rglob('*') if p.is_file()}
@@ -97,8 +102,8 @@ def main():
                 raw, _ = run(f'small-{sample}-edit-{kind}', 'base', 'layout', 'seq', 'apollo11', 'edittime', sample_script)
                 parser.read(raw, parser.script_operations(sample_script))
         return
-    for page in PAGES:
-        for mode in ('seq', 'par4'):
+    for page in pages:
+        for mode in modes:
             for cohort in COHORTS:
                 for stage, operation in [('style', 'all'), ('layout', 'layout')]:
                     run(f'warm-{cohort}-{page}-{mode}-{stage}', cohort, stage, mode, page, operation, 1)

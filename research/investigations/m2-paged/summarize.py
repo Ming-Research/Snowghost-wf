@@ -61,8 +61,8 @@ def main():
               '| Page | Mode | Stage | Base ms | Candidate ms | Ratio | Noise | Verdict |',
               '|---|---|---|---:|---:|---:|---:|---|']
     results, rss = [], []
-    for page in ('ecma262', 'html5', 'apollo11'):
-        for mode in ('seq', 'par4'):
+    for page in machine['pages']:
+        for mode in machine['modes']:
             for stage in ('style', 'layout'):
                 values, peaks = {}, {}
                 for cohort in COHORTS:
@@ -77,8 +77,8 @@ def main():
                 output.append(f'| {page} | {mode} | {stage} | {median(values["base"]):.3f} | {median(values["candidate"]):.3f} | {ratio:.4f} | {noise:.1%} | {verdict} |')
                 rss.append((page, mode, stage, peaks))
     output += ['', '| Page | Mode | Kind | Component | Base us | Candidate us | Ratio | Noise | Verdict |', '|---|---|---|---|---:|---:|---:|---:|---|']
-    for page in ('ecma262', 'html5', 'apollo11'):
-        for mode in ('seq', 'par4'):
+    for page in machine['pages']:
+        for mode in machine['modes']:
             for kind in ('word', 'sentence', 'colour', 'fontsize', 'rootfont', 'block'):
                 selected = [e for e in edits if (e['page'], e['mode'], e['kind']) == (page, mode, kind)]
                 if len(selected) != rounds * 4:

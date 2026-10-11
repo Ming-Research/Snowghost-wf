@@ -11,7 +11,7 @@ on:
         default: sample
       sample_run:
         type: string
-        description: Successful sample artifact on this exact revision
+        description: Successful sample artifact with identical renderer and compiler inputs
       repetitions:
         type: string
         default: '3'
@@ -25,6 +25,12 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[paged-time]')
     runs-on: ubuntu-24.04
     timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(inputs.phase == 'matrix' && '{"page":["ecma262","html5","apollo11"],"mode":["seq","par4"]}' || '{"page":["sample"],"mode":["sample"]}') }}
+    env:
+      MEASURE_PAGE: ${{ matrix.page }}
+      MEASURE_MODE: ${{ matrix.mode }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -79,10 +85,12 @@ jobs:
           sh research/investigations/incremental-layout/run.sh prepare ecma262 html5 apollo11
           cp -R build/research/concurrency build/m2-paged-time/inputs
           cp -R build/x5/scripts build/m2-paged-time/scripts
-      - name: Restore executable modes and require exact sample revision
+      - name: Restore executable modes and require identical compiled source
         run: |
           set -euo pipefail
-          test "$(cat build/m2-paged-time/drivers/candidate.revision)" = "$GITHUB_SHA"
+          sample_revision=$(cat build/m2-paged-time/drivers/candidate.revision)
+          git merge-base --is-ancestor "$sample_revision" "$GITHUB_SHA"
+          git diff --exit-code "$sample_revision" "$GITHUB_SHA" -- renderer whitefoot.pin whitefoot-kit
           chmod +x build/m2-paged-time/drivers/*-seq build/m2-paged-time/drivers/*-par4
       - name: Measure and retain every process result
         env:
@@ -94,6 +102,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: m2-paged-time-${{ env.PHASE }}
+          name: m2-paged-time-${{ env.PHASE }}${{ inputs.phase == 'matrix' && format('-{0}-{1}', matrix.page, matrix.mode) || '' }}
           path: build/m2-paged-time/
           compression-level: 1
