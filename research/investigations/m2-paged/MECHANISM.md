@@ -14,8 +14,9 @@ Recommendation: bring the verified element/directory separation gap to
 Whitefoot with the witness below, and complete the matched isolated update
 profiles before assigning its share of the regression. Changing Snowghost's
 spelling to conceal it is not the remedy.
-No renderer change, compiler run, build, test, or measurement was performed
-locally. Local calculations use declared layout ceilings and text processing
+No renderer change, compiler run, build, renderer test or performance
+measurement was performed locally. The file-reader checks below ran locally
+with `python3 -I` under the user's explicit authorization. Local calculations use declared layout ceilings and text processing
 of the downloaded CI artifact; they are not performance measurements.
 
 ## Scope and source coordinates
@@ -1114,3 +1115,99 @@ Existing run 3 allocation-count evidence and the established Whitefoot
 metadata gap stand unchanged. The next run must complete the corrected pilots,
 selected-pair cache comparison and allocation/counter passes before assigning
 memory causes. The 900-second per-process cap remains unchanged.
+
+
+## Second memory run: footer reconciliation and file-only replay
+
+Evidence: [CI run 38149516009](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38149516009),
+revision `7bff6eb`, uploaded `paged-memory` artifact. The new marker sequence
+worked: eight numbered pilot parts have the four expected triggers for each
+of two edits. The next failure was in the file parser, before the second cache
+pilot or any production cache, perf or DHAT measurement.
+
+The parser treated `summary:` as the body conservation total and ignored
+`totals:`. In `cache-pilot-0.callgrind.1`, exclusive rows match the footer
+exactly; the header differs:
+
+| Event | Exclusive sum = `totals:` | `summary:` | Summary minus totals |
+| --- | ---: | ---: | ---: |
+| Ir | 24,641,250,531 | 24,641,250,537 | +6 |
+| Dr | 6,259,837,281 | 6,259,837,284 | +3 |
+| Dw | 3,932,194,501 | 3,932,194,501 | 0 |
+| I1mr | 52,118,324 | 52,118,324 | 0 |
+| D1mr | 64,427,830 | 64,427,830 | 0 |
+| D1mw | 31,410,857 | 31,410,857 | 0 |
+| ILmr | 24,859 | 24,859 | 0 |
+| DLmr | 21,331,406 | 21,331,406 | 0 |
+| DLmw | 21,265,765 | 21,265,765 | 0 |
+| Bc | 3,303,830,411 | 3,303,830,411 | 0 |
+| Bcm | 130,320,804 | 130,320,804 | 0 |
+| Bi | 93,566,119 | 93,566,119 | 0 |
+| Bim | 17,099,689 | 17,099,689 | 0 |
+
+The [Callgrind format specification](https://valgrind.org/docs/manual/cl-format.html#cl-format.reference.header)
+assigns `totals:` to the consistency check; the reported summary need not be
+the sum of represented self costs. This is distinct from row compression:
+position columns are discarded according to `positions:`, repeated/relative
+positions still contribute their cost vectors, omitted trailing counters are
+zero, and a cost row following `calls=` belongs exclusively to the call edge.
+These rules already produced exact body/footer sums in the failed dump.
+The footer was the missing parsed field. Position-only rows now also represent
+all-zero costs, as the format permits.
+
+`cache_profile` now requires one footer and checks every exclusive event
+**exactly** against it. It returns footer totals for function/phase arithmetic,
+while `cache-header-audits.jsonl` retains each summary, footer and signed delta.
+No tolerance, fabricated self cost, or dropped conservation event was added.
+Missing/duplicate footer and incomplete call associations are rejected.
+CI controls include distinct/lower summaries, omitted zero costs, and corrupted
+footer/body cases. The exact Valgrind-internal origin of the small header
+differences remains unverified; it is unnecessary for the documented reader
+contract. In particular the termination summary's Dr is lower than its footer,
+so no summary-greater-than-footer assertion is introduced.
+
+The authorized local `python3 -I` replay parsed all ten real dumps: cache-zero,
+the pilot residual, and parts `.1` through `.8`. For **all 130 event comparisons**,
+exclusive body sums equal footer totals exactly. Summary-minus-footer differences
+are `.1` Ir +6 and Dr +3, and the unnumbered residual Ir +1, Dr −3, I1mr +1,
+ILmr +1; all other entries are zero. Each geometry header also matches the
+fixed model. A scratch copy of `.1` with its first self-cost Ir incremented by
+one (source line 24) was rejected by the exact footer conservation check.
+Original artifact files were not modified.
+
+File-only replay coverage of the later analysis is recorded below. Fixtures
+for unobserved producer outputs are reader checks, never performance evidence;
+no Valgrind, renderer, compiler or other child process is invoked by the replay.
+
+
+| File-only check | Retained evidence or fixture | Result |
+| --- | --- | --- |
+| Native protocol, zero-stage and work-count parity | All 64 retained native stdout files | Pass |
+| Ordered cache boundaries | Eight retained pilot parts | Pass |
+| Cache geometry and exclusive footer conservation | All ten retained dumps, all 13 events | Pass |
+| Phase components and substantive U sum | Replay the completed pilot and zero-control records; no process is executed | Pass |
+| Nonselected-prefix filtering | Same real pilot, selecting ordinal 2 after validating every part | Pass |
+| Missing/extra/misordered boundaries, bad totals, missing/duplicate footer, distinct/lower summary and native zero-work rejection | 27 built-in reader controls, allocation reader controls and altered scratch copies | Pass; invalid copies rejected |
+| Position compression and inclusive call-edge exclusion | Synthetic two-position absolute/relative/repeated positions, omitted zeros and a child call | Pass; self 7+5=12, inclusive edge 5 excluded |
+| Normalization and paired phase/function deltas | Synthetic completed layout and selected-pair rows, plus incomplete pairs | Pass; all 11 complete cells conserve; missing selected cells remain unavailable |
+| Perf reader and availability bookkeeping | Synthetic numeric, unsupported, absent and duplicate counters; process-return fixtures | Pass; unavailable/partial and duplicate cases handled |
+| Allocation reader, common-instant peak and paired deltas | Synthetic heap profiles with printed totals; missing/single/completed cohorts and process-return fixtures | Pass; all 18 completed delta rows produced |
+
+The one-use isolated checker ran under `python3 -I` and exited zero with
+34 recorded check groups, ten archived dumps, 64 native outputs and zero
+unexpected child processes. Its audit hook rejected process spawning;
+subprocess APIs and the default driver runner raised immediately. Scoped replay
+stubs returned retained records or explicitly synthetic records, and `main`
+was never called. All analysis output and altered copies lived in scratch space.
+This exercises every later file-analysis function, including `cache_run`,
+`cache_deltas`, `perf_run`, `dhat`, and `allocation_deltas`, without running their
+external producers. Runtime markers and producer performance are CI evidence,
+not results inferred from the fixtures.
+
+The early frozen binary/font inventory and original full matrix selection were
+not rerun locally: their files are outside this artifact, and CI had already
+passed those checks. Production base/candidate layout, selected-pair cache,
+perf and DHAT outputs still do not exist in this failed run. Accordingly this
+validation fixes and checks the reader pipeline; it provides **no new causal
+memory attribution** or allocation/counter measurements. The prior criterion
+and the previous native selected-pair conclusion remain unchanged.

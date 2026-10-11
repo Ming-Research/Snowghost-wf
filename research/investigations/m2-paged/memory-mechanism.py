@@ -8,7 +8,8 @@ measured CPU misses or cycles. Remove with the workflow after archiving evidence
 
 Callgrind format: https://valgrind.org/docs/manual/cl-format.html
 Trailing omitted counters are zero; call-edge costs are inclusive and must
-not enter exclusive conservation totals.
+not enter exclusive conservation totals. The totals footer checks row sums;
+summary is separately reported metadata and may differ from those sums.
 """
 from collections import Counter, defaultdict
 import csv
@@ -56,10 +57,10 @@ def counters(text, events):
     return dict(zip(events, values + [0] * (len(events) - len(values))))
 
 
-def cache_profile(path):
+def cache_profile(path, audit=None):
     """Conserve every requested event, using exclusive rows only."""
     identifiers, own, calls, edges = {}, defaultdict(Counter), Counter(), defaultdict(Counter)
-    events, summary, caller, callee, pending = None, None, None, None, False
+    events, summary, reported_totals, caller, callee, pending = None, None, None, None, None, False
     positions = 1
     def symbol(text):
         match = re.fullmatch(r'\((\d+)\)(?: (.*))?', text)
@@ -75,6 +76,8 @@ def cache_profile(path):
         if line.startswith('positions: '):
             positions = len(line.split()) - 1
         elif line.startswith('events: '):
+            if events is not None:
+                raise ValueError('duplicate event header')
             events = line.split()[1:]
             if len(events) != len(EVENTS) or set(events) != EVENTS:
                 raise ValueError(('missing, repeated or unexpected cache/branch event', events))
@@ -82,8 +85,14 @@ def cache_profile(path):
             if summary is not None or events is None:
                 raise ValueError('duplicate summary or absent event header')
             summary = counters(line[9:], events)
+        elif line.startswith('totals: '):
+            if reported_totals is not None or events is None:
+                raise ValueError('duplicate totals or absent event header')
+            reported_totals = counters(line[8:], events)
         elif line.startswith('fn='):
-            caller, pending = symbol(line[3:]), False
+            if pending:
+                raise ValueError('call association has no cost row')
+            caller = symbol(line[3:])
         elif line.startswith('cfn='):
             callee = symbol(line[4:])
         elif line.startswith('calls='):
@@ -93,9 +102,10 @@ def cache_profile(path):
             pending = True
         elif line and line[0] in '*+-0123456789':
             fields = line.split()
-            if events is None or caller is None or len(fields) <= positions:
+            if events is None or caller is None or len(fields) < positions:
                 raise ValueError(('incomplete cost row', line))
-            cost = counters(' '.join(fields[positions:]), events)
+            cost = (counters(' '.join(fields[positions:]), events) if len(fields) > positions
+                    else dict.fromkeys(events, 0))
             if pending:
                 edges[caller, callee].update(cost)
                 pending = False
@@ -104,12 +114,18 @@ def cache_profile(path):
     total = Counter(dict.fromkeys(EVENTS, 0))
     for cost in own.values():
         total.update(cost)
-    if summary is None or pending or dict(total) != summary:
-        raise ValueError(('exclusive cache/branch costs do not reconcile', str(path), dict(total), summary))
-    return summary, own, calls, edges
+    if pending:
+        raise ValueError('call association has no cost row')
+    if summary is None or reported_totals is None or dict(total) != reported_totals:
+        raise ValueError(('exclusive cache/branch costs do not reconcile', str(path), dict(total), reported_totals))
+    if audit is not None:
+        audit.update(summary=summary, totals=reported_totals,
+                     summary_minus_totals={event: summary[event] - reported_totals[event] for event in events})
+    return reported_totals, own, calls, edges
 
 
-def boundary_parts(label, boundaries, repetitions, directory=OUT):
+def boundary_parts(label, boundaries, repetitions, directory=None):
+    directory = OUT if directory is None else Path(directory)
     expected = [directory / f'{label}.callgrind.{number}'
                 for number in range(1, repetitions * len(boundaries) + 1)]
     observed = set(directory.glob(label + '.callgrind.*'))
@@ -129,7 +145,7 @@ def controls():
     vector = ' '.join('21' if event == 'Ir' else '3' for event in sorted(EVENTS))
     left = ' '.join('12' if event == 'Ir' else '1' for event in sorted(EVENTS))
     right = ' '.join('9' if event == 'Ir' else '2' for event in sorted(EVENTS))
-    fixture = f'positions: line\nevents: {events}\nsummary: {vector}\nfn=(1) outer\n1 {left}\ncfn=(2) child\ncalls=1 0\n* {right}\nfn=(2)\n1 {right}\n'
+    fixture = f'positions: line\nevents: {events}\nsummary: {vector}\nfn=(1) outer\n1 {left}\ncfn=(2) child\ncalls=1 0\n* {right}\nfn=(2)\n1 {right}\ntotals: {vector}\n'
     directory = OUT / 'cache-controls'
     directory.mkdir(exist_ok=True)
     path = directory / 'good.callgrind'
@@ -139,9 +155,14 @@ def controls():
         raise ValueError('valid fixture did not retain exclusive versus inclusive costs')
     # Missing input/event, wrong total, and missing self rows must fail.
     for label, wrong in [('event', fixture.replace('events: Bc ', 'events: ')),
-                         ('total', fixture.replace('summary: ' + vector, 'summary: ' + vector.replace('21', '22'))),
+                         ('total', fixture.replace('totals: ' + vector, 'totals: ' + vector.replace('21', '22'))),
                          ('row', fixture.replace('fn=(2)\n1 ' + right + '\n', 'fn=(2)\n')),
-                         ('header', fixture.replace('summary: ' + vector + '\n', ''))]:
+                         ('header', fixture.replace('summary: ' + vector + '\n', '')),
+                         ('footer', fixture.replace('totals: ' + vector + '\n', '')),
+                         ('duplicate-footer', fixture + 'totals: ' + vector + '\n'),
+                         ('duplicate-events', fixture.replace('fn=(1)', 'events: ' + events + '\nfn=(1)')),
+                         ('interrupted-call', fixture.replace('* ' + right + '\nfn=(2)', 'fn=(2)')),
+                         ('unfinished-call', fixture + 'cfn=(2)\ncalls=1 0\n')]:
         bad = directory / (label + '.callgrind')
         bad.write_text(wrong)
         try:
@@ -151,8 +172,19 @@ def controls():
         raise ValueError(('accepted invalid cache evidence', label))
     # The format permits omitted trailing zero counters.
     omitted = directory / 'omitted-zero.callgrind'
-    omitted.write_text(f'events: Ir I1mr ILmr Dr D1mr DLmr Dw D1mw DLmw Bc Bcm Bi Bim\nsummary: 1\nfn=one\n1 1\n')
+    omitted.write_text(f'events: Ir I1mr ILmr Dr D1mr DLmr Dw D1mw DLmw Bc Bcm Bi Bim\nsummary: 1\nfn=one\n1 1\ntotals: 1\n')
     cache_profile(omitted)
+    distinct = directory / 'distinct-summary.callgrind'
+    distinct.write_text(fixture.replace('summary: ' + vector, 'summary: ' + vector.replace('21', '22')))
+    audit = {}
+    if cache_profile(distinct, audit)[0]['Ir'] != 21 or audit['summary_minus_totals']['Ir'] != 1:
+        raise ValueError('summary was mistaken for exclusive row totals')
+    lower = directory / 'lower-summary.callgrind'
+    lower.write_text(fixture.replace('summary: ' + vector, 'summary: ' + vector.replace('21', '20')))
+    cache_profile(lower)
+    zero_row = directory / 'zero-cost-row.callgrind'
+    zero_row.write_text(f'positions: instr line\nevents: {events}\nsummary: 0\nfn=zero\n0x10 1\n+4 *\ntotals: 0\n')
+    cache_profile(zero_row)
     empty = directory / 'empty-zero.callgrind'
     empty.write_text(f'events: {events}\nsummary: 0\ntotals: 0\n')
     if any(cache_profile(empty)[0].values()):
@@ -206,7 +238,7 @@ def controls():
             if case != 'valid':
                 raise ValueError(('cache boundaries accepted invalid sequence', case))
     allocation.controls(OUT / 'allocation-controls')
-    (directory / 'result.json').write_text(json.dumps({'status': 'passed', 'cases': 19}) + '\n')
+    (directory / 'result.json').write_text(json.dumps({'status': 'passed', 'cases': 27}) + '\n')
 
 
 def metadata():
@@ -408,7 +440,10 @@ def cache_run(label, cohort, operation, count, selected=None, zero=False):
     if zero:
         harness.inctime.read(OUT / (label + '.raw'), [], checking=True)
         geometry_header(OUT / (label + '.callgrind'))
-        total, _, _, _ = cache_profile(OUT / (label + '.callgrind'))
+        audit = {}
+        total, _, _, _ = cache_profile(OUT / (label + '.callgrind'), audit)
+        with (OUT / 'cache-header-audits.jsonl').open('a') as output:
+            output.write(json.dumps(dict(label=label, dump=label + '.callgrind', **audit)) + '\n')
         if any(total.values()):
             raise ValueError('zero-edit cache control collected work')
         return result, {}
@@ -427,7 +462,10 @@ def cache_run(label, cohort, operation, count, selected=None, zero=False):
         for offset, boundary in enumerate(boundaries):
             path = OUT / f'{label}.callgrind.{(ordinal - 1) * len(boundaries) + offset + 1}'
             geometry_header(path)
-            cache_profile(path)  # Every part, including setup/inter-edit parts, reconciles.
+            audit = {}
+            cache_profile(path, audit)  # Every part reconciles exactly with its totals footer.
+            with (OUT / 'cache-header-audits.jsonl').open('a') as output:
+                output.write(json.dumps(dict(label=label, dump=path.name, **audit)) + '\n')
         for offset, scope, required in regions:
             path = OUT / f'{label}.callgrind.{(ordinal - 1) * len(boundaries) + offset + 1}'
             total, own, calls, edges = cache_profile(path)
@@ -444,7 +482,11 @@ def cache_run(label, cohort, operation, count, selected=None, zero=False):
         if operation == 'edittime' and (selected is None or ordinal in selected):
             cache_row(label, ordinal, 'substantive_U_sum_of_three_disjoint_parts',
                       subtotal, combined_own, combined_calls)
-    cache_profile(OUT / (label + '.callgrind'))  # Retain/reconcile the final residual too.
+    residual = OUT / (label + '.callgrind')
+    audit = {}
+    cache_profile(residual, audit)  # Reconcile final residual against totals, not summary.
+    with (OUT / 'cache-header-audits.jsonl').open('a') as output:
+        output.write(json.dumps(dict(label=label, dump=residual.name, **audit)) + '\n')
     return result, counts
 
 
