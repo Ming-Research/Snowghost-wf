@@ -659,8 +659,8 @@ language limitation retained unchanged; **3** is an intended sound refusal.
 | [live-inverse-equality.wf](live-inverse-equality.wf) | **2 — proof / checker-range facts:** the natural comparison with `True()` is excluded as a call. Keep unchanged. |
 | [reserve-helper-boundary.wf](reserve-helper-boundary.wf) | **2 — proof / checker-range facts:** an ordinary helper's write forgets payload facts; its unchanged-length contract does not preserve the inverse. Keep unchanged, paired with its natural frame below. |
 | [reserve-helper-frame.wf](reserve-helper-frame.wf) | **2 — proof / checker-range facts:** the old-element equality needed for the helper contract cannot read entry storage. Keep unchanged. |
-| [append-primitive.wf](append-primitive.wf) | **1 — witness mistake:** the reduced `Block` is copy; `move value` violates OWN-1. Change only the concrete argument to bare `value`. Primitive inverse preservation remains unverified; acceptance is still the prediction for the corrected source. |
-| [append-helper-boundary.wf](append-helper-boundary.wf) | **1 — witness mistake:** the same concrete copy-Block move is invalid. Change only that argument to bare `value`; keep generic `T: drop` moves. The helper's inverse obligation has not yet been tested. |
+| [append-primitive.wf](append-primitive.wf) | **1 — witness contract omission after the copy fix:** round three reaches a sound inverse refusal because the combined bounds/inverse clause is vacuous for out-of-range targets. Add the separate natural bounds requirement below. Primitive preservation remains unverified. |
+| [append-helper-boundary.wf](append-helper-boundary.wf) | Round three reaches **RANGE-3 at a propagated error exit**. Correct the same **1 — bounds contract omission** with a separate requirement. The ordinary-call frame limitation remains independently established by the frame witnesses; whether this corrected helper reaches that refusal awaits CI. |
 | [append-helper-frame.wf](append-helper-frame.wf) | **2 — proof / checker-range facts:** generic old-prefix equality cannot read entry storage. Keep unchanged. |
 | [publish-borrowed-invalid.wf](publish-borrowed-invalid.wf) | **3 — intended sound refusal:** the source root inverse is false at its borrowed return after rebasing `entry_slot`. It fails precisely at that inverse obligation. Keep unchanged. |
 | [publish-consume.wf](publish-consume.wf) | **2 — proof / checker-range facts, storage-operation result transport:** the destination exit cannot recover the transferred Block's inherited parent fact. Keep unchanged; no redundant parent store. |
@@ -778,7 +778,7 @@ and RANGE-2 preserve the primitive growth facts already observed in the
 accepted growth control. Corrected append-primitive should separate primitive
 append preservation from the ordinary helper boundary. Corrected
 append-helper-boundary may reach a RANGE-3 inverse refusal at a normal or
-propagated-error exit; the current OWN-1 refusal proves nothing about that.
+propagated-error exit; the round-two OWN-1 refusal proved nothing about that.
 
 For consuming publication, the one-element source bounds and inverse are
 already requirements under
@@ -804,17 +804,66 @@ source exit inverse and
 [RANGE-3](https://github.com/Ming-Research/Whitefoot/blob/174c2cd365902d5256848a65e2bcf5ee84becc3b/spec/kernel-spec.md#L4118-L4127)
 refuses exactly its `entry_slot == k` conclusion at return.
 
-Next CI should rerun all nine samples with the two copy arguments corrected.
-The unchanged seven should retain the recorded refusals; append-primitive
-should accept, while append-helper-boundary should reveal its first actual
-proof result. Any further refusal must be classified from its exact log,
-not counted as acceptance merely because the collection workflow is green.
-The existing growth/corrupt-inverse/natural-split assertions and recorder
-controls remain mandatory. No renderer writer, interface, pin, submodule or
-design-tree decision changes in this diagnostic round. Renderer invariant
-maintenance remains blocked by the Boolean and helper-contract gaps; the
-publication recommendation additionally needs returned-element proof
-transport and the owner's interface choice.
+#### Append proof result after correcting ownership spelling
+
+The downloaded [proof run 38149272888](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38149272888)
+identifies `8bf0196c66264247699b2df542ba7f495fd5fbd6`. All nine exit statuses
+are still 1. The seven other diagnostic bodies are byte-for-byte unchanged
+from the previous round, excluding timing lines. The corrected append cases
+now report:
+
+```text
+append-primitive.wf:22:3: error[RANGE-3]: UndischargedRangeFact
+  fact: inverse
+  site: a return
+  missing: `c^.targets.inner[c^.order.inner[k].Open.block].entry_slot == k` (line 12)
+
+append-helper-boundary.wf:61:3: error[RANGE-3]: UndischargedRangeFact
+  fact: inverse
+  site: a propagated error exit
+  missing: `c^.targets.inner[c^.order.inner[k].Open.block].entry_slot == k` (line 16)
+```
+
+The primitive refusal is sound for the written contract. RANGE-1 conditions
+an entire clause on every read it forms being defined; the bounds conclusion
+in the same clause as `targets[order[k]]` is therefore not an independent
+bounds guarantee. Counterexample: `order[0] = Open(0)` with `targets.len == 0`
+satisfies that clause vacuously. Appending `Block(entry_slot: 1)` activates the
+inverse at order slot zero and makes it false. The earlier prediction that
+the combined clause excluded this case was incorrect.
+
+Both append writers now state exactly this separate ordinary requirement:
+
+```wf
+requires forall existing(k in 0_u64..c^.order.inner.len): c^.order.inner[k].Open.block < c^.targets.inner.len;
+```
+
+It reads only order elements and target length, so no missing target makes
+it vacuous. A real writer can satisfy it because all live entries name
+already-published targets before a new target is appended. In the production
+inverse it will need its own bounds clause with the existing liveness guard;
+the current Boolean formation gap still blocks that production expression.
+No restriction on the appended Block's fields, runtime check, write or
+representation is added.
+
+The same entry requirement does not eliminate helper error exits. Even with
+valid existing indices, RANGE-2 forgets the targets written through the
+ordinary helper and its scalar length contracts cannot recover their fields.
+The generic prefix-frame witnesses independently establish the missing
+natural contract expressibility. The latest helper diagnostic alone does
+not separate that limitation from the bounds omission; the next hosted round
+must do so. Do not remove propagation or require away the error case.
+
+Next CI should accept append-primitive with this added prerequisite and
+record the corrected helper's first unconfounded result, expected to remain
+RANGE-3 at the propagated error exit. These are predictions, not observations.
+The seven unchanged cases and existing growth/corrupt-inverse/natural-split
+assertions and recorder controls remain wired. No renderer writer, interface,
+pin, submodule or design-tree decision changes. The confirmed gaps remain
+Boolean guard formation, modular old-element frame contracts and removed
+aggregate fact transport; request drafts are supplied to the owner in chat,
+not maintained as repository artifacts. Production maintenance and publication
+remain blocked on those gaps and the owner's interface choice.
 
 `m2-paged-proof.yml` records each sample's raw status and complete diagnostic
 log, with acceptance/refusal summarized in `writer-boundaries.tsv`. An exit
@@ -853,15 +902,26 @@ detector execution; corrected append results, publication runtime and
 production inverse support remain unverified.
 
 A separate read-only diagnostic review, requested with `gpt-6.1-sol` at high
-effort, covered `0d2be1757c0d168520bfd143d34b398fde69eecb` plus this
-three-file diff, all nine sources and logs, manifest, controls, pinned rules,
+effort, covered the ownership-spelling diff from
+`0d2be1757c0d168520bfd143d34b398fde69eecb` subsequently pushed as
+`8bf0196c66264247699b2df542ba7f495fd5fbd6`, all nine sources and logs,
+manifest, controls, pinned rules,
 relevant design ancestors and affected renderer boundaries. It found no
 findings within scope. G2/G3, DC1/DC2, R3, draft-pin T4 and evidence/hygiene
 passed; G1/DC3/C4 were not applicable. DC4 remains unverified for corrected
 append acceptance and production/publication proof support. The reviewer
 ran `git diff --check` locally; no local compiler, build, test suite or
-measurement ran. Work stops for the owner's push of the two witness fixes
-and classification before dependent renderer changes.
+measurement ran. Work stops for the owner's push of the separate append bounds requirements and classification before dependent
+renderer changes.
+
+A focused read-only rereview against `8bf0196c66264247699b2df542ba7f495fd5fbd6`
+plus the separate bounds requirements and result-record update found two
+wording findings, both corrected: the new requirement restricts the Context
+domain, not the appended Block's fields, and OWN-1 describes round two rather
+than the latest proof result. Rereview found no remaining findings within
+scope. The bounds counterexample, unchanged error obligation and pending CI
+predictions were checked by inspection; no local checks or execution ran in
+this round.
 
 #### Where should the prepared splice's ownership be consumed?
 
