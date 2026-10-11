@@ -77,14 +77,12 @@ def patch(tree, once):
     let found = trace_source_tree(context: &built, styles: new, edit: layout^.trace_edit);
     set layout^.trace_source.matches = found.matches;
     set layout^.trace_source.failure = ior(layout^.trace_source.failure, found.failure);
-  }
-''')
+  }''')
     anchor = '  let recorded = propagate record_tree(context: &built, parent: old_path.parent, child: old_path.child, paths: &paths, listing: &listing, uses: &uses, routes: &routes, context_of: &context_of, root: root);'
     source = once(source, anchor, '  let trace_routes_before = routes.len;\n' + anchor + '''
   let (trace_new_routes, trace_outside_new_routes) = trace_scope_routes(context: &built, paths: &paths, routes: &routes, scope: built.slot, from: trace_routes_before, until: routes.len, document: document, edit: layout^.trace_edit, root: root);
   set layout^.trace_built_scope.routes = trace_new_routes;
-  set layout^.trace_built_scope.outside_routes = trace_outside_new_routes;
-''')
+  set layout^.trace_built_scope.outside_routes = trace_outside_new_routes;''')
     structure.write_text(source)
     oracle = tree / 'renderer/oracle/layout/edit.wf'
     source = oracle.read_text()
@@ -157,8 +155,7 @@ OLD_SCOPE = '''
   let trace_visits = layout^.trace_visits;
   if trace_visits.trace_reach != -9223372036854775807_i64 {
     set layout^.trace_floats = trace_float_extrema(context: &layout^.root, serial: trace_visits.trace_serial, owner: trace_visits.trace_owner, selected: trace_visits.trace_selected, reach: trace_visits.trace_reach, old_floor: trace_visits.trace_old_floor, new_floor: trace_visits.trace_new_floor, added_floor: trace_visits.trace_added_floor, delta: trace_visits.trace_delta, removing: layout^.trace_removing, styles: old, root: layout^.trace_root, edit: layout^.trace_edit);
-  }
-'''
+  }'''
 GETTERS = '''
 fn index_for_trace(element: u64) -> index: u32 pure {
   return cvt.wrap::<u64, u32>(element);
