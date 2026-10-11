@@ -29,7 +29,7 @@ fn route_read<T: copy>(table: &RouteTable<T>, at: u64) -> value: T reads(table) 
     return table^.missing;
   }
   let slot = cvt::<u64, u32>(at);
-  let value = slot_read::<T>(pages: &table^.pages, slot: slot, span: table^.span, missing: table^.missing);
+  let value = route_slot_read::<T>(pages: &table^.pages, slot: slot, span: table^.span, missing: table^.missing);
   return value;
 }
 
@@ -51,7 +51,7 @@ fn route_write<T: copy>(table: &RouteTable<T>, at: u64, value: T) -> result: uni
     set table^.pages = SlotPages<T>::Fork(left: move left, right: move right);
     set table^.span = table^.span +sat table^.span;
   }
-  slot_write::<T>(pages: &table^.pages, slot: slot, span: table^.span, value: value, missing: table^.missing);
+  route_slot_write::<T>(pages: &table^.pages, slot: slot, span: table^.span, value: value, missing: table^.missing);
   let length = at +sat 1_u64;
   let high = imax(table^.len, length);
   set table^.len = high;
@@ -119,6 +119,83 @@ fn copy_route_table<T: copy>(source: &RouteTable<T>, destination: &RouteTable<T>
     Vacant() => {
     }
     Fork(..) => {
+    }
+  }
+  return unit;
+}
+
+fn route_slot_read<T: copy>(pages: &SlotPages<T>, slot: u32, span: u32, missing: T) -> value: T reads(pages) {
+  doc "Reads one stable slot through a bounded directory path; absent pages return the supplied vacant value.";
+  if slot >= span {
+    return missing;
+  }
+  match pages^ {
+    Vacant() => {
+      return missing;
+    }
+    Page(values: page) => {
+      let at = cvt::<u32, u64>(slot);
+      if at < page^.inner.len {
+        return page^.inner[at];
+      }
+      return missing;
+    }
+    Fork(left: left_page, right: right_page) => {
+      let half = span / 2_u32;
+      if slot < half {
+        let value = route_slot_read::<T>(pages: &left_page^.inner, slot: slot, span: half, missing: missing);
+        return value;
+      }
+      let later = slot - half;
+      let value = route_slot_read::<T>(pages: &right_page^.inner, slot: later, span: half, missing: missing);
+      return value;
+    }
+  }
+}
+
+fn route_slot_write<T: copy>(pages: &SlotPages<T>, slot: u32, span: u32, value: T, missing: T) -> result: unit writes(pages) {
+  doc "Allocates only a missing directory path and its four-slot page, then writes one slot. Existing payload pages never move.";
+  if slot >= span {
+    return unit;
+  }
+  match pages^ {
+    Vacant() => {
+      if span <= 4_u32 {
+        let count = cvt::<u32, u64>(span);
+        let values = box_array_filled::<T>(count: count, value: missing);
+        let page = SlotPages<T>::Page(values: move values);
+        set pages^ = move page;
+      } else {
+        let empty_left = SlotPages<T>::Vacant();
+        let empty_right = SlotPages<T>::Vacant();
+        let new_left = box_new::<SlotPages<T>>(value: move empty_left);
+        let new_right = box_new::<SlotPages<T>>(value: move empty_right);
+        let fork = SlotPages<T>::Fork(left: move new_left, right: move new_right);
+        set pages^ = move fork;
+      }
+    }
+    Fork(..) => {
+    }
+    Page(..) => {
+    }
+  }
+  match pages^ {
+    Vacant() => {
+    }
+    Page(values: stored_page) => {
+      let at = cvt::<u32, u64>(slot);
+      if at < stored_page^.inner.len {
+        set stored_page^.inner[at] = value;
+      }
+    }
+    Fork(left: stored_left, right: stored_right) => {
+      let half = span / 2_u32;
+      if slot < half {
+        route_slot_write::<T>(pages: &stored_left^.inner, slot: slot, span: half, value: value, missing: missing);
+      } else {
+        let later = slot - half;
+        route_slot_write::<T>(pages: &stored_right^.inner, slot: later, span: half, value: value, missing: missing);
+      }
     }
   }
   return unit;

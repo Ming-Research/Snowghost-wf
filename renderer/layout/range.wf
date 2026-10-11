@@ -53,101 +53,52 @@ fn output_bounded(output: SequenceOutput) -> bounded: Bool pure {
   return bor(floor, reach);
 }
 
-fn slot_view(pages: &SlotPages<SequenceNode>, slot: u32, span: u32) -> (links: SequenceCursor, actions: RangeActions, placed: Bool, opens: Bool) reads(pages) {
-  doc "Reads one cell's topology, actions and own applicability through one bounded directory path, without copying either transfer.";
+fn slot_view(pages: &Box<Paged<SequenceNode>>, slot: u32, span: u32) -> (links: SequenceCursor, actions: RangeActions, placed: Bool, opens: Bool) reads(pages) {
+  doc "Reads topology, actions and own applicability from one metadata slot.";
   let missing = vacant_cursor();
   let identity = identity_actions();
   let no = False();
   if slot >= span {
     return missing, identity, no, no;
   }
-  match pages^ {
-    Vacant() => {
-      return missing, identity, no, no;
-    }
-    Page(values: page) => {
-      let at = cvt::<u32, u64>(slot);
-      if at < page^.inner.len {
-        let placed = page^.inner[at].own.placed > 0_u64;
-        let opens = page^.inner[at].own.opens > 0_u64;
-        return page^.inner[at].links, page^.inner[at].actions, placed, opens;
-      }
-      return missing, identity, no, no;
-    }
-    Fork(left: left_page, right: right_page) => {
-      let half = span / 2_u32;
-      if slot < half {
-        let (left_links, left_actions, left_placed, left_opens) = slot_view(pages: &left_page^.inner, slot: slot, span: half);
-        return left_links, left_actions, left_placed, left_opens;
-      }
-      let later = slot - half;
-      let (right_links, right_actions, right_placed, right_opens) = slot_view(pages: &right_page^.inner, slot: later, span: half);
-      return right_links, right_actions, right_placed, right_opens;
-    }
+  let at = cvt::<u32, u64>(slot);
+  if at < pages^.inner.len {
+    let placed = pages^.inner[at].own.placed > 0_u64;
+    let opens = pages^.inner[at].own.opens > 0_u64;
+    return pages^.inner[at].links, pages^.inner[at].actions, placed, opens;
   }
+  return missing, identity, no, no;
 }
 
-fn slot_store_actions(pages: &SlotPages<SequenceNode>, slot: u32, span: u32, actions: RangeActions) -> result: unit writes(pages) {
+fn slot_store_actions(pages: &Box<Paged<SequenceNode>>, slot: u32, span: u32, actions: RangeActions) -> result: unit writes(pages) {
   doc "Writes one existing cell's actions without touching its topology or transfers.";
   if slot >= span {
     return unit;
   }
-  match pages^ {
-    Vacant() => {
-    }
-    Page(values: page) => {
-      let at = cvt::<u32, u64>(slot);
-      if at < page^.inner.len {
-        set page^.inner[at].actions = actions;
-      }
-    }
-    Fork(left: left_page, right: right_page) => {
-      let half = span / 2_u32;
-      if slot < half {
-        slot_store_actions(pages: &left_page^.inner, slot: slot, span: half, actions: actions);
-      } else {
-        let later = slot - half;
-        slot_store_actions(pages: &right_page^.inner, slot: later, span: half, actions: actions);
-      }
-    }
+  let at = cvt::<u32, u64>(slot);
+  if at < pages^.inner.len {
+    set pages^.inner[at].actions = actions;
   }
   return unit;
 }
 
-fn slot_geometry(pages: &SlotPages<SequenceNode>, slot: u32, span: u32, own: Bool) -> (parent: u32, applies: Bool, action: Origin) reads(pages) {
+fn slot_geometry(pages: &Box<Paged<SequenceNode>>, slot: u32, span: u32, own: Bool) -> (parent: u32, applies: Bool, action: Origin) reads(pages) {
   doc "Reads only the parent and the requested geometry channel. Own geometry requires a live placed member; pending-child geometry requires a live ancestor. Semantic, basis and unrelated topology fields are not query outputs.";
   let zero = zero_origin();
   if slot >= span {
     return no_index, False(), zero;
   }
-  match pages^ {
-    Vacant() => {
-      return no_index, False(), zero;
-    }
-    Page(values: page) => {
-      let at = cvt::<u32, u64>(slot);
-      if at < page^.inner.len {
-        if page^.inner[at].links.live {
-          if own {
-            let placed = page^.inner[at].own.placed > 0_u64;
-            return page^.inner[at].links.parent, placed, page^.inner[at].actions.own_geometry;
-          }
-          return page^.inner[at].links.parent, True(), page^.inner[at].actions.child_geometry;
-        }
+  let at = cvt::<u32, u64>(slot);
+  if at < pages^.inner.len {
+    if pages^.inner[at].links.live {
+      if own {
+        let placed = pages^.inner[at].own.placed > 0_u64;
+        return pages^.inner[at].links.parent, placed, pages^.inner[at].actions.own_geometry;
       }
-      return no_index, False(), zero;
-    }
-    Fork(left: left_page, right: right_page) => {
-      let half = span / 2_u32;
-      if slot < half {
-        let (parent, applies, action) = slot_geometry(pages: &left_page^.inner, slot: slot, span: half, own: own);
-        return parent, applies, action;
-      }
-      let later = slot - half;
-      let (parent, applies, action) = slot_geometry(pages: &right_page^.inner, slot: later, span: half, own: own);
-      return parent, applies, action;
+      return pages^.inner[at].links.parent, True(), pages^.inner[at].actions.child_geometry;
     }
   }
+  return no_index, False(), zero;
 }
 
 fn range_geometry(sequence: &EntrySequence, slot: u32) -> made: Origin reads(sequence.range_actions), reads(sequence.nodes), reads(sequence.span) {
