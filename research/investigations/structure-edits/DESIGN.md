@@ -369,11 +369,19 @@ Its `plus-reach-evidence` artifact preserves inputs, scripts, raw results,
 source revisions, compiler checksum and mutation diff; `html5-set-size.json`
 reports the actual before/after maxima separately from the historical 548.
 
+Result, [oracles-m2 run 38168970782](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38168970782)
+at `06c409e` (compiler `wf-78223721f77d`): all 75 focused fixtures pass in
+sequential and four-worker style modes, with no missing element, no computed
+style difference from a full rebuild and no set larger than expected. The
+fork-point control reproduces the old widening (sets of 65 where the bound
+gives 2, 1 or 0) against its own expectations. The final-hop mutation is
+detected (one missing element, one computed-style difference). On html5's 60
+generated block edits the largest restyle set falls from 548 to 2, the same
+in both modes. These are element-set counts, not timings.
+
 The governing decision is the structural reverse index in
-`design/pipeline/style.md`, under `design/pipeline.md`. Bounding sibling
-suffixes refines that decision's shared representation and reach contract;
-its node needs an owner-reviewed amendment. This task leaves the design tree
-and approval log unchanged as requested.
+`design/pipeline/style.md`, under `design/pipeline.md`; this branch amends
+that decision with the `+` bound, proposed until the owner approves it.
 
 ## Apollo sentence identity and sibling-margin repair
 
