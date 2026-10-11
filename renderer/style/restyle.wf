@@ -499,12 +499,22 @@ fn stable_class_restyle(document: &Document, atoms: &AtomTable, traversal: &Trav
   doc "Applies the same bounded class reaches after stable slots cease to be preorder. Reuses the structural reach walker for the edited subtree and later sibling subtrees, then resolves only selected NodeIds to stable slots. DOM links order enumeration; the existing depth frontier orders inherited computation.";
   let Reached(full: unbounded, pseudos: pseudos, self_reached: own, down_any: down_any, down: down_keys, across_any: across_any, across: across_keys, beyond_any: beyond_any, beyond: beyond_keys) = move reached;
   let empty_keys = box_slots_new::<SubjectKey>(capacity: 0_u64);
-  let self_keys = SideKeys(any: own, keys: move empty_keys);
-  let descendants = SideKeys(any: down_any, keys: move down_keys);
-  let across = SideKeys(any: across_any, keys: move across_keys);
-  let beyond = SideKeys(any: beyond_any, keys: move beyond_keys);
+  let self_bounded = box_slots_new::<SideKey>(capacity: 0_u64);
+  let down_bounded = box_slots_new::<SideKey>(capacity: 0_u64);
+  let across_bounded = box_slots_new::<SideKey>(capacity: 0_u64);
+  let beyond_bounded = box_slots_new::<SideKey>(capacity: 0_u64);
+  let down_keyed = down_keys.inner.len > 0_u64;
+  let down_wide = bor(down_any, down_keyed);
+  let across_keyed_before = across_keys.inner.len > 0_u64;
+  let across_wide = bor(across_any, across_keyed_before);
+  let beyond_keyed_before = beyond_keys.inner.len > 0_u64;
+  let beyond_wide = bor(beyond_any, beyond_keyed_before);
+  let self_keys = SideKeys(any: own, wide: own, plus_hops: 0_u32, keys: move empty_keys, bounded: move self_bounded);
+  let descendants = SideKeys(any: down_any, wide: down_wide, plus_hops: 0_u32, keys: move down_keys, bounded: move down_bounded);
+  let across = SideKeys(any: across_any, wide: across_wide, plus_hops: 0_u32, keys: move across_keys, bounded: move across_bounded);
+  let beyond = SideKeys(any: beyond_any, wide: beyond_wide, plus_hops: 0_u32, keys: move beyond_keys, bounded: move beyond_bounded);
   let nodes = box_slots_new::<NodeId>(capacity: 0_u64);
-  let visited = propagate visit_child(document: document, atoms: atoms, child: node, near: &self_keys, deep: &descendants, nodes: &nodes);
+  let visited = propagate visit_child(document: document, atoms: atoms, child: node, near: &self_keys, deep: &descendants, distance: 0_u32, nodes: &nodes);
   let across_keyed = across.keys.inner.len > 0_u64;
   let beyond_keyed = beyond.keys.inner.len > 0_u64;
   let across_some = bor(across.any, across_keyed);
@@ -531,7 +541,7 @@ fn stable_class_restyle(document: &Document, atoms: &AtomTable, traversal: &Trav
       }
       let element = is_element_node(document: document, node: sibling);
       if element {
-        let visited_sibling = propagate visit_child(document: document, atoms: atoms, child: sibling, near: &across, deep: &beyond, nodes: &nodes);
+        let visited_sibling = propagate visit_child(document: document, atoms: atoms, child: sibling, near: &across, deep: &beyond, distance: 0_u32, nodes: &nodes);
       }
       let following = match node_links(document: document, node: sibling) {
         Some(value: links) => {
@@ -771,17 +781,18 @@ fn next_within(document: &Document, node: NodeId, root: NodeId) -> next: Option<
 }
 
 struct SideKey {
-  doc "One structural subject key and its finite + suffix bound, or 0 for a wide reach.";
+  doc "One structural subject key and its positive finite + suffix bound.";
   subject: SubjectKey;
   plus_hops: u32;
 }
 
 struct SideKeys {
-  doc "The subject keys structural reaches name at one place around an edit point, for children or their descendants. any names every element without a bound; wide marks any unbounded key; plus_hops is the largest finite bound. The key list is per reach, never per element.";
+  doc "The subject keys reaches name at one place around an edit point, for children or their descendants. any names every element without a bound; keys holds the other unbounded subject keys; bounded holds positive finite + suffix bounds, including Anything. wide marks any unbounded key; plus_hops is the largest finite bound. Both lists are per reach, never per element; class reaches keep their original subject-key lists.";
   any: Bool;
   wide: Bool;
   plus_hops: u32;
-  keys: Box<Slots<SideKey>>;
+  keys: Box<Slots<SubjectKey>>;
+  bounded: Box<Slots<SideKey>>;
 }
 
 fn bounded_hops(reach: FeatureReach, deep: Bool) -> hops: u32 pure {
@@ -798,17 +809,16 @@ fn bounded_hops(reach: FeatureReach, deep: Bool) -> hops: u32 pure {
 }
 
 fn side_carries(document: &Document, keys: ElementKeys, wanted: &SideKeys, distance: u32) -> found: Bool reads(document), reads(wanted) {
-  doc "Whether keys carry a structural subject key still reached at distance element siblings after the nearest one. Each key keeps its own bound even when another reach makes the walk wide; a bounded Anything key cannot widen other children.";
-  if wanted^.any {
+  doc "Whether keys carry an unbounded subject key or a bounded structural subject key still reached at distance element siblings after the nearest one. Each bounded key expires independently even when another reach makes the walk wide, and a bounded Anything key cannot widen other children.";
+  let unbounded = carries(document: document, keys: keys, any: wanted^.any, wanted: &wanted^.keys);
+  if unbounded {
     return True();
   }
-  let count = wanted^.keys.inner.len;
+  let count = wanted^.bounded.inner.len;
   for (k in 0_u64..count) {
-    let key = wanted^.keys.inner[k];
-    let wide = key.plus_hops == 0_u32;
+    let key = wanted^.bounded.inner[k];
     let within = distance <= key.plus_hops;
-    let applies = bor(wide, within);
-    if applies {
+    if within {
       let holds = carries_key(document: document, keys: keys, key: key.subject);
       if holds {
         return True();
@@ -862,7 +872,8 @@ fn reach_places(reach: FeatureReach, deep: Bool) -> places: u8 pure {
 
 fn side_keys(store: &RuleStore, from: u64, context: FeatureFilter, place: u8, deep: Bool) -> result: Result<SideKeys, StyleError> reads(store) {
   doc "The keys of the structural reaches from index from on, the children reaches among them whose context the parent's context filter admits, that reach the children at place, or the elements of their subtrees when deep holds.";
-  let keys = box_slots_new::<SideKey>(capacity: 0_u64);
+  let keys = box_slots_new::<SubjectKey>(capacity: 0_u64);
+  let bounded = box_slots_new::<SideKey>(capacity: 0_u64);
   let any = False();
   let wide = False();
   let plus_hops = 0_u32;
@@ -879,22 +890,21 @@ fn side_keys(store: &RuleStore, from: u64, context: FeatureFilter, place: u8, de
         let hops = bounded_hops(reach: reach, deep: deep);
         if hops == 0_u32 {
           set wide = True();
+          let any_key = is_anything(key: reach.subject);
+          if any_key {
+            set any = True();
+          } else {
+            let pushed = propagate push::<SubjectKey>(cell: &keys, value: reach.subject, ceiling: key_ceiling);
+          }
         } else {
           set plus_hops = imax(plus_hops, hops);
-        }
-        let any_key = is_anything(key: reach.subject);
-        let unbounded = hops == 0_u32;
-        let any_wide = band(any_key, unbounded);
-        if any_wide {
-          set any = True();
-        } else {
           let key = SideKey(subject: reach.subject, plus_hops: hops);
-          let pushed = propagate push::<SideKey>(cell: &keys, value: key, ceiling: key_ceiling);
+          let pushed = propagate push::<SideKey>(cell: &bounded, value: key, ceiling: key_ceiling);
         }
       }
     }
   }
-  let made = SideKeys(any: any, wide: wide, plus_hops: plus_hops, keys: move keys);
+  let made = SideKeys(any: any, wide: wide, plus_hops: plus_hops, keys: move keys, bounded: move bounded);
   return Ok<SideKeys, StyleError>(value: move made);
 }
 
@@ -907,7 +917,9 @@ fn visit_child(document: &Document, atoms: &AtomTable, child: NodeId, near: &Sid
     let pushed = propagate push::<NodeId>(cell: nodes, value: child, ceiling: 4294967296_u64);
   }
   let deep_keyed = deep^.keys.inner.len > 0_u64;
-  let deep_some = bor(deep^.any, deep_keyed);
+  let deep_bounded = deep^.bounded.inner.len > 0_u64;
+  let deep_keys = bor(deep_keyed, deep_bounded);
+  let deep_some = bor(deep^.any, deep_keys);
   if deep_some {
   } else {
     return Ok<unit, StyleError>(value: unit);
