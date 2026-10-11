@@ -333,6 +333,12 @@ def patch_guards(tree, guards):
             for target in CLONES:
                 pattern = r'(?<![a-z_])' + target + r'\(([^\n]+)\);'
                 body = re.sub(pattern, lambda m: 'trace_' + target + '(' + m.group(1) + ', visits: visits);', body)
+            if name == 'sequence_motion_ready':
+                # The traced callee now reads the context identity. This
+                # forwarding helper has no refusal edge of its own, so
+                # instrument_body's direct-read augmentation does not visit it.
+                body = once(body, 'reads(context.blocks.inner)',
+                            'reads(context.slot), reads(context.blocks.inner)')
             replacements.append((start, stop, body))
         for start, stop, body in reversed(replacements):
             source = source[:start] + body + source[stop:]
@@ -425,11 +431,11 @@ def patch_guards(tree, guards):
     edit.write_text(source)
     module = tree / 'renderer/layout/module.wfm'
     source = module.read_text()
-    source = source.rstrip('\n') + '\n\npublic fn trace_layout_error(layout: &Layout, error: LayoutError) -> result: unit writes(layout.trace_guard) doc "Private observation of the existing splice-error path.";\n'
+    source = source.rstrip('\n') + '\n\npublic fn trace_layout_error(layout: &Layout, error: LayoutError) -> result: unit writes(layout) doc "Private observation of the existing splice-error path.";\n'
     module.write_text(source)
     source = helper.read_text().rstrip('\n') + '\n'
     source += '''
-fn trace_layout_error(layout: &Layout, error: LayoutError) -> result: unit writes(layout.trace_guard) {
+fn trace_layout_error(layout: &Layout, error: LayoutError) -> result: unit writes(layout) {
   doc "Separately observes the driver's existing reason-nine mapping for actual layout errors.";
   match error {
 ''' + clauses + '''  }
