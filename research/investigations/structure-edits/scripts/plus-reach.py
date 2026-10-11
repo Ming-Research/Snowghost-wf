@@ -128,7 +128,7 @@ def node_ids(raw, expected):
                 if section is not None:
                     raise ValueError("fixture has more than one section")
                 section = node
-            elif parent == section:
+            elif section is not None and parent == section:
                 children.append((tag, node, preceding_text))
                 preceding_text = None
         elif line.startswith("T "):
