@@ -320,6 +320,61 @@ Expected effect: the style part of a block edit drops from the full stage
 (114, 476 and 937 ms) to the set's size, while layout's structure + update
 (16, 239 and 259 ms) remains for steps 3 and 4.
 
+## Bounded next-sibling suffixes (sg-bl-02-02)
+
+This investigation asks whether the remaining wide reach of `h1 + div + h2`
+can follow only its true sibling dependencies while preserving full-build
+style identity. The historical html5 maximum is 548 candidates, with zero
+changed winners, as [the structure check](runs/structure-check.txt) records.
+The comparison baseline is `030e4dd4081c9c15699363bdfa0e57c53a7f761d`, the
+unchanged starting revision of `research/style-plus-reach`.
+
+The proposed shared representation adds a following-`+` hop count to
+`FeatureReach`. An exclusively next-sibling suffix has a finite distance;
+a `~`, mixed suffix, or an unproved nested composition keeps the existing
+wide reach. For a next-side structural seed with suffix length H, the
+remaining candidates are the first element at or after `next` through H
+further element siblings, filtered by the existing subject key. The first
+remaining neighbour can change its match after either insertion or removal;
+the inserted element can also supply a new predecessor to that window.
+Text and comment nodes consume no element hop.
+
+Dependencies: each compound's suffix classification reads only its selector
+alternative, independently of other compounds and DOM elements. The restyle
+walk reads the stored reaches and unchanged parent context, then follows at
+most the finite window unless another admitted reach requires a wide walk.
+Each next element depends on the current node's sibling link: this bounded
+walk has a true sibling-order dependency. It adds no shared element counter,
+cross-element table, or document pass. Retaining every following child has
+the same dependency class but unnecessary length; keeping distances in a
+per-element table would add maintenance that this edit-local walk does not
+need. Existing matching and level-frontier dependencies remain unchanged.
+
+Before CI, the rejection criteria are: any missing changed surviving winner,
+any incremental/full computed-style difference, failure to retain wide `~`
+and mixed reaches, failure of an exact finite-window expectation on a wide
+fixture, or failure to detect a one-hop-short mutation at its final affected
+subject. The CI comparison must use the same captured html5 input, edit
+script and compiler for baseline and changed sources and report both set
+maxima; newly generated scripts can differ from the historical batch. Counts
+describe locality, not elapsed-time performance. No result is claimed before
+CI.
+
+The temporary `oracles-m2.yml` workflow's `plus-reach` job runs the focused
+[`plus-reach.py`](scripts/plus-reach.py) fixtures in sequential and parallel
+style modes, the existing structural fixtures and html5 class consistency,
+the fork-point precision control and a final-hop mutation. It checks the
+html5 input's existing SHA-256 pin before generating one shared block script.
+Its `plus-reach-evidence` artifact preserves inputs, scripts, raw results,
+source revisions, compiler checksum and mutation diff; `html5-set-size.json`
+reports the actual before/after maxima separately from the historical 548.
+
+The governing decision is the structural reverse index in
+`design/pipeline/style.md`, under `design/pipeline.md`. Bounding sibling
+suffixes refines that decision's shared representation and reach contract;
+its node needs an owner-reviewed amendment. This task leaves the design tree
+and approval log unchanged as requested.
+
 ## Apollo sentence identity and sibling-margin repair
 
 The repair compares main `8fbc160` with the current M2 line using the exact
