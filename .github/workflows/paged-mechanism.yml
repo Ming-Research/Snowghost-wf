@@ -1,0 +1,90 @@
+# Temporary mechanism investigation; remove after evidence is archived, before ready.
+name: paged-mechanism
+on:
+  push:
+    branches: [research/m2-paged-mechanism]
+  workflow_dispatch:
+    inputs:
+      full_profile:
+        description: After bounded pilots, profile the complete ecma262 fontsize script
+        type: boolean
+        default: false
+      perf:
+        description: Attempt optional whole-process perf counters (PMU may be unavailable)
+        type: boolean
+        default: false
+permissions:
+  contents: read
+  actions: read
+jobs:
+  profile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      BASE: 030e4dd4081c9c15699363bdfa0e57c53a7f761d
+      CANDIDATE: 2c2c171911933aef499e0fb96a288643803eacd5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Require identical frozen renderer and compiler inputs
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$CANDIDATE" HEAD
+          git diff --exit-code "$CANDIDATE" HEAD -- renderer whitefoot.pin whitefoot-kit
+          git diff --exit-code "$BASE" "$CANDIDATE" -- whitefoot.pin whitefoot-kit
+      - uses: actions/download-artifact@v4
+        with:
+          name: m2-paged-time-sample
+          run-id: 38096036798
+          github-token: ${{ github.token }}
+          path: build/m2-paged-time
+      - name: Toolchain, profiler and identical fonts
+        run: |
+          set -euo pipefail
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y --no-install-recommends valgrind binutils linux-tools-common linux-tools-generic fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          make -s toolchain compiler oracle-fonts
+          mkdir -p build/paged-mechanism
+          uname -a > build/paged-mechanism/machine.txt
+          lscpu >> build/paged-mechanism/machine.txt
+          cat /etc/os-release >> build/paged-mechanism/machine.txt
+          valgrind --version >> build/paged-mechanism/machine.txt
+          /usr/bin/clang --version >> build/paged-mechanism/machine.txt
+          cat /proc/sys/kernel/perf_event_paranoid >> build/paged-mechanism/machine.txt
+          chmod +x build/m2-paged-time/drivers/*-seq
+      - name: Retain source lowering and native disassembly
+        run: |
+          set -euo pipefail
+          wfc=$(realpath build/whitefoot/wf-78223721f77d/whitefootc)
+          cp build/whitefoot/wf-78223721f77d/whitefoot-release.json build/paged-mechanism/
+          sha256sum "$wfc" > build/paged-mechanism/compiler.sha256
+          for cohort in base candidate; do
+            revision=$BASE
+            if [ "$cohort" = candidate ]; then revision=$CANDIDATE; fi
+            test "$(cat build/m2-paged-time/drivers/$cohort.revision)" = "$revision"
+            test "$(cat build/m2-paged-time/drivers/$cohort-twin.revision)" = "$revision"
+            tree=build/paged-mechanism/tree-$cohort
+            git worktree add --detach "$tree" "$revision"
+            git -C "$tree" rev-parse HEAD HEAD:renderer HEAD:whitefoot.pin HEAD:whitefoot-kit > "build/paged-mechanism/$cohort.source.txt"
+            destination="$GITHUB_WORKSPACE/build/paged-mechanism/$cohort.ll"
+            (cd "$tree/renderer" && /usr/bin/time -p "$wfc" --emit-llvm --graph modules.wfg --entry layout_oracle -o "$destination") > "build/paged-mechanism/$cohort.emit.log" 2>&1
+            objdump -d -C build/m2-paged-time/drivers/$cohort-layout-seq > "build/paged-mechanism/$cohort.disassembly.txt"
+            nm -n -S build/m2-paged-time/drivers/$cohort-layout-seq > "build/paged-mechanism/$cohort.symbols.txt"
+            git -C "$tree" diff --exit-code
+            git worktree remove "$tree"
+          done
+      - name: Established instruction parser negative controls
+        run: python3 research/investigations/m2-edit-cost/fallback-cost.py self-test
+      - name: Bounded pilots and optionally complete profiles
+        env:
+          FULL_PROFILE: ${{ inputs.full_profile || false }}
+          TRY_PERF: ${{ inputs.perf || false }}
+        run: python3 research/investigations/m2-paged/profile-mechanism.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: paged-mechanism
+          path: build/paged-mechanism/
+          compression-level: 1
