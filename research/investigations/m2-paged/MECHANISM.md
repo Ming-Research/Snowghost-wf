@@ -631,12 +631,13 @@ percentage shares can be inferred yet; these causes interact.
 | 4 | Serial append initialization and power-of-two logical reservation add avoidable source work or expose a missing bulk-fill lowering. Strong for sealing/reconstruction; weak for a retained style edit unless constructors appear inside update. Evidence: `B:sequence.wf:322–334`, `C:sequence.wf:305–319,452–460`, `W:buffer.rs:281–309`, `W:runs.rs:451–495`. | `paged_fill/finish_sequence` dominate build excess, per-slot length loads/stores survive optimization, and the same functions appear in update if claimed there. Reject for the edit if its timed call graph contains no sealing/fill. A live-length-only diagnostic must preserve identities/output and run the full checks before it is called a usage fix. |
 | 5 | Eager reserve through doubled capacity and directory copying on growth. Valid construction/splice concern, probably small for this font-size path. Evidence: `B:sequence.wf:401–424,495–539`, `C:sequence.wf:384–398,463–473`, `W:paged.rs:193–233`. | Count growth calls, old/new page counts, pointer-copy bytes and newly allocated pages **inside** update. Zero calls reject it for that stage. Copies proportional to payload bytes would contradict the inspected lowering and require investigation; only directory-word copying is predicted. |
 
-## CI profile and acceptance plan
+## Instruction profile and subsequent acceptance plan
 
 The temporary [workflow](../../../.github/workflows/paged-mechanism.yml) and
 its wired script collect evidence, not a pass/fail performance verdict. Remove
-them when this mechanism round ends. Default push work is a bounded pilot;
-full profiling is an explicit dispatch after reading its durations. The
+them when this mechanism round ends. The completed instruction experiment is available through the `instructions`
+dispatch choice; its full profiling remains explicit. Pushes now select the
+memory experiment below, and a path filter excludes documentation-only pushes. The
 frozen sample artifact comes from run 38096036798, the independent-build run
 in RESULTS, and includes all four cohorts, exact pages, CSS and complete X5
 scripts. Refuse reuse if renderer, pin or kit differ from its recorded
@@ -678,13 +679,12 @@ Callgrind instruction counts are not native time, cache stalls or four-worker
 scheduling evidence. Inspect self cost and call edges, not summed overlapping
 inclusive percentages.
 
-The written workflow implements Callgrind phase profiles and optional
-whole-process perf stat for common hardware counters and page faults/context
-switches. The perf record, L1/dTLB events and native zero-work stat comparisons
-below are follow-up commands for the primary agent, not implemented workflow
-features. Run 38141932250 verified the corrected boundaries and matched base/candidate
-pilot profiles. Complete-script updates, native hardware counters and
-same-source intervention comparisons remain unverified.
+Run 38141932250 verified the corrected instruction boundaries and matched
+base/candidate pilot profiles. The next hosted memory experiment below owns
+cache simulation, the effective optional perf input, and allocation evidence.
+Complete-script instruction updates and same-source intervention comparisons
+remain unverified. The additional sampling commands below describe possible
+follow-up, not features delivered by the instruction profiler.
 
 On a runner exposing PMU events, collect matched native `perf stat` groups:
 `cycles,instructions,branches,branch-misses`;
@@ -810,3 +810,175 @@ No new Whitefoot request, pin movement, submodule movement, or design/approval
 log change was made in this round. The primary agent should file a performance
 gap only after the profile separates compiler facts from source policy, with
 the witness and falsifiable acceptance condition above.
+
+
+## Hosted memory experiment: prior criterion, before results
+
+This plan was written after instruction run
+[38141932250](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38141932250)
+and before any result from the new memory job. It tests explanations of the
+native +3.3% full-layout and +9.1% font-size regressions; it does not convert
+instruction, miss or allocation percentages directly into time shares.
+The [workflow](../../../.github/workflows/paged-mechanism.yml) uses only
+`ubuntu-24.04` hosted runners, defaults to this experiment on relevant pushes,
+and skips documentation-only pushes. Its `memory` dispatch accepts an optional
+original C/K pair override and a perf boolean. Frozen drivers, sheets, fonts,
+script and one-worker invocation are reused without renderer changes.
+
+### Selection and matched state
+
+The instruction pilot's first two edits are insufficient for the original
+20-edit timing statistic. CI downloads the original ecma262/seq matrix artifact
+from [38101523274](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38101523274),
+validates all 20 ordinals in each of three baseline rounds, and selects the
+forward/inverse pair with the largest median summed baseline **U**. Ties favor
+the earlier pair. This selects two ordinals using old evidence before measuring
+new memory behavior, rather than choosing whichever new result looks worst.
+`selection.json` records the chosen ordinal numbers, node operations, all pair
+scores, source/script hashes and coverage of the original U total. An override
+is identified explicitly and carries the same ranking for comparison.
+
+The original complete script hash is
+`4def8240288a01f51276e2f68d5c2ae2e135721ac03952ad8e8d2533fbd324bb`.
+The possible pairs are 1–2 (node 303118), 3–4 (343539), 5–6 (217190), 7–8
+(414119), 9–10 (288562), 11–12 (224717), 13–14 (79145), 15–16 (147937),
+17–18 (221537), and 19–20 (217945). Their identities are verified from the
+matching script. Their timing rank is **not verified locally**: the retained
+matrix ZIP could not be extracted through the available network tools. The
+workflow resolves and records the choice before profiling. Thus no specific
+pair is falsely declared dominant in this pre-run account. If it contributes
+little to the full-script total, this bounded experiment has limited coverage.
+
+Replay every original operation through the selected inverse ordinal. Do not
+repeat a pair or skip earlier edits. Simulate caches from process startup,
+including initial layout and the preceding edit prefix; dumps reset counters
+without flushing the simulated caches. Native runs retain the driver's exact
+U timestamps and work counts. Zero-repetition stage baselines must report zero
+contexts and paragraphs; CI rejection fixtures exercise both boxes and layout. They use three interleaved rounds and independently
+built twins as noise controls. New native results are observations on another
+hosted runner, not a replacement for the original acceptance table.
+
+### Cache scopes, model and evidence
+
+The [memory script](memory-mechanism.py) sets I1 and D1 to 32 KiB, eight ways,
+64-byte lines, and LL to 32 MiB, sixteen ways, 64-byte lines. This is an explicit,
+fixed comparison model, **not** a claim about the hosted CPU's cache hierarchy.
+Requested and observed geometry, machine details and Valgrind version are
+retained; unexpected geometry is rejected. Callgrind cache and branch simulation
+records Ir, data reads/writes, D1 and LL read/write misses, instruction-cache
+misses and branch events by exclusive function cost. Every dump reconciles its
+exclusive totals for every event. Inclusive call-edge costs are not added to
+self costs. Paired phase/function outputs record candidate minus base deltas,
+including combined D1 and LL data misses. Zero-work and synthetic rejection
+controls detect nonzero control collection, missing events, bad totals and
+missing self rows. Ordered nonzero phase boundaries remain required.
+
+Full-layout boundaries retain box construction, font picks, and text preparation
+plus layout separately. Font-size boundaries are before/after
+`wf_layout.styles_restyled` and before/after `wf_layout.update`. The three
+disjoint parts contain marking, font picks with intervening caller bookkeeping,
+and update; their sum is the substantive original U interval. This fixes the
+previous update-only scope. Frozen native code inlines the timestamp wrappers,
+so markers omit the small edge clock/argument bookkeeping. Preserve that
+qualification: only native stdout is the exact U timestamp interval
+(`renderer/oracle/layout/edit.wf:1246–1259,1445–1478`). Nonselected prefix dumps
+are retained as state/warmth evidence, but excluded from selected-pair totals.
+
+Two first-pair cache pilots establish startup cost/spread before the larger
+prefix. Every cache or DHAT process has a hard **900-second** cap; this is a
+per-process bound, not a promise of a 900-second total job. Startup dominates
+the small pilot, so its duration is not multiplied by isolated U ratios to
+predict the prefix. A capped process is unavailable, never a complete partial
+profile or a zero result; its command, duration, exit/timeout and stderr survive.
+This experiment prioritizes one costly pair rather than an unbounded complete
+20-edit profile. The workflow job budget accommodates the bounded batch.
+
+### Native counters and allocations
+
+With `perf=true` (the push default), probe the installed perf wrapper and actual
+`/usr/lib/linux-tools/*/perf` binaries. Attempt whole-process
+`cycles,instructions,cache-misses,dTLB-load-misses,page-faults` for the same
+frozen workloads, and independently attempt software page faults. An absent
+executable, PMU denial, unsupported event, missing/non-numeric counter or failed
+process is recorded as unavailable or partial, with raw counters and stderr;
+this optional observation does not make CI fail. Numeric counts from a failed
+process are not usable cohort comparisons. Whole-process stat includes parsing,
+style, startup, the preceding edits and cleanup. It cannot assign selected-U
+cycles or TLB misses by function. Box-only native runs help locate a construction
+excess, but overlapping whole-process measurements cannot be summed as disjoint
+phase costs. No hosted PMU availability is assumed.
+
+Two small first-pair DHAT pilots record duration and spread before whole-prefix
+base/candidate passes. The
+[allocation reader](allocation-summary.py) records total successful allocation
+events/requested bytes, maximum simultaneous live requested bytes and the block
+count **at that byte-peak instant**, plus live exit allocations. It reconciles
+all six totals with DHAT stderr and partitions original allocation stacks into
+Whitefoot heap origins and other/unresolved origins. Individual allocation-site
+maxima are not added: they occur at different times. Independent maximum live
+block count is unavailable from these totals. Realloc contributes a new event
+and its new requested extent, while retaining its original allocation stack;
+zero-size requests use DHAT's one-byte normalization. This is intercepted heap
+accounting, not RSS: it excludes mmap-only memory, stack, allocator slack and
+profiler memory. It includes startup and every preceding edit and cannot assign
+allocation bytes to U without phase instrumentation. Definitions follow the
+[DHAT manual](https://valgrind.org/docs/manual/dh-manual.html).
+
+Existing run 3 already verifies +189,504 construction heap takes (89,038 eager
+empty-owner cells and 100,466 extra pages) and +100,828 release heap gives.
+DHAT adds requested bytes and simultaneous liveness; it does not by itself
+measure allocator latency. Cache self costs in allocator functions versus layout
+consumers provide the independent separation available in this observation.
+
+### Predictions to assess before assigning causes
+
+Apply these criteria only to completed, matched-count cohort pairs. First check
+whether selected native U reproduces an excess beyond its twin/interleaving
+spread. If it does not, this runner/pair cannot settle the original +9.1%.
+Report selected coverage before extrapolating to the 20-edit average. Thresholds
+below are predeclared screening criteria for follow-up, not calibrated cycle
+models or statistical proof.
+
+1. **Locality/miss growth supports the time explanation** if candidate selected
+   substantive U has at least 10% more D1 or LL data misses while instructions
+   are flat or lower, and at least half of the gross positive self-miss delta
+   occurs in layout consumers/publication/lookup callers rather than allocator
+   functions. Full construction/layout is assessed separately. A compatible
+   native rise in cache/TLB misses with cycles strengthens this explanation.
+   This would identify H1/H2 or H3's retained geometry as memory-latency
+   candidates despite instruction savings; it would not apportion their shares
+   without a same-source metadata/geometry intervention. Inspect signed net
+   deltas as well as gross positive deltas so migrations/inlining do not turn
+   a net saving into a claimed regression.
+
+2. **Allocation latency supports the full-layout explanation** if DHAT confirms
+   increased events/bytes/liveness, native box construction carries the excess,
+   and allocator functions account for at least half of gross positive
+   construction data-miss delta while nonallocator preparation/layout shows
+   less than 10% miss growth. Existing extra allocator instructions support this
+   direction. Startup allocation latency alone cannot explain an isolated U
+   excess; it can affect U only through retained working set, actual allocations
+   inside U, or scope mismatch. The selected U call graph must show allocation
+   activity before calling it an update allocation explanation. Counts alone
+   are insufficient: sampled allocator cycles or a same-source allocation-policy
+   comparison would still be needed to establish latency and a causal share.
+
+3. **Neither observed mechanism accounts for the matched excess** if native U
+   reproduces the slowdown, both D1 and LL data-miss growth are below 10%, and
+   U has negligible extra allocator work, or full-layout excess is confined
+   outside the observed construction/layout scopes. This rejects a large
+   miss-growth explanation in this fixed model, not native memory behavior in
+   general. Callgrind does not model dTLB, hardware prefetch, bandwidth, dependent-load
+   latency for cache hits, or out-of-order overlap. Flat simulated misses with unavailable PMU therefore
+   leave those causes **unverified**, rather than proving memory innocent.
+   A failed/capped pass or unavailable native counters is inconclusive, never
+   evidence for either mechanism. Further native phase sampling or same-source
+   interventions are required if these observations do not discriminate.
+
+No renderer data dependencies change in this experiment. Sequential replay is
+forced by the original edit script's document-state dependencies; profiler
+counters and serial CI orchestration are external measurement, not a shared
+renderer table or a proposed serialization. The Whitefoot directory-separation
+gap remains established independently of this new, as-yet-unverified memory
+attribution. No workaround, pin change, request filing or approval-log edit is
+part of this round.

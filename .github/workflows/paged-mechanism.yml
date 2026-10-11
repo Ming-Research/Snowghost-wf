@@ -3,21 +3,34 @@ name: paged-mechanism
 on:
   push:
     branches: [research/m2-paged-mechanism]
+    paths:
+      - .github/workflows/paged-mechanism.yml
+      - research/investigations/m2-paged/*.py
   workflow_dispatch:
     inputs:
+      experiment:
+        description: Fixed-model memory investigation or the completed instruction profile
+        type: choice
+        options: [memory, instructions]
+        default: memory
       full_profile:
         description: After bounded pilots, profile the complete ecma262 fontsize script
         type: boolean
         default: false
       perf:
-        description: Attempt optional whole-process perf counters (PMU may be unavailable)
+        description: Attempt optional whole-process perf counters; unavailable PMU is recorded
         type: boolean
-        default: false
+        default: true
+      ordinals:
+        description: Optional original forward/inverse pair; empty ranks original three-round base U
+        type: string
+        default: ''
 permissions:
   contents: read
   actions: read
 jobs:
   profile:
+    if: github.event_name == 'workflow_dispatch' && inputs.experiment == 'instructions'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -89,4 +102,66 @@ jobs:
         with:
           name: paged-mechanism
           path: build/paged-mechanism/
+          compression-level: 1
+  memory:
+    if: github.event_name == 'push' || inputs.experiment == 'memory'
+    runs-on: ubuntu-24.04
+    # Seven cache/control and four DHAT processes each cap at 900s (165m).
+    # 64 native probes cap at 30s (32m); 12 optional perf probes cap at 60s
+    # plus version probes and setup fit in the remaining job budget. Preserve
+    # partial artifacts when any bounded process cannot finish.
+    timeout-minutes: 240
+    env:
+      BASE: 030e4dd4081c9c15699363bdfa0e57c53a7f761d
+      CANDIDATE: 2c2c171911933aef499e0fb96a288643803eacd5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Require identical frozen renderer and compiler inputs
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$CANDIDATE" HEAD
+          git diff --exit-code "$CANDIDATE" HEAD -- renderer whitefoot.pin whitefoot-kit
+          git diff --exit-code "$BASE" "$CANDIDATE" -- whitefoot.pin whitefoot-kit
+      - uses: actions/download-artifact@v4
+        with:
+          name: m2-paged-time-sample
+          run-id: 38096036798
+          github-token: ${{ github.token }}
+          path: build/m2-paged-time
+      - uses: actions/download-artifact@v4
+        with:
+          name: m2-paged-time-matrix-ecma262-seq
+          run-id: 38101523274
+          github-token: ${{ github.token }}
+          path: build/paged-time-original
+      - name: Profiler, optional perf and identical fonts
+        run: |
+          set -euo pipefail
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y --no-install-recommends valgrind binutils fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          # Kernel-specific perf packages may not exist for the hosted Azure
+          # kernel. The script probes a runnable installed version and records
+          # absence/PMU denial, with a separate software-counter attempt.
+          sudo apt-get install -y --no-install-recommends linux-tools-common linux-tools-generic || true
+          make -s oracle-fonts
+          chmod +x build/m2-paged-time/drivers/*-seq
+          mkdir -p build/paged-memory
+          uname -a > build/paged-memory/machine.txt
+          lscpu >> build/paged-memory/machine.txt
+          cat /etc/os-release >> build/paged-memory/machine.txt
+          valgrind --version >> build/paged-memory/machine.txt
+          cat /proc/sys/kernel/perf_event_paranoid >> build/paged-memory/machine.txt
+      - name: Original-prefix memory and allocation evidence
+        env:
+          TRY_PERF: ${{ github.event_name == 'push' && 'true' || inputs.perf && 'true' || 'false' }}
+          ORDINALS: ${{ inputs.ordinals || '' }}
+        run: python3 research/investigations/m2-paged/memory-mechanism.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: paged-memory
+          path: build/paged-memory/
           compression-level: 1

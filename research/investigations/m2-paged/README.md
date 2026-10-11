@@ -4,7 +4,10 @@ The source comparison, matched CI profile results and remaining attribution
 limits are in
 [Mechanism of the owner-store regression](MECHANISM.md). They reconcile this
 storage-only candidate with C3 and distinguish measured instruction/allocation
-deltas from unresolved native time shares.
+deltas from unresolved native time shares. The next
+[hosted memory experiment and pre-run criteria](MECHANISM.md#hosted-memory-experiment-prior-criterion-before-results)
+compare fixed-model cache misses, optional native counters and heap allocation
+volume for the original costly edit pair with its preceding state preserved.
 
 ## Question and prior criterion
 
