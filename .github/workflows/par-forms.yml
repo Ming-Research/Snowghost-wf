@@ -1,0 +1,94 @@
+# Temporary hosted run for the layout loop-form witnesses
+# (research/investigations/layout/par-forms): records every witness's --par
+# ledger and compiler status, builds and runs its main, and uploads all of it.
+# A refused witness is evidence, not a failure: the job fails only when a main
+# that built exits nonzero, meaning its check found a wrong result.
+# Retire it when Whitefoot has adopted the witnesses as acceptance tests.
+name: par-forms
+on:
+  push:
+    branches: [research/layout-par-witnesses]
+jobs:
+  witnesses:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Compiler and toolchain
+        run: make -s toolchain compiler
+      # A witness whose loop carries an apart clause may be refused at its
+      # certificate, which stops compilation before the main can run. Its
+      # serial control is the same source with the clause removed, so the
+      # main's checks run on today's compiler too.
+      - name: Serial controls
+        run: |
+          set +e
+          mkdir -p build/par-forms
+          python3 - research/investigations/layout/par-forms build/par-forms > build/par-forms/serial.txt 2>&1 <<'PY'
+          import pathlib, re, sys
+          cases, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+          clause = re.compile(r'for \(\n( +)(\w+ in [^\n]+),\n\1apart\(i, j\) \{\n(?:\1  [^\n]*\n)*\1\}\n +\) \{')
+          for source in sorted(cases.glob('*.wf')):
+              text = source.read_text()
+              wanted = text.count('apart(i, j) {')
+              if wanted == 0:
+                  continue
+              serial, made = clause.subn(lambda m: 'for (' + m.group(2) + ') {', text)
+              if made != wanted:
+                  sys.exit(f'{source.name}: removed {made} of {wanted} apart clauses')
+              (out / (source.stem + '-serial.wf')).write_text(serial)
+              print(f'{source.name}: {made} apart clause(s) removed')
+          PY
+          derived=$?
+          echo "serial control derivation exit $derived" >> build/par-forms/serial.txt
+          cat build/par-forms/serial.txt
+      - name: Ledgers, builds and mains
+        run: |
+          set +e
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          out=build/par-forms
+          git rev-parse HEAD > "$out/revision.txt"
+          cat whitefoot.pin >> "$out/revision.txt"
+          failed=0
+          printf '%-24s %6s %10s %8s %10s %8s\n' witness check seq-build seq-run par-build par-run > "$out/summary.txt"
+          for source in research/investigations/layout/par-forms/*.wf "$out"/*-serial.wf; do
+            name=$(basename "$source" .wf)
+            "$wfc" --check --par-ledger "$source" > "$out/$name.ledger" 2>&1
+            check=$?
+            echo "$check" > "$out/$name.check-status"
+            "$wfc" "$source" -o "$out/$name-seq" > "$out/$name-seq.build" 2>&1
+            seq_build=$?
+            "$wfc" --par --par-ledger "$source" -o "$out/$name-par" > "$out/$name-par.build" 2>&1
+            par_build=$?
+            seq_run=-
+            if [ "$seq_build" -eq 0 ]; then
+              "$out/$name-seq" > "$out/$name-seq.run" 2>&1
+              seq_run=$?
+              if [ "$seq_run" -ne 0 ]; then failed=1; fi
+            fi
+            par_run=-
+            if [ "$par_build" -eq 0 ]; then
+              "$out/$name-par" > "$out/$name-par.run" 2>&1
+              par_run=$?
+              if [ "$par_run" -ne 0 ]; then failed=1; fi
+            fi
+            printf '%-24s %6s %10s %8s %10s %8s\n' "$name" "$check" "$seq_build" "$seq_run" "$par_build" "$par_run" >> "$out/summary.txt"
+            echo "::group::$name (check exit $check)"
+            cat "$out/$name.ledger"
+            echo "::endgroup::"
+          done
+          cat "$out/summary.txt"
+          exit "$failed"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: par-forms
+          path: |
+            build/par-forms/*.wf
+            build/par-forms/*.txt
+            build/par-forms/*.ledger
+            build/par-forms/*-status
+            build/par-forms/*.build
+            build/par-forms/*.run
