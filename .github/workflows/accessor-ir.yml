@@ -1,0 +1,78 @@
+# Temporary: emits the layout_oracle LLVM IR for Whitefoot's small-accessor
+# inlining work (board item lm-req-sg-accessor-ir). Remove after delivery.
+name: accessor-ir
+
+on:
+  push:
+    branches: [research/accessor-ir]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  emit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Pinned compiler and host toolchain
+        run: make -s toolchain compiler
+
+      - name: Emit the IR, whole program and per-function fragments
+        run: |
+          set -u
+          out=$GITHUB_WORKSPACE/build/accessor-ir
+          mkdir -p "$out"
+          release=$(sed -n 's/^release = //p' whitefoot.pin)
+          wfc=$GITHUB_WORKSPACE/build/whitefoot/$release/whitefootc
+          { git rev-parse HEAD; cat whitefoot.pin; "$wfc" --version 2>&1 || true; } > "$out/provenance.txt"
+          cd renderer
+          status=0
+          "$wfc" --emit-llvm --graph modules.wfg --entry layout_oracle -o "$out/layout_oracle.ll" > "$out/whole.log" 2>&1 || status=$?
+          echo "whole $status" >> "$out/status.txt"
+          status=0
+          "$wfc" --emit-llvm --cache "$RUNNER_TEMP/ir-cache" --fragments function --graph modules.wfg --entry layout_oracle -o "$out/layout_oracle-fragments.ll" > "$out/fragments.log" 2>&1 || status=$?
+          echo "fragments $status" >> "$out/status.txt"
+          cat "$out/status.txt"
+          ls -la "$out"
+
+      - name: Extract the accessor definitions and their source locations
+        run: |
+          set -eu
+          out=build/accessor-ir
+          git grep -nE 'fn (computed_of|font_of|text_of|box_of|read_item|write_item|next_glyphs)[<(]' -- renderer > "$out/source-locations.txt"
+          for ll in "$out"/*.ll; do
+            [ -f "$ll" ] || continue
+            python3 -I - "$ll" > "${ll%.ll}-accessors.ll" <<'EOF'
+          import re, sys
+          wanted = re.compile(r'@"?wf_(layout\.(computed_of|font_of|text_of|box_of)|font\.(read_item|write_item|next_glyphs))\b')
+          text = open(sys.argv[1]).read().split('\n')
+          out, keep = [], False
+          for line in text:
+              if line.startswith('define ') and wanted.search(line):
+                  keep = True
+              if keep:
+                  out.append(line)
+                  if line == '}':
+                      keep = False
+                      out.append('')
+          sys.stdout.write('\n'.join(out))
+          EOF
+            grep -c '^define ' "${ll%.ll}-accessors.ll" || true
+          done
+          gzip -k "$out"/*.ll 2>/dev/null || true
+          cat "$out/source-locations.txt"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: accessor-ir-${{ github.sha }}
+          path: |
+            build/accessor-ir/*.ll.gz
+            build/accessor-ir/*-accessors.ll
+            build/accessor-ir/*.txt
+            build/accessor-ir/*.log
