@@ -170,7 +170,7 @@ fn collapses(styles: &Styles, style: StyleRef) -> collapsing: Bool reads(styles)
 }
 
 fn measure(paragraph: &Paragraph, children: &[Context], styles: &Styles, basis: i32) -> made: Measure reads(paragraph), reads(children), reads(styles) {
-  doc "Computes a paragraph's Measure.";
+  doc "Computes a paragraph's Measure. Each mark's own width (an inline box's start or end frame, an atomic inline's margin box) and whether an opening box glues to the preceding text are computed in one counted loop writing only that mark's cells, because they depend on the mark alone; a second loop then adds them into the per-position arrays in mark order, sequential because marks at one position add fadd.strict contributions to one cell and that order fixes the result's bits.";
   let full = paragraph^.text.inner.len;
   let count = imin(full, scalar_ceiling);
   let positions = count + 1_u64;
@@ -205,51 +205,74 @@ fn measure(paragraph: &Paragraph, children: &[Context], styles: &Styles, basis: 
     }
   }
   let marks = paragraph^.marks.inner.len;
+  let mark_extent = box_array_filled::<f32>(count: marks, value: 0.0_f32);
+  let mark_glues = box_array_filled::<u8>(count: marks, value: 0_u8);
   for (m in 0_u64..marks) {
     let mark = paragraph^.marks.inner[m];
     match mark {
       Open(at: here, style: owner) => {
         let (start, end) = inline_frame(styles: styles, style: owner, basis: basis);
+        set mark_extent.inner[m] = start;
+        let at = cvt::<u32, u64>(here);
+        let group = box_of(styles: styles, style: owner);
+        let previous = if at > 0_u64 {
+          give at - 1_u64;
+        } else {
+          give 0_u64;
+        }
+        let has_before = at > 0_u64;
+        let in_text = previous < full;
+        let readable = band(has_before, in_text);
+        let last_scalar = if readable {
+          give paragraph^.text.inner[previous];
+        } else {
+          give 0_u32;
+        }
+        let follows_space = last_scalar == 32_u32;
+        let controlled = group.unicode_bidi != 0_u8;
+        let not_after_space = bnot(follows_space);
+        let glues = band(controlled, not_after_space);
+        if glues {
+          set mark_glues.inner[m] = 1_u8;
+        }
+      }
+      Close(style: owner, ..) => {
+        let (start, end) = inline_frame(styles: styles, style: owner, basis: basis);
+        set mark_extent.inner[m] = end;
+      }
+      Atomic(context: child, ..) => {
+        let width = atomic_width(children: children, child: child);
+        set mark_extent.inner[m] = width;
+      }
+      Node(..) => {
+      }
+    }
+  }
+  for (m in 0_u64..marks) {
+    let mark = paragraph^.marks.inner[m];
+    let extent = mark_extent.inner[m];
+    match mark {
+      Open(at: here, ..) => {
         let at = cvt::<u32, u64>(here);
         if at < positions {
           let old = opens.inner[at];
-          set opens.inner[at] = fadd.strict(old, start);
-          let group = box_of(styles: styles, style: owner);
-          let previous = if at > 0_u64 {
-            give at - 1_u64;
-          } else {
-            give 0_u64;
-          }
-          let has_before = at > 0_u64;
-          let in_text = previous < full;
-          let readable = band(has_before, in_text);
-          let last_scalar = if readable {
-            give paragraph^.text.inner[previous];
-          } else {
-            give 0_u32;
-          }
-          let follows_space = last_scalar == 32_u32;
-          let controlled = group.unicode_bidi != 0_u8;
-          let not_after_space = bnot(follows_space);
-          let glues = band(controlled, not_after_space);
-          if glues {
+          set opens.inner[at] = fadd.strict(old, extent);
+          if mark_glues.inner[m] == 1_u8 {
             set glued.inner[at] = 1_u8;
           }
         }
       }
-      Close(at: here, style: owner) => {
-        let (start, end) = inline_frame(styles: styles, style: owner, basis: basis);
+      Close(at: here, ..) => {
         let at = cvt::<u32, u64>(here);
         if at < positions {
           let old = closes.inner[at];
-          set closes.inner[at] = fadd.strict(old, end);
+          set closes.inner[at] = fadd.strict(old, extent);
         }
       }
-      Atomic(at: here, context: child) => {
+      Atomic(at: here, ..) => {
         let at = cvt::<u32, u64>(here);
         if at < count {
-          let width = atomic_width(children: children, child: child);
-          set advances.inner[at] = width;
+          set advances.inner[at] = extent;
         }
       }
       Node(..) => {
@@ -679,12 +702,13 @@ fn shifted_box(styles: &Styles, style: StyleRef) -> shifted: Bool reads(styles) 
 }
 
 fn framed_inside(paragraph: &Paragraph, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> inside: Box<Array<u8>> reads(paragraph), reads(styles), reads(fonts), reads(picks) {
-  doc "For each of the paragraph's marks, 1 when it opens an inline box that the reference keeps whole rather than culled because of a box or atomic inline directly inside it: a child with a margin, a vertical-align other than baseline or content-area metrics unlike its own, or an atomic inline.";
+  doc "For each of the paragraph's marks, 1 when it opens an inline box that the reference keeps whole rather than culled because of a box or atomic inline directly inside it: a child with a margin, a vertical-align other than baseline or content-area metrics unlike its own, or an atomic inline. Each opening mark's content-area metrics and whether it has a margin or a vertical-align of its own are computed in one counted loop writing only that mark's cells, because they depend on the mark's style alone; the walk over the marks that follows is one sequential pass, because each mark's parent is the innermost box still open, found with a stack in mark order; that bracket matching is a prefix scan whose logarithmic-depth parallel form is not used (board item sg-layout-scan-walks).";
   let marks = paragraph^.marks.inner.len;
   let count = imin(marks, item_ceiling);
   let inside = box_array_filled::<u8>(count: count, value: 0_u8);
-  let open_marks = box_slots_new::<u64>(capacity: 8_u64);
-  let open_metrics = box_slots_new::<Metrics>(capacity: 8_u64);
+  let zero = Metrics(content_ascent: 0_i32, content_descent: 0_i32, ascent: 0_i32, descent: 0_i32, x_height: 0_i32, font_size: 0_i32);
+  let own_metrics = box_array_filled::<Metrics>(count: count, value: zero);
+  let own_raised = box_array_filled::<u8>(count: count, value: 0_u8);
   for (m in 0_u64..count) {
     let mark = paragraph^.marks.inner[m];
     match mark {
@@ -692,38 +716,48 @@ fn framed_inside(paragraph: &Paragraph, styles: &Styles, fonts: &FontSet, picks:
         let own = box_metrics(styles: styles, fonts: fonts, picks: picks, style: owner);
         let margined = margined_box(styles: styles, style: owner);
         let shifted = shifted_box(styles: styles, style: owner);
+        set own_metrics.inner[m] = own;
+        let own_differs = bor(margined, shifted);
+        if own_differs {
+          set own_raised.inner[m] = 1_u8;
+        }
+      }
+      Close(..) => {
+      }
+      Atomic(..) => {
+      }
+      Node(..) => {
+      }
+    }
+  }
+  let open_marks = box_slots_new::<u64>(capacity: 8_u64);
+  for (m in 0_u64..count) {
+    let mark = paragraph^.marks.inner[m];
+    match mark {
+      Open(..) => {
         let depth = open_marks.inner.len;
-        let depth_metrics = open_metrics.inner.len;
-        let has_mark = depth > 0_u64;
-        let has_metrics = depth_metrics > 0_u64;
-        let both = band(has_mark, has_metrics);
-        if both {
-          let last_metrics = depth_metrics - 1_u64;
+        if depth > 0_u64 {
           let last_mark = depth - 1_u64;
-          let parent_metrics = open_metrics.inner[last_metrics];
           let parent_mark = open_marks.inner[last_mark];
-          let ascent_differs = parent_metrics.content_ascent != own.content_ascent;
-          let descent_differs = parent_metrics.content_descent != own.content_descent;
-          let metrics_differ = bor(ascent_differs, descent_differs);
-          let own_differs = bor(margined, shifted);
-          let raised = bor(own_differs, metrics_differ);
-          if raised {
-            if parent_mark < inside.inner.len {
+          if parent_mark < count {
+            let parent_metrics = own_metrics.inner[parent_mark];
+            let own = own_metrics.inner[m];
+            let ascent_differs = parent_metrics.content_ascent != own.content_ascent;
+            let descent_differs = parent_metrics.content_descent != own.content_descent;
+            let metrics_differ = bor(ascent_differs, descent_differs);
+            let own_differs = own_raised.inner[m] == 1_u8;
+            let raised = bor(own_differs, metrics_differ);
+            if raised {
               set inside.inner[parent_mark] = 1_u8;
             }
           }
         }
         let pushed = push_item::<u64>(cell: &open_marks, value: m, ceiling: 4096_u64);
-        let pushed_metrics = push_item::<Metrics>(cell: &open_metrics, value: own, ceiling: 4096_u64);
       }
       Close(..) => {
         let depth = open_marks.inner.len;
         if depth > 0_u64 {
           let removed = take_back(window: &open_marks.inner);
-        }
-        let depth_metrics = open_metrics.inner.len;
-        if depth_metrics > 0_u64 {
-          let removed_metrics = take_back(window: &open_metrics.inner);
         }
       }
       Atomic(..) => {
