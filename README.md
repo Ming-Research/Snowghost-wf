@@ -59,9 +59,8 @@ complete when all four goals hold:
   and full builds are no slower than before M2 (its
   [criterion](research/investigations/structure-edits/DESIGN.md#criterion)).
 - The renderer binary is at most 10 MB, and the gate checks it. Until a shell
-  exists the renderer binary stands for the engine. How it is measured
-  (platform, stripping, MB or MiB) is an open owner decision on status board
-  item sg-target-binary-size.
+  exists the renderer binary stands for the engine, measured as
+  [`design/scope/binary-size.md`](design/scope/binary-size.md) decides.
 
 Candidate goals for later releases, each reopened when its release is
 planned:
@@ -178,11 +177,15 @@ make check
 
 `make check` downloads the Whitefoot compiler release that `whitefoot.pin`
 names, builds the renderer, checks that the static atoms record matches its
-name list, runs the document arena's self-test and lints the design tree. It
-runs on Linux x86-64 and macOS arm64, and needs Git, Python 3, curl, clang at
-`/usr/bin/clang` and, on Linux, LLD; on Linux both are the LLVM major the
-pinned release was built with, which `make toolchain` installs. CI runs it
-on every push.
+name list, runs the document arena's self-test, checks that the full-pipeline
+driver `layout_oracle`, built with `--par`, stays within the owner's 10 MB
+(10 000 000-byte) limit and lints the design tree. The driver stands in for
+the engine binary until one exists (the board's sg-target-binary-size item).
+The check runs on Linux x86-64 and macOS arm64, and needs Git, Python 3,
+curl, clang at `/usr/bin/clang` and, on Linux, LLD; on Linux both are the
+LLVM major the pinned release was built with, which `make toolchain`
+installs. CI runs it on every push on Linux x86-64 only, so the size gate
+covers that build alone.
 
 The oracles are separate `make oracle-*` targets. They need network access
 for their test suites and, for the Chromium oracles, Node.js and Playwright.
