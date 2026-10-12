@@ -59,9 +59,8 @@ complete when all four goals hold:
   and full builds are no slower than before M2 (its
   [criterion](research/investigations/structure-edits/DESIGN.md#criterion)).
 - The renderer binary is at most 10 MB, and the gate checks it. Until a shell
-  exists the renderer binary stands for the engine. How it is measured
-  (platform, stripping, MB or MiB) is an open owner decision on status board
-  item sg-target-binary-size.
+  exists the renderer binary stands for the engine, measured as
+  [`design/scope/binary-size.md`](design/scope/binary-size.md) decides.
 
 Candidate goals for later releases, each reopened when its release is
 planned:

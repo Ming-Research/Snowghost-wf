@@ -1,8 +1,7 @@
 # Snowghost binary size against the 10 MB limit
 
-Status: measured 2026-10-12; the open choices are proposed as the design tree's
-`design/scope/binary-size.md` and need the owner's approval (decision card on
-the status board, item sg-target-binary-size).
+Status: measured 2026-10-12; the owner approved the choices below on
+2026-10-12, and `design/scope/binary-size.md` records them.
 
 ## Question
 
@@ -56,8 +55,7 @@ as a table line and appended to the job summary.
 
 Whitefoot compiler release: `wf-d837678c6905`; Snowghost revision: `52e7649`;
 workflow run: [38240825791](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38240825791),
-2026-10-12. Limit: 10 485 760 bytes (10 MiB) or 10 000 000 bytes (10 MB), see
-the open choices.
+2026-10-12. Limit: 10 000 000 bytes (10 MB), see the choices below.
 
 | os | entry | flags | bytes |
 |---|---|---|---|
@@ -116,11 +114,11 @@ and the pipeline stages still to be written (paint, script, image decoding in
 the pipeline) will add code, so the margin today is not the margin at the
 first engine binary.
 
-## Open choices for the owner
+## Choices
 
-Each is a decision of `design/scope/binary-size.md`, proposed there and
-approved on one decision card; the check follows the proposal and changes if
-the owner rules otherwise.
+These were the questions the measurement had to settle. The owner approved
+the proposed answer to each, which `design/scope/binary-size.md` records and
+the check follows.
 
 1. Renderer only, or renderer plus shell. The limit can cover the Whitefoot
    renderer binary alone or the whole engine as installed, which adds the
