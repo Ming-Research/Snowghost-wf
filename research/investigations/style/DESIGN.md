@@ -892,6 +892,72 @@ the controls of the facts were observed by the agent that implemented
 the port, with temporary counters and edited copies, and are not in a run
 file; repeating them needs the same edits.
 
+## Step timing
+
+The sections above time the stage's parts as differences between whole
+modes. This one times each step of the full style build inside one run, so
+that four things stop being estimates. The results are not in yet; what is
+written here is the question, the comparison and the result that would
+answer it, fixed before any run.
+
+**Questions and what decides them.**
+
+1. *Does interning stay within 15 percent of the four-worker stage?* (the
+   provisional bound in `design/vocabulary.md`). `intern` is the time of
+   `intern_styles` alone, against `total`, the four parts' sum, from
+   `run.sh profile` in the `par4` mode. The bound holds on a page when
+   `intern` is at most 15 percent of `total` there; it fails on a page above
+   it. A page whose three process results straddle 15 percent is undecided.
+2. *Why is matching 47, 73 and 87 percent of the stage?* The matcher counts,
+   per styled node, the rule items the index offers, those the feature
+   filter admits so that their selectors are tested, and those that match.
+   Matching's time is the sum of the sequential steps before its loop and
+   `match.loop`; `match.loop` divided by the admitted items, in the `seq`
+   mode, is the cost of one selector test, filter and index walk included.
+   The breakdown is sound only if offered >= admitted >= matched on every
+   page and the counters are equal between builds and runs; the page whose
+   share is largest is explained when its admitted items per node and its
+   cost per test, multiplied, reproduce `match.loop` (they do by
+   construction), and the admitted share of the offered items says whether
+   the filter or the index is what could cut the tests.
+3. *How much of the stage runs before its parallel loops, and how much of
+   it is sequential?* `match.rule_index`, `match.positions`,
+   `match.pseudo_flags`, `match.numbering` and `match.allocation` precede
+   the matching loop, and `alone.depth_check` is the second part's
+   sequential check. The `par4` shares of these steps, against the same
+   steps in `seq`, say which scale with workers (the ledger says which of
+   their loops are split). `alone.positions` and `alone.depth_check` are
+   `sibling_positions` and the depth check run alone on the same input after
+   the stage; `alone.positions` is checked against `match.positions`, the
+   same pass inside the stage, and a difference above 25 percent in `seq`
+   means a standalone time cannot stand for the step inside the stage.
+4. *Does the positions parameter make `selector_matches` slower?* Shape A of
+   the prototype driver calls it for every rule and element. `scan-param.sh`
+   times it, interleaved, with this source (base), with
+   `scan-without-positions.patch` applied (noparam: the parameter removed
+   from the eight matcher functions between `selector_matches` and the leaf
+   tests) and with base's binary again (twin). The parameter is a cause when
+   noparam's least stage time is at most 0.93 of base's (half the 14 percent
+   recorded in `concurrency/DESIGN.md`) and the twin's is within 0.97 and
+   1.03 of base's; it is not when noparam is within the twin's spread. A
+   spread of twin and base wider than 3 percent leaves it undecided.
+
+**What the measurement changes.** The counters are written by
+`match_all`'s iteration into its own three words of a `counts` table, as it
+writes its winners; the stage passes an empty table, so its matching counts
+nothing. `overhead` times `match` with origin/main's driver and this one in
+turn to bound what the empty table costs; the ledger line for `match_all`
+must still say split. `match_elements_profiled` repeats `match_with`'s steps
+with a clock reading between them and is not called by the stage; the dump
+of the path through it (`profdump`) must equal `dump`'s and origin/main's
+byte for byte, with a changed user-agent sheet as the control that the
+comparison can fail.
+
+**Limits.** The workflow `style-build-timing` runs on a hosted runner, so its
+times attribute time to steps and are not precise timings; the 14900K runs
+the precise ones. A step run alone (`alone.*`) is timed after the stage, on
+a warm cache, so it is a lower bound of what the same pass costs inside it.
+
 ## Owner rulings
 
 - **2026-10-02, Q64, the level cascade,** written in Chinese after the
