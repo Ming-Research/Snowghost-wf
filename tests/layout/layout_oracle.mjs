@@ -10,7 +10,8 @@
 // http://snowghost.test/page/index.html, the mapped sheets served and every
 // other request refused. Playwright runs headless Chromium with hidden
 // scrollbars, so no scrollbar takes space. After the load every CSS animation
-// and transition is cancelled (cancelAnimations), so the dump is of the static
+// and transition is cancelled and SMIL animation is switched off
+// (cancelAnimations), so the dump is of the static
 // style that Snowghost computes; standard error ends with the number cancelled.
 //
 // File format, the contract a Snowghost driver writes to. UTF-8, LF line
@@ -98,8 +99,9 @@ function writeOut(text) {
 
 // ---- static style ----
 
-// Cancels every CSS animation and transition, so the dump reports the
-// static style: the computed values and boxes with no animation applied.
+// Cancels every CSS animation and transition and switches off SMIL, so the
+// dump reports the static style: the computed values and boxes with no
+// animation applied.
 // Snowghost computes the static style and runs no animations, so this is the
 // state Chromium has to report to be the oracle of it. Without the cancel the
 // dump reads whatever frame an animation has reached when each query runs:
@@ -112,12 +114,44 @@ function writeOut(text) {
 // static one, when the property has a `transition`), so the cancel is
 // repeated until no animation is left; a page that still has one after
 // MAX_PASSES is reported on standard error and dumped as it is.
+//
+// SMIL animations (animate, animateMotion, animateTransform, animateColor and
+// set inside an <svg>) are not CSS animations, so getAnimations() does not
+// list them and they run on the SVG time container instead: an animateMotion
+// on a <path> moves it along its motion path as the seconds pass, which
+// changes the rectangles of the <path> and of its enclosing <g> by fractions
+// of a pixel from one dump to the next (miro.com's connector decorations).
+// The static state is the document without them: by the SVG animation model
+// (SVG 1.1 section 19.2.1, SMIL Animation 3.6.8) an animation that is not
+// active contributes nothing, and the element shows its base value. So every
+// animation element gets begin="indefinite", which never begins it without a
+// script call (and scripts are disabled), and the elements stay in the DOM,
+// so the element numbering of the dump is unchanged. Setting the attribute is
+// not enough to stop a running animation at once, hence also, for each SVG
+// root that owns an animation, pauseAnimations() and setCurrentTime(0): that
+// samples the time container immediately and freezes it at time 0, where
+// nothing is active. Seeking to 0 alone would not give the base value:
+// an animation with the default begin is active at 0 and contributes its
+// first frame (animateMotion puts the path at the start of its motion path).
+// A page without SMIL elements is untouched, so the oracle's output for it
+// is unchanged.
 // tests/css/style_oracle.mjs and tests/layout/layout_oracle.mjs carry the same
 // function, because the two dumps of a page must see one state.
 const MAX_PASSES = 8;
 
 async function cancelAnimations(page) {
   return page.evaluate((maxPasses) => {
+    // SMIL: see the comment above. getAnimations() does not list SMIL
+    // animations, so they are switched off here, before the CSS pass.
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+    const smil = [...document.querySelectorAll('animate, animateMotion, animateTransform, animateColor, set')]
+      .filter((element) => element.namespaceURI === SVG_NS);
+    for (const element of smil) element.setAttribute('begin', 'indefinite');
+    for (const svg of new Set(smil.map((element) => element.ownerSVGElement).filter(Boolean))) {
+      svg.pauseAnimations();
+      svg.setCurrentTime(0);
+    }
+    void document.documentElement.getBoundingClientRect();
     let cancelled = 0;
     for (let pass = 0; pass < maxPasses; pass++) {
       const running = document.getAnimations();

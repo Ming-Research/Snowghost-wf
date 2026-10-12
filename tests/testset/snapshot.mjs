@@ -62,7 +62,9 @@
 // A page that shows a bot wall or error is recorded as failed, not worked
 // around: a main document status of 400 or more, a navigation failure, a
 // document with fewer than 100 elements, or a challenge phrase in a short
-// page. No user agent, header or timing is changed to avoid detection.
+// page. No user agent, header or timing is changed to avoid detection. A
+// navigation timeout is retried once (NAVIGATION_ATTEMPTS, notes column); a
+// second timeout or any other navigation error fails the page.
 //
 // The manifest is TSV with a header: name, url, fetched_at, status (ok or
 // failed), html_sha256, html_bytes, dump_sha256, failure_reason, then
@@ -100,6 +102,7 @@ const PLAYWRIGHT = process.env.PLAYWRIGHT || '/opt/node22/lib/node_modules/playw
 const LAYOUT_ORACLE = resolve(dirname(fileURLToPath(import.meta.url)), '../layout/layout_oracle.mjs');
 
 const NAVIGATION_TIMEOUT = 60000;
+const NAVIGATION_ATTEMPTS = 2;
 const IDLE_TIMEOUT = 20000;
 const DEFAULT_SETTLE = 5000;
 const DEFAULT_SCROLL = 12;
@@ -436,12 +439,24 @@ async function snapshotPage(browser, entry, outDir, shadowMode) {
     }, () => {}));
   });
   try {
+    // One bounded retry, and only for a navigation timeout (the load event of
+    // a heavy page can miss one 60 s window and load in the next); any other
+    // navigation error, and a second timeout, fail the page. A retry is
+    // recorded in the notes.
     let response;
-    try {
-      response = await page.goto(entry.url, { waitUntil: 'load', timeout: NAVIGATION_TIMEOUT });
-    } catch (error) {
-      row.failure_reason = `navigation failed: ${oneLine(error.message).slice(0, 200)}`;
-      return row;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        response = await page.goto(entry.url, { waitUntil: 'load', timeout: NAVIGATION_TIMEOUT });
+        break;
+      } catch (error) {
+        const timedOut = error.name === 'TimeoutError';
+        if (timedOut && attempt < NAVIGATION_ATTEMPTS) {
+          notes.push(`navigation-timeout-retried (attempt ${attempt} of ${NAVIGATION_ATTEMPTS})`);
+          continue;
+        }
+        row.failure_reason = `navigation failed: ${oneLine(error.message).slice(0, 200)}`;
+        return row;
+      }
     }
     row.http_status = response ? String(response.status()) : '';
     if (response && response.status() !== 200) notes.push(`status ${response.status()}`);
