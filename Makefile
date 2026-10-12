@@ -18,13 +18,13 @@ DESIGN_TREES := $(filter-out log,$(basename $(notdir $(wildcard $(ROOT)/design/*
 DESIGN_REVIEW_BASE ?= origin/main
 
 .PHONY: check renderer design-lint design-ready \
-	static-atoms static-atoms-check dom-selftest \
+	static-atoms static-atoms-check dom-selftest binary-size-check \
 	oracle-data oracle-line-break oracle-css oracle-css-rules oracle-css-color oracle-css-selectors oracle-html-tokenizer oracle-html-tree \
 	oracle-png oracle-png-speed \
 	oracle-normalization oracle-idna oracle-url oracle-font-face oracle-font-shape oracle-text-properties \
 	oracle-style-dump oracle-style oracle-layout-dump oracle-layout oracle-fonts oracle-text
 
-check: compiler renderer static-atoms-check dom-selftest design-lint
+check: compiler renderer static-atoms-check dom-selftest binary-size-check design-lint
 
 # The renderer builds with the Whitefoot compiler release whitefoot.pin
 # names, which Whitefoot-kit's whitefoot.mk downloads and checks; it defines
@@ -71,6 +71,32 @@ dom-selftest: $(BUILD)/dom_selftest
 $(BUILD)/static_atoms $(BUILD)/dom_selftest: compiler FORCE
 	@mkdir -p $(BUILD)
 	@cd $(ROOT)/renderer && $(WFC) --graph modules.wfg --entry $(notdir $@) -o $@
+
+# The engine binary must stay within 10 MB, a hard limit the owner set on
+# 2026-10-12; if a change cannot meet it the work goes back to the owner, and
+# nobody raises it here. BINARY_SIZE_LIMIT is that one constant, in bytes
+# (10 * 1024 * 1024); it is overridable on the command line only to show the
+# check failing, as in `make binary-size-check BINARY_SIZE_LIMIT=1048576`.
+#
+# No shipped engine binary exists yet, so the check measures the largest
+# full-pipeline driver: layout_oracle, which runs HTML parsing, style, text
+# and layout and applies edits incrementally, built with --par (the larger of its
+# two builds) and left unstripped as linked.
+BINARY_SIZE_LIMIT ?= 10485760
+ENGINE_BINARY := $(BUILD)/layout_oracle_par
+
+$(ENGINE_BINARY): compiler FORCE
+	@mkdir -p $(BUILD)
+	@cd $(ROOT)/renderer && $(WFC) --par --graph modules.wfg --entry layout_oracle -o $@
+
+# Prints the engine binary's size and the limit on every run, and fails when
+# the size exceeds the limit. wc -c reads the size the same way on Linux and
+# macOS, where stat's flags differ.
+binary-size-check: $(ENGINE_BINARY)
+	@size=$$(wc -c < $< | tr -d ' '); \
+	echo "$(notdir $<): $$size bytes, limit $(BINARY_SIZE_LIMIT) bytes"; \
+	test "$$size" -le "$(BINARY_SIZE_LIMIT)" || { \
+		echo "$(notdir $<) is $$size bytes, over the $(BINARY_SIZE_LIMIT)-byte limit" >&2; exit 1; }
 
 design-lint:
 	@$(PY) -B -m unittest discover -s $(ROOT)/design/skill -p 'test_lint.py'
