@@ -30,6 +30,47 @@ proofs give a renderer, and it exposes what the language still lacks. The
 first question it answers is whether a pipeline built this way beats the
 engines in use today, measured on the same pages and the same edits.
 
+## Releases
+
+The long-term direction is a small, fast engine that can replace the system
+WebView on PC, Mac and mobile, and renders today's mainstream web
+applications faster than Chrome.
+
+The first release is a typesetting engine: style and layout only. It reaches
+four goals:
+
+- on the test set (21 web-application pages chosen by traffic rank, plus the
+  three document pages), first style and layout and three kinds of
+  interaction update are faster than Chromium, sequentially and at four
+  workers;
+- on the same pages, every block box is within 1 px of Chromium's, and every
+  inline box has the same number of fragments;
+- M2 is closed;
+- the engine binary is at most 10 MB, with a gate check.
+
+Candidate goals for later releases, each reopened when its release is
+planned:
+
+- **Paint:** the three document pages produce a display list and property
+  trees, identical sequentially, at four workers and incrementally.
+- **Desktop shell:** the Rust shell shows the document pages in a window and
+  responds to input, and a still frame matches a full repaint pixel for pixel.
+- **Mobile:** the document pages display and respond to input on one iOS and
+  one Android device.
+- **JavaScript:** an interpreter without a JIT passes an approved share of
+  test262 at approved speed.
+- **Memory and cold start:** approved targets against WebView are met on the
+  test set.
+- **Style and layout coverage:** the targeted case pages match Chromium in
+  every property and box.
+- **Text and font coverage:** line breaking, fallback fonts, WOFF2 and
+  letter-spacing match Chromium on their case sets.
+- **Library hardening:** the excluded tree-construction cases, NFKC and NFKD,
+  URL origin and search parameters pass, and untrusted input stays linear.
+- **Whole pipeline:** HTML to layout is faster than Chromium on the test set.
+- **Tidy-up:** duplicated code is merged and old spellings are replaced, with
+  identical output on the three document pages.
+
 ## Status
 
 Snowghost is a research renderer. It renders headless, to laid-out boxes, and
