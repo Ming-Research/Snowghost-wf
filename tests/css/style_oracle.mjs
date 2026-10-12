@@ -209,12 +209,22 @@ function writeOut(text) {
 // animation element gets begin="indefinite", which never begins it without a
 // script call (and scripts are disabled), and the elements stay in the DOM,
 // so the element numbering of the dump is unchanged. Setting the attribute is
-// not enough to stop a running animation at once, hence also, for each SVG
-// root that owns an animation, pauseAnimations() and setCurrentTime(0): that
-// samples the time container immediately and freezes it at time 0, where
-// nothing is active. Seeking to 0 alone would not give the base value:
-// an animation with the default begin is active at 0 and contributes its
-// first frame (animateMotion puts the path at the start of its motion path).
+// not enough: an animation whose interval has begun may keep that interval
+// when its begin list changes, and a seek of the time container to 0 may
+// reset the animations only when it moves backwards, so whether the first
+// frame stayed (animateMotion puts the path at the start of its motion path)
+// seems to have depended on whether any time had elapsed since the load: two
+// dumps of one stored page, made on two runners, differed (miro.com's
+// connector decorations; the cause is inferred from that, not observed).
+// So each animation element is also taken out of its parent and put back at
+// the same place, which makes it resolve its timing afresh, now with the new begin and
+// therefore no interval; and, for each SVG root that owns an animation,
+// pauseAnimations(), setCurrentTime(1) and setCurrentTime(0) sample the time
+// container and freeze it at time 0 by a backward seek, where nothing is
+// active. Seeking to 0 alone would not give the base value: an animation with
+// the default begin is active at 0 and contributes its first frame. The
+// animation elements that still report a current interval (getStartTime()
+// does not throw) are counted and reported on standard error.
 // A page without SMIL elements is untouched, so the oracle's output for it
 // is unchanged.
 // tests/css/style_oracle.mjs and tests/layout/layout_oracle.mjs carry the same
@@ -228,21 +238,38 @@ async function cancelAnimations(page) {
     const SVG_NS = 'http://www.w3.org/2000/svg';
     const smil = [...document.querySelectorAll('animate, animateMotion, animateTransform, animateColor, set')]
       .filter((element) => element.namespaceURI === SVG_NS);
-    for (const element of smil) element.setAttribute('begin', 'indefinite');
-    for (const svg of new Set(smil.map((element) => element.ownerSVGElement).filter(Boolean))) {
+    const owners = new Set(smil.map((element) => element.ownerSVGElement).filter(Boolean));
+    for (const element of smil) {
+      element.setAttribute('begin', 'indefinite');
+      const parent = element.parentNode;
+      const next = element.nextSibling;
+      element.remove();
+      parent.insertBefore(element, next);
+    }
+    for (const svg of owners) {
       svg.pauseAnimations();
+      svg.setCurrentTime(1);
       svg.setCurrentTime(0);
     }
+    const smilActive = smil.filter((element) => {
+      if (typeof element.getStartTime !== 'function') return false;
+      try {
+        element.getStartTime();
+        return true;
+      } catch {
+        return false;
+      }
+    }).length;
     void document.documentElement.getBoundingClientRect();
     let cancelled = 0;
     for (let pass = 0; pass < maxPasses; pass++) {
       const running = document.getAnimations();
-      if (running.length === 0) return { cancelled, left: 0 };
+      if (running.length === 0) return { cancelled, left: 0, smilActive };
       for (const animation of running) animation.cancel();
       cancelled += running.length;
       void document.documentElement.getBoundingClientRect();
     }
-    return { cancelled, left: document.getAnimations().length };
+    return { cancelled, left: document.getAnimations().length, smilActive };
   }, MAX_PASSES);
 }
 
@@ -290,6 +317,7 @@ async function dump(pagePath, mappings) {
     await page.goto(PAGE_URL, { waitUntil: 'load' });
     const animations = await cancelAnimations(page);
     if (animations.left > 0) process.stderr.write(`${animations.left} animations left after ${MAX_PASSES} cancel passes\n`);
+    if (animations.smilActive > 0) process.stderr.write(`${animations.smilActive} SMIL animations still have a current interval\n`);
 
     const count = await page.evaluate(() => {
       globalThis.__styleOracleElements = document.querySelectorAll('*');
