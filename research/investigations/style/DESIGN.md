@@ -1322,6 +1322,99 @@ the largest table, the rest (S), the seven hashes' sum and the stage's
   twelve tables' sum (`largest_ms` against `groups7_ms` plus `others5_ms`),
   since per-table tasks then leave that table as the chain.
 
+**Results.** Workflow `style-build-timing`, hosted run 38314107962 at
+b96ca9b, pin `wf-d837678c6905`, on GitHub-hosted `ubuntu-24.04` (the
+limits of "Step timing" apply: four workers on two physical cores, least of
+three processes). Milliseconds; `seq` is the sequential build, `par4` four
+workers:
+
+| page | intern.whole seq | stage intern seq | groups7 seq | others5 seq | largest table | hash7 seq | hash7 par4 |
+|---|---|---|---|---|---|---|---|
+| ecma262 | 146.9 | 133.5 | 73.1 | 55.4 | container 24.9 | 40.9 (27.8%) | 16.9 |
+| html5 | 83.9 | 82.2 | 44.1 | 34.3 | container 15.5 | 25.4 (30.3%) | 10.6 |
+| apollo11 | 10.2 | 9.8 | 5.2 | 4.1 | container 1.7 | 2.8 (27.6%) | 1.2 |
+
+`hash7`'s percentage is its share of `intern.whole` in `seq`.
+
+- *The breakdown stands.* `intern.whole` is within 25 percent of the
+  stage's `intern` on every page (1.10, 1.02 and 1.04 times it).
+- *A's prediction fails on html5 and holds on ecma262.* The seven value
+  groups take 44.1 ms on html5, under the 47 ms A needs there, and 73.1 ms
+  on ecma262, above the 67 ms it needs. A is blocked anyway on Whitefoot's
+  call grain (board request sg-req-call-grain-runtime-extent); it is not
+  reached by reshaping the calls or building with `--par-call-grain off`.
+- *B is worth doing.* The seven groups' hashing is 27.8 percent of
+  `intern.whole` on ecma262 and 30.3 percent on html5, above the 20
+  percent rule on both, and alone it scales 2.4x from `seq` to `par4` on
+  both pages.
+- *C is not needed.* The largest table, container (one of the five tables
+  that are not hashed here), is 19.4, 19.8 and 18.3 percent of the twelve
+  tables' sum on the three pages, under half of it.
+
+### Hashing outside the chain (B)
+
+Written before the code changed.
+
+**The chain today.** Each of the seven value groups' interning functions
+(`intern_box_group` through `intern_background_group`) runs one counted
+loop over the N nodes it is given. Iteration i hashes value i, probes the
+table's open-addressing index with that hash, compares with the entries it
+finds and, when none is equal, appends the value and gives it the next
+identifier. The loop is denied (an indexed accumulator: the index and the
+table), so hashing and probing alternate in one sequential chain of N
+steps, and the seven calls run one after another (the call grain omits
+their offers). Per table the chain is N (h_t + p_t); for the seven,
+S + sum over t of N (h_t + p_t).
+
+**The chain with B.** Each of the seven functions first fills an array of
+N hashes in a counted loop whose iteration i reads only value i and writes
+only slot i (`hash_box_values` through `hash_background_values`), then runs
+the probe loop as before, reading hash i from that array instead of
+computing it.
+
+- *Stays sequential:* the probe and append loop, in first-occurrence order.
+  Whether value i is new depends on every value interned before it, and the
+  identifiers are the positions of the first equal values; that order is
+  what makes them the same in every build and keeps an edit's identifiers
+  stable (the kept-state decision). The index's growth (`index_*_group`,
+  which places the table's earlier values again, and on a full build has
+  none to place), the five other tables and the assembly loop are
+  unchanged.
+- *Leaves the chain:* the hashing. Each table's chain becomes
+  N h_t / W + N p_t, and the seven together S + sum over t of
+  (N h_t / W + N p_t) while the call grain keeps them sequential, or
+  S + max over t of (N h_t / W + N p_t) once Whitefoot offers them (A).
+- *Costs:* one array of N 64-bit hashes per table call (1.4 MB on ecma262),
+  one store and one load per value, and a fork and join per table at
+  `par4`.
+
+**What B predicts.** On the hosted runner the seven groups' hashing took
+40.9 ms in `seq` and 16.9 ms at `par4` on ecma262 (25.4 and 10.6 on html5),
+so B should take about 24 ms off ecma262's `par4` interning and about 15 ms
+off html5's, if the probe loops keep their speed. Against the `par4`
+interning of "Step timing" (114.9 and 69.8 ms) that is about 91 and 55 ms,
+still above the 81.4 and 46.1 ms the 15 percent rule needs: B alone is not
+predicted to bring interning within 15 percent on the hosted runner, and the
+rest stays with A. In `seq`, B does the same hashing plus a store and a load
+per value, so it should be within the noise of the base.
+
+**The comparison and the falsifier.** `run.sh compare` times the base
+build (b96ca9b), the change and a copy of the base's binary (the twin), all
+built by the same compiler, in interleaved rounds whose order rotates, and
+reads the stage's own `intern` step and `total` from MODE profile, `seq` and
+`par4`, on ecma262, html5 and apollo11; each build's time is its least over
+the rounds. The twin's spread is how far its time lies from the base's. By
+the rules of "The falsifier" above, B is rejected when its `par4` interning
+is not below the base's by more than the twin's spread, or when its `seq`
+interning is slower than the base's by more than the twin's spread, on
+ecma262 or html5; the 15 percent clause is reported as well and, as
+predicted above, is not expected to pass with B alone. The ledger must
+permit each of the seven hashing loops, and the per-table calls' call-grain
+lines are compared between base and change so that a change in which calls
+are offered, which would mix A into the measurement, is seen. The profiled
+dump must equal MODE `dump`'s and the base's byte for byte on the three
+pages (`run.sh profile`, the `profile` job).
+
 **Results.** Not yet run.
 
 ## Owner rulings

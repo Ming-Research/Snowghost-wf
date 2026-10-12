@@ -2,8 +2,10 @@
 # html5 and apollo11, and the scan-parameter experiment, on a GitHub-hosted
 # runner (research/investigations/style/DESIGN.md, "Step timing"). The numbers
 # attribute time to steps; they are not precise timings, which run on the
-# 14900K runner. A push to research/style-intern-par runs the profile job only,
-# for the per-table interning breakdown (DESIGN.md, "Interning in parallel").
+# 14900K runner. A push to research/style-intern-par runs the profile job, for
+# the per-table interning breakdown (DESIGN.md, "Interning in parallel"), and
+# the intern-compare job, for option B against its base revision (DESIGN.md,
+# "Hashing outside the chain (B)").
 # Remove this workflow when the investigation closes.
 name: style-build-timing
 
@@ -99,6 +101,69 @@ jobs:
             build/research/style/profile-*.txt
             build/research/style/overhead.txt
             build/research/style/ledger*.txt
+            build/base-drivers/ledger.txt
+
+  # Option B of "Interning in parallel": the stage's interning with each of the
+  # seven hashed groups hashed in a loop of independent iterations before its
+  # probe chain, against the build of its base revision and a copy of that
+  # build as twin, all by the same compiler, timed in interleaved rounds on one
+  # runner (DESIGN.md, "Hashing outside the chain (B)").
+  intern-compare:
+    name: interning before and after hashing leaves the chain
+    if: github.ref_name == 'research/style-intern-par'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      INTERN_BASE: b96ca9b3da2382a071bfbeff937de02f5f743381
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Host toolchain and compiler
+        run: make -s toolchain compiler
+
+      - name: Machine
+        run: |
+          mkdir -p build/research/style
+          { uname -srm; nproc; lscpu | sed -n 's/^\(Model name\|CPU(s)\|Thread(s) per core\|L2 cache\|L3 cache\):/\1:/p'; cat whitefoot.pin; git rev-parse HEAD; echo "base $INTERN_BASE"; } | tee build/research/style/compare-machine.txt
+
+      - name: Pages
+        run: |
+          set -euo pipefail
+          sh research/investigations/concurrency/run.sh fetch || true
+          tar -xzf tests/layout/fixtures/apollo11/inputs.tar.gz -C build/research/concurrency
+          sha256sum -c tests/layout/fixtures/apollo11/inputs.sha256
+          for file in ecma262.html ecma262-ecmarkup.css ecma262-print.css html5.html apollo11.html apollo11-modules.css apollo11-site.css; do
+            test -s "build/research/concurrency/$file"
+          done
+          rm -f build/research/concurrency/*.unverified
+
+      - name: Base build (the base revision, same compiler)
+        run: |
+          set -euo pipefail
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          mkdir -p build/base-drivers
+          git worktree add -q --detach build/base "$INTERN_BASE"
+          diff whitefoot.pin build/base/whitefoot.pin
+          (cd build/base/renderer && "$wfc" --cache "$GITHUB_WORKSPACE/build/whitefoot-cache" --fragments function --graph modules.wfg --entry style_oracle -o "$GITHUB_WORKSPACE/build/base-drivers/style_oracle")
+          (cd build/base/renderer && "$wfc" --cache "$GITHUB_WORKSPACE/build/whitefoot-cache" --fragments function --par --par-ledger --graph modules.wfg --entry style_oracle -o "$GITHUB_WORKSPACE/build/base-drivers/style_oracle_par" > "$GITHUB_WORKSPACE/build/base-drivers/ledger.txt")
+          git -C build/base rev-parse HEAD
+
+      - name: Identity, ledger and interleaved timing
+        run: |
+          set -o pipefail
+          BASE_DRIVERS="$GITHUB_WORKSPACE/build/base-drivers" sh research/investigations/style/run.sh compare ecma262 html5 apollo11 2>&1 | tee build/research/style/compare-log.txt
+          { echo '```'; cat build/research/style/compare-table.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: style-intern-compare-${{ github.run_id }}
+          path: |
+            build/research/style/compare-*.txt
+            build/research/style/ledger.txt
             build/base-drivers/ledger.txt
 
   scan-param:
