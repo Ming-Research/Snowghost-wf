@@ -41,7 +41,7 @@ def norm(name):
     return re.sub(r"'\d+$", '', re.sub(r'\.llvm\.\d+', '', name))
 
 
-def parse_callgrind(text):
+def parse_callgrind(text, event='Ir'):
     """Self Ir, inclusive call-edge Ir and calls; exclusive rows must sum to totals."""
     identifiers, own, edges, calls = {}, Counter(), Counter(), Counter()
     caller = callee = None
@@ -59,7 +59,7 @@ def parse_callgrind(text):
 
     def vector(value):
         fields = value.split()
-        return (list(map(int, fields)) + [0] * len(events))[events.index('Ir')]
+        return (list(map(int, fields)) + [0] * len(events))[events.index(event)]
 
     for line in text.splitlines():
         if line.startswith('positions: '):
@@ -176,9 +176,10 @@ def verify(inctime, label, script, operations):
     return {str(k): v[1:] for k, v in sorted(timed.items())}
 
 
-def callgrind(label, cohort, mode, script, operations, inctime, marker=None):
+def callgrind(label, cohort, mode, script, operations, inctime, marker=None, extra=()):
     output = OUT / 'runs' / (label + '.callgrind')
     options = ['--collect-atstart=no', '--toggle-collect=' + marker[:-1] + '?'] if marker else []
+    options += list(extra)
     workers = 4 if mode == 'par' else 1
     record = run(label, ['valgrind', '--tool=callgrind', *options, '--callgrind-out-file=' + str(output),
                          *driver_command(cohort, mode, script)], workers)
@@ -354,8 +355,57 @@ def main():
         report(state)
 
 
+CACHE_EVENTS = ('Ir', 'Dr', 'Dw', 'I1mr', 'D1mr', 'D1mw', 'ILmr', 'DLmr', 'DLmw', 'Bc', 'Bcm', 'Bi', 'Bim')
+
+
+def cache_main():
+    """Second pass: the scoped sequential edits under Callgrind's cache and
+    branch simulation, which models Valgrind's default hierarchy for this
+    host, not the 14900K; it separates memory-access and branch behaviour
+    from instruction count, which the first pass found lower in the candidate."""
+    dry_run()
+    (OUT / 'runs').mkdir(parents=True, exist_ok=True)
+    spec = importlib.util.spec_from_file_location('inctime', 'research/investigations/incremental-layout/scripts/inctime.py')
+    inctime = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(inctime)
+    script = OUT / 'scripts' / 'html5-sentence.edits'
+    operations = inctime.script_operations(str(script))
+    markers = choose_markers()
+    if len(markers) != 1:
+        raise ValueError('cache pass expects one common marker')
+    events = {}
+    lines = ['# html5 sentence Callgrind cache and branch simulation', '',
+             'Scoped sequential edits, marker ' + markers[0] + ', --cache-sim=yes --branch-sim=yes; '
+             'Valgrind default cache model for this hosted CPU, not the 14900K. Δ = candidate − base.', '']
+    counts = {}
+    for cohort in COHORTS:
+        per = {}
+        for event in CACHE_EVENTS:
+            per[event] = None
+        label = 'cache-seq-scoped-' + cohort
+        _, counts[cohort], _ = callgrind(label, cohort, 'seq', script, operations, inctime, markers[0],
+                                          ('--cache-sim=yes', '--branch-sim=yes'))
+        text = (OUT / 'runs' / (label + '.callgrind')).read_text()
+        for event in CACHE_EVENTS:
+            per[event] = parse_callgrind(text, event)
+        events[cohort] = per
+    lines += ['Edit work counts identical between builds: ' + str(counts['base'] == counts['candidate']), '',
+              table(['Event', 'Base', 'Candidate', 'Δ', 'Δ %'],
+                    [[e, events['base'][e]['total'], events['candidate'][e]['total'],
+                      events['candidate'][e]['total'] - events['base'][e]['total'],
+                      '%.1f%%' % (100 * (events['candidate'][e]['total'] - events['base'][e]['total']) / events['base'][e]['total'])
+                      if events['base'][e]['total'] else '-'] for e in CACHE_EVENTS]), '']
+    for event in ('D1mr', 'D1mw', 'DLmr', 'Dr', 'Bcm', 'Bim'):
+        lines += ['## Top functions by Δ ' + event, '',
+                  diff_rows(events['base'][event], events['candidate'][event], top=25), '']
+    (OUT / 'cache-summary.md').write_text('\n'.join(lines))
+    (OUT / 'cache-events.json').write_text(json.dumps({c: {e: serialize(events[c][e]) for e in CACHE_EVENTS} for c in COHORTS}))
+
+
 if __name__ == '__main__':
     if sys.argv[1:] == ['--dry-run']:
         dry_run()
+    elif sys.argv[1:] == ['--cache']:
+        cache_main()
     else:
         main()
