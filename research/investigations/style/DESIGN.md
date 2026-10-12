@@ -1399,10 +1399,11 @@ are `ptr %wf.arg.vN` parameters with no `readonly`, `dereferenceable` or
 aggregate, while a small aggregate result already returns in registers.
 Removing the parameter from the chain, or a scan-only copy of the chain,
 would route around this and is not done; the gap goes to Whitefoot with a
-minimal witness, and the owner decides the direction (a record of borrowed
-references, a calling convention with more argument registers for
-Whitefoot's own calls, or accepting the cost). Snowghost's one local item is
-the scanning entry's per-call empty array (3.7 percent of ΔIr), which goes
+minimal witness (the second witness below reproduces the cost; the request
+is filed as sg-req-borrowed-args-cost), and the owner decides the direction
+(a record of borrowed references, a calling convention with more argument
+registers for Whitefoot's own calls, or accepting the cost). Snowghost's
+one local item is the scanning entry's per-call empty array (3.7 percent of ΔIr), which goes
 away with whatever form the table takes and is not worth a change alone.
 
 **What kinds the extra instructions are.** Sorting the annotated
@@ -1511,8 +1512,8 @@ subject's first class test, as shape A's do. Its six arms are the
 renderer's common ones, which is also what keeps `test` a call; the
 script now fails when `test` is never called, since such a witness lacks
 the renderer's shape, and prints `main`'s instructions at each copy's call.
-Prediction, before it is built: both `test` copies are called, with equal
-call counts in the two copies; `step_with` executes at least 4 more
+Prediction, written before it was built and tested by the result below:
+both `test` copies are called, with equal call counts in the two copies; `step_with` executes at least 4 more
 instructions per call than `step_without` (renderer 7.34) and `main` at
 least 2 more per call of `step_with` than of `step_without` (renderer 6;
 the first witness's `main` gave 2),
@@ -1528,12 +1529,49 @@ other state live across the call (its backtracking stack and walk
 variables), and that is the next reduction. The acceptance by direction
 above then applies to this witness.
 
+**The second witness's result.** Hosted run 38317465865 at 637d568 (step
+"Witness of one forwarded range reference per call") built it; both copies
+count the same matches (exit 0). Exclusive instructions per call under
+callgrind:
+
+| function | with | without | difference | calls in each copy |
+| --- | --- | --- | --- | --- |
+| `step` | 59.34 | 55.05 | +4.29 | 1,056,768 |
+| `test` | 24.55 | 20.37 | +4.18 | 1,157,736 |
+| `main`'s instructions at the call (run 1,048,576 times) | 24 | 21 | +3 | |
+
+`test` stays a call in both copies with equal counts. The prediction holds:
+`step` +4.29 is at least 4 and `main` +3 is at least 2, so the witness
+reproduces the cost. It is short of the renderer's 7.34 and 6 per call;
+this is consistent with the renderer's larger live state across the call
+(its backtracking stack and walk variables), which is inferred from the gap,
+not measured. The disassembly names the kinds: `step_with` is 130
+instructions, 10 pushes and frame 0x48 against `step_without`'s 122, 6 and
+0x38; `test_with` is 66 instructions and 4 pushes against 55 and 1;
+`compound_with` is 51 and 8 pushes against 48 and 6; and the `with` caller
+pushes three stack arguments (two addresses and one loaded word) before
+`call wf_step_with` where the `without` caller pushes one. So the extra
+cost is stack-argument traffic and saved registers on both sides of each
+call, the kinds the renderer's disassembly showed. The Whitefoot request is filed (status
+board request sg-req-borrowed-args-cost) with the directions A (a record of
+borrowed references), B (more argument registers for Whitefoot's own calls)
+and C (accept the cost), and the acceptance tests of "Witness" above.
+
 **Not settled.** What the 32 to 39 percent of the time difference that
-instructions do not explain is: the rerun with the simulators, and the
-14900K's hardware counters if the simulators show no difference. The share
+instructions do not explain is: the simulators' rerun (below) showed no
+usable difference, so the 14900K's hardware counters remain. The share
 of the real stage's time that this cost takes: the stage's positioned entries
 carry the table, and its index and filter call the chain on 28 to 46 tests
 per element instead of shape A's 336.
+
+Run 38314756318's cache and branch simulation (noparam over base, stage
+totals) showed first-level data-cache misses at 1.0006, stores at 0.77 and
+conditional-branch mispredicts at 0.868. The mispredict difference sits on
+branches with identical logic and execution counts: `instr_matches`' node-kind
+check mispredicts 3.90M times in base against 0.19M in noparam over 8.73M
+executions each. That points to the simulator's address-indexed branch
+predictor aliasing, a code-placement effect, and is no evidence about the
+real CPU. Settling it needs the 14900K's hardware counters.
 
 ## Owner rulings
 
