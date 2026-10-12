@@ -1,0 +1,56 @@
+Inline items: three deviations from Chromium 141 found in the 2026-10-02 full layout comparison, the rule each change
+takes from the reference, and what tests/layout/inline-items-cases.html must show. The rules below are read from
+Blink's LayoutNG inline layout (InlineItemsBuilder, LineBreaker, ShapeResult, InlineLayoutAlgorithm), not yet observed
+here; the predictions are written before any run (body 16px/20px serif, a Times-metric face: space 4 px, "aaa"
+21.3125 px and "bbb" 24 px in runs/float-intrinsic.txt).
+
+1. Static position of an out-of-flow box inside a line.
+Reference: InlineItemsBuilder keeps an out-of-flow box (and a float) as an opaque item of the inline content where it
+occurs; InlineLayoutAlgorithm::PlaceOutOfFlowObjects gives an inline-level one with auto insets the inline offset its
+item has on the line and the line box's top, and the line box is placed after text-align. A block-level one (its
+display before blockification) goes to the start of the next line when inline content precedes it.
+Snowghost put every out-of-flow box at the start of its paragraph (apollo11: two boxes, one a .sr-only span at x 263
+where Chromium has 395.5). Now the walk anchors a box met after the paragraph's first piece in the paragraph (Mark's
+Anchor), line layout records where the anchor falls (after text-align; after a forced break it belongs to the next
+line; past hanging spaces it sits where they start) and the stacking pass reads it. The display before blockification
+is not kept by the style stage, so a block-level box is placed as an inline-level one.
+Cases, first section: each span.abs must sit, relative to its p, at the width of the text before it on its line and
+at that line's top: "Before " on line 1; the second line of a wrapped paragraph; after a <br>, on line 2; in a centred
+line, past the centring offset; inside a <b>. Before the change every span.abs sat at x 0, y 0 of its p.
+
+2. Floats in a max-content width.
+Reference: the max-content computation of an inline formatting context (InlineNode::ComputeMinMaxSizes) adds each
+float's max-content margin box to the line between forced breaks the float's item sits in, and floats placed before
+the content start the first line; runs/float-intrinsic.txt observed "float, aaa, br, bbb" at 51.3125 (30 + 21.3125),
+where Snowghost gave 54 (30 + the widest line, 24).
+Cases, second section (div.mc, width: max-content, 2 px of border included in each width below):
+  float, "aaa", br, "bbb"                       53.3125   (30 + 21.3125)
+  float, "aaa", br, "bbbbbbbbbbbb"              98        (12 x 8; the float joins only "aaa")
+  "aaa", br, float, "bb", br, "cccccccccccc"   wider of 46 and the twelve c, the float joining "bb"
+  "a", float, "a", br, "bbbbbbbbbbbb"           98        (the float joins the first line)
+Before the change each added 30 to the widest line. The float in the third case still sits at its paragraph's top,
+where Chromium puts it on the line of its anchor (y 20 in its div): Snowghost places a float met inside a paragraph
+before the paragraph's lines, a separate deviation this change does not address, so that one float is the case page's
+one expected block-level mismatch (floor 27 of 28).
+
+3. Whether a line fits at the edge.
+Reference: LineBreaker measures each item on a line in LayoutUnit: a text item's part on the line as
+ShapeResult::SnappedWidth (its float width rounded up to 1/64 px), an inline box's start and end margin, border and
+padding and an atomic inline's margin box exactly; items end at inline box edges, atomic inlines, out-of-flow and
+float items, control items (tab, forced break) and text node boundaries, and also at script and bidi runs, which
+Snowghost does not mark. Content fits while its sum is at most the available width plus LayoutUnit::Epsilon()
+(AvailableWidthToFit, 1/64 px). Snowghost rounded the float sum of the whole line up once and allowed no epsilon, so
+lines within 0.2 px of the edge broke differently (ecma262: 70 block-level boxes moved by up to 3.5 px). The
+max-content width now sums the same rounded items, so content laid out in its own max-content width still fits.
+Cases, third section (each div's height tells its line count, 20 px a line):
+  100 px: inline-block 50, space, inline-block 46          1 line   (exact fit)
+  100 px: inline-block 50, space, inline-block 46.015625   1 line   (1/64 over: the epsilon; Snowghost gave 2)
+  100 px: inline-block 50, space, inline-block 46.03125    2 lines  (2/64 over)
+  53.734375 px: six one-letter spans "a", then " a"         2 lines  (seven items, each rounded up, are 2 units
+                                                                       over the width plus the epsilon; Snowghost,
+                                                                       rounding once, gave 1)
+  53.734375 px: "aaaaaa a" in one text node                 1 line   (one item)
+The letter cases assume "a" is 454.5 or 454.67 layout units wide, as the Times-metric face and "aaa" = 21.3125
+suggest; with another width they still pass, but may not have failed before.
+Confidence: the epsilon and the per-item rounding of text widths, high (both are long-standing in LineBreaker); the
+exact set of item edges, medium (script runs are not marked).

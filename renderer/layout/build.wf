@@ -266,11 +266,12 @@ fn new_paragraph(style: StyleRef, pieces: Box<Slots<Piece>>, reserve: u64) -> ma
   let lines = box_slots_new::<Line>(capacity: 0_u64);
   let fragments = box_slots_new::<Fragment>(capacity: 0_u64);
   let atomics = box_slots_new::<Atomic>(capacity: 0_u64);
+  let places = box_slots_new::<AnchorPlace>(capacity: 0_u64);
   let clean = False();
   let empty_rectangle = Fragment(kind: placed_element, owner: no_index, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32);
   let absent_fragment = EmptyFragment(active: clean, value: empty_rectangle);
   let empty_fragments = box_array_filled::<EmptyFragment>(count: 0_u64, value: absent_fragment);
-  return Paragraph(retired: clean, empty_fragment: clean, empty_fragments: move empty_fragments, style: style, pieces: move pieces, text: move text, runs: move runs, run_styles: move run_styles, marks: move marks, shaped: move shaped, lines: move lines, fragments: move fragments, atomics: move atomics, width: 0_i32, left: 0_i32, top: 0_i64, dx: 0_i64, dy: 0_i64, reference_fresh: clean, natural: 0_i32, natural_offset: 0_i64, natural_known: clean, normal_x: 0_i32, normal_top: 0_i32, resolved_top: 0_i32, height: 0_i32, min_content: 0_i32, max_content: 0_i32, dirty: clean, x: 0_i64, resolved_x: 0_i32, entry_slot: no_index, flow_at: no_index, block: no_index, beside: clean, broken_width: laid_never, broken_left: laid_never);
+  return Paragraph(retired: clean, empty_fragment: clean, empty_fragments: move empty_fragments, style: style, pieces: move pieces, text: move text, runs: move runs, run_styles: move run_styles, marks: move marks, shaped: move shaped, lines: move lines, fragments: move fragments, atomics: move atomics, places: move places, width: 0_i32, left: 0_i32, top: 0_i64, dx: 0_i64, dy: 0_i64, reference_fresh: clean, natural: 0_i32, natural_offset: 0_i64, natural_known: clean, normal_x: 0_i32, normal_top: 0_i32, resolved_top: 0_i32, height: 0_i32, min_content: 0_i32, max_content: 0_i32, dirty: clean, x: 0_i64, resolved_x: 0_i32, entry_slot: no_index, flow_at: no_index, block: no_index, beside: clean, broken_width: laid_never, broken_left: laid_never);
 }
 
 fn emit_begins(context: &Context, open: &Open) -> result: Result<unit, LayoutError> reads(open.inlines.inner), writes(open.pieces), writes(open.emitted) {
@@ -521,6 +522,22 @@ fn add_child_flow(context: &Context, child: Context, kind: u8) -> result: Result
     give Flow::Out(context: at);
   }
   let listed = propagate append_flow(context: context, item: item);
+  return Ok<unit, LayoutError>(value: unit);
+}
+
+fn add_out_of_line(context: &Context, open: &Open, child: Context, kind: u8) -> result: Result<unit, LayoutError> writes(context), writes(open) {
+  doc "Adds child, a floated (kind 1) or out-of-flow (kind 2) child context, with a flow entry of its own (add_child_flow), and, when the open paragraph already holds a piece, an Anchor piece where it occurs in that paragraph's content, as the reference keeps such a box as an item of the inline content around it: the line it falls on gives an out-of-flow box its static position and a float the line whose max-content width it joins. One that comes before the paragraph's first piece stays outside it, at the paragraph's start.";
+  let index = context^.children.inner.len;
+  let placed = propagate add_child_flow(context: context, child: move child, kind: kind);
+  let inside = open^.pieces.inner.len > 0_u64;
+  let small = index < 4294967295_u64;
+  let anchored = band(inside, small);
+  if anchored {
+    let at = cvt::<u64, u32>(index);
+    let style = current_style(open: open);
+    let piece = Piece::Anchor(context: at, style: style);
+    let added = propagate add_piece(context: context, open: open, piece: piece, size: 0_u64);
+  }
   return Ok<unit, LayoutError>(value: unit);
 }
 
@@ -1612,9 +1629,9 @@ fn add_pseudo(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &Wa
     let added = propagate add_content(document: document, styles: styles, atoms: atoms, walk: walk, node: node, style: style, context: &child, open: &inner);
     let ended = propagate end_paragraph(context: &child, open: &inner);
     if out {
-      let placed = propagate add_child_flow(context: context, child: move child, kind: 2_u8);
+      let placed = propagate add_out_of_line(context: context, open: open, child: move child, kind: 2_u8);
     } else if floated {
-      let placed = propagate add_child_flow(context: context, child: move child, kind: 1_u8);
+      let placed = propagate add_out_of_line(context: context, open: open, child: move child, kind: 1_u8);
     } else if inline {
       let placed = propagate add_object(context: context, open: open, child: move child);
     } else {
@@ -1752,12 +1769,12 @@ fn place_element(document: &Document, styles: &Styles, atoms: &AtomTable, walk: 
   let kind = inner_kind(display: group.display, replaced: replaced);
   if out {
     let child = propagate build_box(document: document, styles: styles, atoms: atoms, walk: walk, node: node, element: element, style: style, kind: kind);
-    let placed = propagate add_child_flow(context: context, child: move child, kind: 2_u8);
+    let placed = propagate add_out_of_line(context: context, open: open, child: move child, kind: 2_u8);
     return Ok<unit, LayoutError>(value: unit);
   }
   if floated {
     let child = propagate build_box(document: document, styles: styles, atoms: atoms, walk: walk, node: node, element: element, style: style, kind: kind);
-    let placed = propagate add_child_flow(context: context, child: move child, kind: 1_u8);
+    let placed = propagate add_out_of_line(context: context, open: open, child: move child, kind: 1_u8);
     return Ok<unit, LayoutError>(value: unit);
   }
   let inline = is_inline_level(display: group.display);
@@ -2833,6 +2850,8 @@ fn record_units(context: &Context, serial: u32, paragraph_base: u32, listing: &R
           }
           Object(..) => {
           }
+          Anchor(..) => {
+          }
         }
       }
     }
@@ -2957,6 +2976,9 @@ fn piece_style(piece: Piece) -> style: StyleRef pure {
       return owner;
     }
     Object(style: owner, ..) => {
+      return owner;
+    }
+    Anchor(style: owner, ..) => {
       return owner;
     }
   }
