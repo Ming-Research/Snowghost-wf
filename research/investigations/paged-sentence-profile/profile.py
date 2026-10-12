@@ -275,7 +275,7 @@ def report(state):
                       max([abs(r['base-twin']['own'][n] - r['base']['own'][n]) for n in r['base']['own'].keys() | r['base-twin']['own'].keys()] or [0]))
                   if 'base-twin' in r else '', '',
                   'Edit work counts identical between builds: ' + str(state.get('counts_equal')), '',
-                  diff_rows(r['base'], r['candidate']), '']
+                  diff_rows(r['base'], r['candidate']) if 'candidate' in r else '', '']
     for key, title in (('seq-whole', 'Sequential driver, whole process: full script − zero-edit script'),
                        ('par-whole', '--par driver at WF_WORKERS=4, whole process: full script − zero-edit script')):
         if key in results and all(c in results[key] for c in COHORTS):
