@@ -19,8 +19,9 @@
 #                                  build, then the least and median of each
 #                                  build's rounds and the ratios to base
 #
-# The patch removes the positions parameter from the eight matcher functions
-# between selector_matches and the leaf tests, giving each leaf (the :nth-*
+# The patch removes the positions parameter from the ten matcher functions
+# between selector_matches and the leaf tests (the eight of the chain and the
+# two :nth-child scanners, which would otherwise declare a read they never make), giving each leaf (the :nth-*
 # tests) and the class test a local empty slice where they read one, so the
 # scanning entry runs the chain as it did before the parameter existed and
 # every other entry scans too; the positioned entries then compute what they
