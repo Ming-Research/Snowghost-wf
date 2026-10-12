@@ -1,0 +1,123 @@
+# Temporary: where the scanning entry's extra time goes when the matcher chain
+# carries the sibling positions parameter (research/investigations/style/
+# DESIGN.md, "Where the scanning entry's extra time goes"). Builds the
+# prototype driver with and without the parameter (scan-param.sh), counts each
+# build's instructions per function under callgrind on ecma262, and keeps the
+# compiler's emitted IR and the binaries' disassembly of the matcher chain.
+# Instruction counts are exact on any machine, so a hosted runner serves;
+# nothing here is timed. Remove this workflow when the investigation closes.
+name: style-scan-cost
+
+on:
+  push:
+    branches: [research/style-scan-param]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: style-scan-cost-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan-cost:
+    name: scan entry's instructions with and without the positions parameter
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Host toolchain and compiler
+        run: make -s toolchain compiler
+
+      - name: Valgrind
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q valgrind
+          valgrind --version
+
+      - name: Machine and compiler options
+        run: |
+          mkdir -p build/scan-param-report
+          wfc=build/whitefoot/$(sed -n 's/^release = //p' whitefoot.pin)/whitefootc
+          { uname -srm; nproc; lscpu | sed -n 's/^Model name:/Model name:/p'; cat whitefoot.pin; git rev-parse HEAD; /usr/bin/clang --version | head -1; valgrind --version; objdump --version | head -1; } > build/scan-param-report/machine.txt
+          status=0
+          "$wfc" --help > build/scan-param-report/whitefootc-help.txt 2>&1 || status=$?
+          echo "whitefootc --help exit $status" >> build/scan-param-report/machine.txt
+          cat build/scan-param-report/machine.txt build/scan-param-report/whitefootc-help.txt
+
+      - name: Pages
+        run: |
+          status=0
+          sh research/investigations/concurrency/run.sh fetch > build/scan-param-report/fetch.log 2>&1 || status=$?
+          cat build/scan-param-report/fetch.log
+          echo "fetch exit $status"
+          rm -f build/research/concurrency/*.unverified
+          for file in ecma262.html ecma262-ecmarkup.css ecma262-print.css; do
+            test -s "build/research/concurrency/$file"
+          done
+          (cd build/research/concurrency && sha256sum ecma262*)
+
+      - name: Build base, noparam and twin, sequential
+        run: |
+          status=0
+          sh research/investigations/style/scan-param.sh build > build/scan-param-report/build.log 2>&1 || status=$?
+          cat build/scan-param-report/build.log
+          exit $status
+
+      - name: The builds agree on ecma262
+        run: |
+          status=0
+          sh research/investigations/style/scan-param.sh check ecma262 > build/scan-param-report/check.log 2>&1 || status=$?
+          cat build/scan-param-report/check.log
+          exit $status
+
+      - name: Build base and noparam with --par, and their ledgers
+        run: |
+          status=0
+          sh research/investigations/style/scan-param.sh build-par > build/scan-param-report/build-par.log 2>&1 || status=$?
+          cat build/scan-param-report/build-par.log
+          exit $status
+
+      - name: Disassembly of the matcher chain
+        run: |
+          status=0
+          sh research/investigations/style/scan-param.sh disasm > build/scan-param-report/disasm.log 2>&1 || status=$?
+          cat build/scan-param-report/disasm.log
+          exit $status
+
+      - name: Emitted and optimized IR of the matcher chain
+        if: always()
+        run: |
+          status=0
+          sh research/investigations/style/scan-param.sh emit > build/scan-param-report/emit.log 2>&1 || status=$?
+          cat build/scan-param-report/emit.log
+          exit $status
+
+      - name: Instructions per function under callgrind, ecma262
+        if: always()
+        run: |
+          status=0
+          sh research/investigations/style/scan-param.sh callgrind ecma262 > build/scan-param-report/callgrind.log 2>&1 || status=$?
+          cat build/scan-param-report/callgrind.log
+          { echo '```'; cat build/scan-param-report/callgrind.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scan-cost-${{ github.run_id }}
+          path: |
+            build/scan-param-report/
+            build/scan-param/ledger-par.diff
+            build/scan-param/*/ledger-par.txt
+            build/scan-param/*/proto_style_seq
+            build/scan-param/*/proto_style_par
+            build/scan-param/check-*.txt
+            build/scan-param/disasm/
+            build/scan-param/emit/
+            build/scan-param/callgrind/
+            !build/scan-param/twin/

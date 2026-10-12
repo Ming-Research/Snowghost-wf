@@ -1146,6 +1146,117 @@ and announced to the other sessions first). The temporary workflow
 `style-build-timing` can be removed when the owner does not want those
 three; it must be removed before the branch is ready either way.
 
+## Where the scanning entry's extra time goes
+
+Question 4 of the step timing found shape A 15.5 percent faster on ecma262
+without the positions parameter (noparam over base 0.845 least, 0.860
+median, twin 1.014) and left the mechanism open. One slice parameter passed
+down eight functions should cost a few instructions per call. This
+experiment finds where the difference lies before anything is removed,
+because the answer decides who acts: a form Whitefoot compiles poorly is a
+Whitefoot gap, reported with a minimal witness and not routed around; a cost
+in Snowghost's own code is Snowghost's to fix.
+
+**What the patch changes besides the parameter.** In base, the scanning
+entry `selector_matches` passes an empty slice of a local one-word array
+down the chain, and every leaf that reads the table tests at run time
+whether the table covers the node: the class test calls `class_records` (a
+length test; the indexed loop's code stays in the function), and the edge
+and `:nth-*` tests call `positioned_scan` through `count_siblings`. In
+noparam those leaves build their own empty slice, so the compiler sees a
+length of zero and can delete the lookups and the class test's indexed
+branch. The timed comparison therefore mixes passing the parameter with
+compiling the lookups in; the per-function and per-instruction counts below
+separate the two.
+
+**Measurement.** The temporary workflow `style-scan-cost` on a hosted
+`ubuntu-24.04` runner with the pin's compiler runs `scan-param.sh build`,
+`check ecma262`, `build-par`, `disasm`, `emit` and `callgrind ecma262`.
+Callgrind counts executed instructions (Ir) exactly, per function and per
+instruction address, and simulates a cache and a branch predictor. Shape A's
+stage is the `A 1` run minus the `A 0` run of the same binary, function by
+function. Base's binary profiled a second time (twin) is the control: its
+stage Ir must equal base's within 0.1 percent, or the counts are not
+deterministic enough to attribute a difference to functions. Below, r_time
+is 0.845, the hosted time ratio noparam over base (question 4); r_Ir is the
+stage's Ir ratio noparam over base; ΔIr is base's stage Ir minus noparam's
+(`scan-cost.py` prints noparam minus base, negative when noparam executes
+fewer); and the chain is the functions `scan-param.sh` names, from `selector_matches`
+down to the leaf tests and the lookups `class_records` and
+`positioned_scan`.
+
+**Hypotheses and what decides each**, fixed before the run:
+
+1. *Not instructions.* The time goes to code placement, alignment, memory
+   or branch prediction, not to executed instructions. It holds when r_Ir is
+   at least 0.97 (instructions explain at most a fifth of the 15.5 percent)
+   and is rejected when r_Ir is at most 0.90 (they explain at least two
+   thirds); between the two, both contribute. Where instructions do not
+   explain the time, the simulated data-cache misses (D1mr, D1mw, DLmr,
+   DLmw) and mispredicted branches (Bcm, Bim) of the stage say whether
+   memory or prediction carries the rest; if they too agree within the
+   twin's spread, the rest is placement, which callgrind cannot see and the
+   14900K's hardware counters would, in a later run.
+2. *Argument passing through calls that stay calls.* The chain's functions
+   are separate machine functions in both builds, and each call carries the
+   slice's two words, moved, spilled and reloaded around inner calls. It
+   predicts the same executed chain symbols in both binaries, call counts
+   equal within 0.1 percent, and the chain carrying at least 80 percent of
+   ΔIr spread over several functions, each at most 12 instructions per call
+   more in base; the annotated disassembly shows the difference at argument
+   moves, spills and reloads. It is rejected when one function carries more
+   than half of ΔIr at more than 12 instructions per call, or the chain
+   carries less than half of ΔIr.
+3. *Different inlining.* The parameter changes what the ThinLTO link
+   inlines. It predicts a chain function that is an executed machine
+   function in one build and not in the other, or whose call count differs
+   by more than 1 percent, with ΔIr concentrated at that boundary (calls,
+   prologues, epilogues). It is rejected when both binaries execute the same
+   chain symbols with call counts within 0.1 percent.
+4. *A check per iteration or per call.* Whitefoot emits, for the slice
+   parameter, a bounds, alias or overlap test that runs on every call or in
+   a loop: `compound_matches`' loop over simple selectors, `list_matches`'
+   loop over alternatives, `match_complex`'s walk, `nth_scan`'s loop over
+   siblings. It predicts that the emitted IR of a chain function in base
+   (before LLVM optimizes it) compares or branches on the positions pointer
+   or length outside `class_records` and `positioned_scan`, that the
+   optimized code keeps the test in a loop, and that the function's
+   difference per call grows with its loop's trip count. It is rejected when
+   the emitted IR of each chain function differs between the builds only in
+   the parameter list, the arguments passed on and the lines the patch
+   changes in the source.
+5. *The lookups the patch folds.* Snowghost's own code: the scanning entry
+   passes a table that is empty only at run time, and the lookups run on
+   every class and structural test. It predicts `class_records` and
+   `positioned_scan`, or their inlined instructions (the slice's length test
+   and the class test's indexed branch), executed in base and absent from
+   noparam, and those instructions in base's annotated disassembly summing to
+   at least a quarter of ΔIr. It is rejected when they carry less than a
+   quarter of ΔIr.
+6. *Parallel captures.* The sequential build has no parallel loop, so
+   captures cannot explain its difference. The `--par` ledgers of base and
+   noparam (`build-par`) and the `--par` profiles say whether the parameter
+   changes what a `--par` build's loops capture or execute; equal ledgers
+   reject it for `--par` builds.
+
+Hypotheses 2 to 5 can hold together; the attribution gives each its share
+of ΔIr. What each outcome means for who acts: 3 or 4 is a Whitefoot gap
+(inlining, or a check emitted for the natural form), filed with a minimal
+witness; 5 is Snowghost's code, or an artifact of the patch rather than of
+the parameter, and is answered in Snowghost or by timing a patch that keeps
+the lookups; 2 alone is the ordinary cost of an argument through calls that
+are not inlined, and whether Whitefoot should inline or specialize those
+calls is a question for the owner; 1 needs the 14900K.
+
+**Limits.** Callgrind counts instructions and simulates a generic two-level
+cache and branch predictor, not the hosted CPU, and measures no time, which
+is why r_Ir is compared with an r_time measured separately. The optimized IR
+in `emit` is the emitted module after a whole-module `clang -O2`, not after
+the build's ThinLTO link; the disassembly of the linked binaries is what
+runs. The `--par` profiles run four workers serialized by valgrind, so
+their totals include scheduling, while their chain's per-function counts do
+not depend on it.
+
 ## Owner rulings
 
 - **2026-10-02, Q64, the level cascade,** written in Chinese after the
