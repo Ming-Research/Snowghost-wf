@@ -1,0 +1,294 @@
+# Temporary, for research/layout-par-rewrites: the pinned compiler's
+# parallelism ledger at each rewritten layout loop, and full-layout dumps of
+# the E1 pages and the layout case pages byte for byte against the branch's
+# base, research/m2-layout 1e0228e, sequential and at four workers. Removed
+# before the branch is ready.
+name: par-rewrites
+
+on:
+  push:
+    branches: [research/layout-par-rewrites]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: par-rewrites-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BASE: 1e0228ea763c502e56589185f3f5186a7ca2ea81
+
+jobs:
+  ledger:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Pinned compiler
+        timeout-minutes: 9
+        run: make -s toolchain compiler
+
+      - name: Site checker
+        run: |
+          set -euo pipefail
+          mkdir -p build/par-rewrites
+          cat > build/par-rewrites/sites.py <<'PYEOF'
+          import re
+          import sys
+          from pathlib import Path
+
+          # (file, line, text the source line must hold, function, role, required)
+          # A required site fails the check unless every ledger row for it
+          # permits the loop; the others are reported with the verdict the
+          # rewrite expects, since their order is the dependency they keep.
+          SITES = [
+              ("layout/flow.wf", 3089, "for (q in 0_u64..paragraph_count) {", "intrinsic_flow", "per-paragraph min/max-content widths", True),
+              ("layout/flow.wf", 3098, "for (k in 0_u64..flow_count) {", "intrinsic_flow", "walk over the flow (nesting frames; expected denied)", False),
+              ("layout/inline.wf", 210, "for (m in 0_u64..marks) {", "measure", "per-mark widths and glue flags", True),
+              ("layout/inline.wf", 251, "for (m in 0_u64..marks) {", "measure", "scatter in mark order (fadd.strict; expected denied)", False),
+              ("layout/inline.wf", 712, "for (m in 0_u64..count) {", "framed_inside", "per-mark metrics and own-raise flags", True),
+              ("layout/inline.wf", 734, "for (m in 0_u64..count) {", "framed_inside", "bracket walk (open-box stack; expected denied)", False),
+              ("layout/flex.wf", 1660, "for (l in 0_u64..line_count) {", "lay_out_flex", "widest line, guard instead of break (expected permitted)", False),
+          ]
+          ROW = re.compile(r"^PAR loop\s+(.+):(\d+)\s+loop\s+(permitted|denied)\s+(.+)$")
+
+          def site_name(raw):
+              name = raw.strip()
+              if "/renderer/" in name:
+                  name = name.split("/renderer/", 1)[1]
+              while name.startswith("./"):
+                  name = name[2:]
+              if name.startswith("renderer/"):
+                  name = name[len("renderer/"):]
+              return name
+
+          def ledger_rows(text):
+              rows = {}
+              for raw in text.splitlines():
+                  if not raw.startswith("PAR loop"):
+                      continue
+                  match = ROW.fullmatch(raw)
+                  if match is None:
+                      raise ValueError("malformed ledger loop row: " + raw)
+                  name, line, verdict, reason = match.groups()
+                  rows.setdefault((site_name(name), int(line)), []).append((verdict, reason))
+              return rows
+
+          def check(text, root):
+              rows = ledger_rows(text)
+              failures, report = [], []
+              for file, line, expected, function, role, required in SITES:
+                  lines = (root / file).read_text().splitlines()
+                  if line > len(lines) or expected not in lines[line - 1]:
+                      failures.append(f"{file}:{line}: source line moved; expected {expected!r}")
+                      continue
+                  found = rows.get((file, line), [])
+                  if not found:
+                      failures.append(f"{file}:{line} ({function}): no ledger verdict")
+                      continue
+                  verdicts = sorted({verdict for verdict, _ in found})
+                  verdict = verdicts[0] if len(verdicts) == 1 else "mixed"
+                  reasons = " | ".join(reason for _, reason in found)
+                  report.append(f"| `{file}:{line}` | `{function}` | {role} | {'required' if required else 'reported'} | **{verdict}** | {reasons} |")
+                  if required and verdict != "permitted":
+                      failures.append(f"{file}:{line} ({function}, {role}): {verdict}: {reasons}")
+              return failures, report
+
+          def synthetic(override):
+              lines = []
+              for file, line, *_ in SITES:
+                  verdict = override.get((file, line), "permitted")
+                  if verdict is None:
+                      continue
+                  reason = "eligible; synthetic" if verdict == "permitted" else "condition 2: synthetic"
+                  lines.append(f"PAR loop        ./{file}:{line}  loop  {verdict}   {reason}")
+              return "\n".join(lines) + "\n"
+
+          def self_test(root):
+              failures, _ = check(synthetic({}), root)
+              assert not failures, failures
+              for file, line, *_, required in SITES:
+                  if not required:
+                      continue
+                  for wrong in ("denied", None):
+                      failures, _ = check(synthetic({(file, line): wrong}), root)
+                      assert failures, (file, line, wrong)
+              print("checker: detects a denied and a missing verdict at every required site")
+
+          root = Path(sys.argv[2])
+          if sys.argv[1] == "self-test":
+              self_test(root)
+              sys.exit(0)
+          failures, report = check(Path(sys.argv[1]).read_text(), root)
+          table = ["| Site | Function | Loop | Check | Verdict | Ledger reason |", "| --- | --- | --- | --- | --- | --- |", *report]
+          print("\n".join(table))
+          out = Path(sys.argv[3])
+          out.write_text("\n".join(["## Rewritten loop sites", "", *table, "", *("- FAIL " + f for f in failures)]) + "\n")
+          for failure in failures:
+              print("FAIL", failure, file=sys.stderr)
+          sys.exit(1 if failures else 0)
+          PYEOF
+          python3 -I build/par-rewrites/sites.py self-test renderer
+
+      - name: Parallel driver with the permission ledger
+        timeout-minutes: 40
+        run: |
+          set -euo pipefail
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          cd renderer
+          time "$wfc" --fragments function --par --par-ledger --graph modules.wfg --entry layout_oracle -o ../build/par-rewrites/layout_oracle_par > ../build/par-rewrites/par-ledger.log 2> ../build/par-rewrites/par-build.err
+          grep -c '^PAR loop' ../build/par-rewrites/par-ledger.log
+
+      - name: Verdicts at the rewritten sites
+        run: |
+          set -euo pipefail
+          python3 -I build/par-rewrites/sites.py build/par-rewrites/par-ledger.log renderer build/par-rewrites/sites.md
+          cat build/par-rewrites/sites.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: par-rewrites-ledger
+          path: |
+            build/par-rewrites/par-ledger.log
+            build/par-rewrites/par-build.err
+            build/par-rewrites/sites.md
+          if-no-files-found: warn
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: par-rewrites-par-driver
+          compression-level: 1
+          path: build/par-rewrites/layout_oracle_par
+
+  sequential:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: Toolchain and fonts
+        timeout-minutes: 12
+        run: |
+          set -euo pipefail
+          sudo sh -c 'printf "%s\n" https://archive.ubuntu.com/ubuntu > /etc/apt/apt-mirrors.txt'
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=30 update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          make -s toolchain compiler oracle-fonts
+
+      - name: Pages
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          sh research/investigations/concurrency/run.sh fetch || true
+          for f in ecma262.html ecma262-ecmarkup.css ecma262-print.css html5.html; do test -f "build/research/concurrency/$f"; done
+          tar -xzf tests/layout/fixtures/apollo11/inputs.tar.gz -C build/research/concurrency
+          sha256sum -c tests/layout/fixtures/apollo11/inputs.sha256
+
+      - name: Sequential drivers of the branch and its base
+        timeout-minutes: 30
+        run: |
+          set -euo pipefail
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          git worktree add -q --detach build/base "$BASE"
+          cmp whitefoot.pin build/base/whitefoot.pin
+          git diff --stat "$BASE" HEAD -- renderer
+          time (cd renderer && "$wfc" --fragments function --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_seq)
+          time (cd build/base/renderer && "$wfc" --fragments function --graph modules.wfg --entry layout_oracle -o "$GITHUB_WORKSPACE/build/layout_oracle_base")
+
+      - name: Sequential full-layout dumps against the base
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          d=build/research/concurrency
+          mkdir -p build/dumps
+          dump() {
+            local driver=$1 name=$2 page=$3
+            shift 3
+            echo "$name"
+            time "$driver" dump 1 "$page" renderer/style/ua.css "$@" > "build/dumps/$name"
+          }
+          pages() {
+            local driver=$1 tag=$2
+            dump "$driver" "ecma262.$tag" "$d/ecma262.html" "assets/css/ecmarkup.css=$d/ecma262-ecmarkup.css" "assets/css/print.css=$d/ecma262-print.css"
+            dump "$driver" "html5.$tag" "$d/html5.html"
+            dump "$driver" "apollo11.$tag" "$d/apollo11.html" "wikibase.client.init&only=styles&skin=vector-2022=$d/apollo11-modules.css" "modules=site.styles&only=styles&skin=vector-2022=$d/apollo11-site.css"
+            for case in tests/layout/*-cases.html; do
+              dump "$driver" "$(basename "$case" .html).$tag" "$case"
+            done
+          }
+          pages build/layout_oracle_base base
+          pages build/layout_oracle_seq seq
+          failed=0
+          for base in build/dumps/*.base; do
+            name=${base%.base}
+            if cmp "$base" "$name.seq"; then
+              echo "$(basename "$name"): sequential dump identical to the base ($(wc -c < "$base") bytes)"
+            else
+              echo "$(basename "$name"): sequential dump DIFFERS from the base"
+              diff "$base" "$name.seq" | head -40 || true
+              failed=1
+            fi
+          done
+          test "$failed" -eq 0
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: par-rewrites-base-dumps
+          compression-level: 1
+          path: |
+            build/dumps/*.base
+            build/fonts/
+            build/research/concurrency/
+
+  parallel:
+    needs: [ledger, sequential]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: par-rewrites-par-driver
+          path: build
+      - uses: actions/download-artifact@v4
+        with:
+          name: par-rewrites-base-dumps
+          path: build
+      - name: Four-worker full-layout dumps against the base
+        run: |
+          set -euo pipefail
+          chmod +x build/layout_oracle_par
+          d=build/research/concurrency
+          dump() {
+            local name=$1 page=$2
+            shift 2
+            echo "$name"
+            time WF_WORKERS=4 build/layout_oracle_par dump 1 "$page" renderer/style/ua.css "$@" > "build/dumps/$name.par"
+          }
+          dump ecma262 "$d/ecma262.html" "assets/css/ecmarkup.css=$d/ecma262-ecmarkup.css" "assets/css/print.css=$d/ecma262-print.css"
+          dump html5 "$d/html5.html"
+          dump apollo11 "$d/apollo11.html" "wikibase.client.init&only=styles&skin=vector-2022=$d/apollo11-modules.css" "modules=site.styles&only=styles&skin=vector-2022=$d/apollo11-site.css"
+          for case in tests/layout/*-cases.html; do
+            dump "$(basename "$case" .html)" "$case"
+          done
+          failed=0
+          for base in build/dumps/*.base; do
+            name=${base%.base}
+            if cmp "$base" "$name.par"; then
+              echo "$(basename "$name"): four-worker dump identical to the base ($(wc -c < "$base") bytes)"
+            else
+              echo "$(basename "$name"): four-worker dump DIFFERS from the base"
+              diff "$base" "$name.par" | head -40 || true
+              failed=1
+            fi
+          done
+          test "$failed" -eq 0
