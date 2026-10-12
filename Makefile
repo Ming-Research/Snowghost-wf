@@ -74,20 +74,20 @@ $(BUILD)/static_atoms $(BUILD)/dom_selftest: compiler FORCE
 
 # The engine binary must stay within 10 MB, a hard limit the owner set on
 # 2026-10-12; if a change cannot meet it the work goes back to the owner, and
-# nobody raises it here. BINARY_SIZE_LIMIT is that one constant, in bytes
-# (10 * 1024 * 1024). It is set with := so that a variable in the environment
-# cannot loosen the gate; only an explicit command-line override changes it,
-# to show the check failing, as in
-# `make binary-size-check BINARY_SIZE_LIMIT=1048576`.
+# nobody raises it here. BINARY_SIZE_LIMIT is that one constant, in bytes: the
+# decimal 10 MB, 10 000 000, the stricter reading (a MiB would be 10 485 760).
+# It is set with := so that a variable in the environment cannot loosen the
+# gate; only an explicit command-line override changes it, to show the check
+# failing, as in `make binary-size-check BINARY_SIZE_LIMIT=1048576`.
 #
 # No shipped engine binary exists yet (board item sg-target-binary-size), so
 # until one does the check measures a stand-in: layout_oracle, the driver that
 # runs the whole pipeline (HTML parsing, style, text and layout, and edits
 # applied incrementally), built with --par and left unstripped as linked. CI
-# gates the Linux x86-64 build only. Which binary, which build flags, which
-# platform and whether to strip are open choices; the measurements that
-# inform them are in research/investigations/binary-size/.
-BINARY_SIZE_LIMIT := 10485760
+# gates the Linux x86-64 build only. The choices of limit, binary, platform and
+# stripping are the design tree's binary-size node (design/scope/binary-size.md); the
+# measurements behind them are in research/investigations/binary-size/.
+BINARY_SIZE_LIMIT := 10000000
 ENGINE_BINARY := $(BUILD)/layout_oracle_par
 
 $(ENGINE_BINARY): compiler FORCE

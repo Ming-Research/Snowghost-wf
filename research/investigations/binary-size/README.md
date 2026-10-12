@@ -1,7 +1,8 @@
 # Snowghost binary size against the 10 MB limit
 
-Status: measured 2026-10-12; the open choices need the owner's answers
-(decision cards on the status board, item sg-target-binary-size).
+Status: measured 2026-10-12; the open choices are proposed as the design tree's
+`design/scope/binary-size.md` and need the owner's approval (decision card on
+the status board, item sg-target-binary-size).
 
 ## Question
 
@@ -117,16 +118,18 @@ first engine binary.
 
 ## Open choices for the owner
 
-Each is a decision card; the check keeps its current form until they are
-answered.
+Each is a decision of `design/scope/binary-size.md`, proposed there and
+approved on one decision card; the check follows the proposal and changes if
+the owner rules otherwise.
 
 1. Renderer only, or renderer plus shell. The limit can cover the Whitefoot
    renderer binary alone or the whole engine as installed, which adds the
    Rust shell with its libraries (Skia among them, `design/processes.md`).
    The check measures the renderer alone; it cannot measure the shell until
    one exists.
-2. MB or MiB. The Makefile's constant is 10 485 760 bytes (10 MiB). If the
-   owner meant 10 000 000 bytes, the limit is 4.6 % tighter.
+2. MB or MiB. The proposal and the Makefile's constant are 10 000 000 bytes
+   (10 MB read decimally). If the owner meant 10 MiB (10 485 760 bytes), the
+   limit is 4.6 % looser.
 3. Which platform. CI gates the Linux x86-64 build only. macOS arm64 or
    another target could be larger; the measurement above shows by how much.
 4. Stripped or not. The check measures the binary as linked. A shipped

@@ -122,8 +122,9 @@ make check
 names, builds the renderer, checks that the static atoms record matches its
 name list, runs the document arena's self-test, checks that the full-pipeline
 driver `layout_oracle`, built with `--par`, stays within the owner's 10 MB
-limit and lints the design tree. The driver stands in for the engine binary
-until one exists (the board's sg-target-binary-size item). The check runs on
+(10 000 000-byte) limit and lints the design tree. The driver stands in for
+the engine binary until one exists (the board's sg-target-binary-size item).
+The check runs on
 Linux x86-64 and macOS arm64, and needs Git, Python 3, curl, clang at
 `/usr/bin/clang` and, on Linux, LLD; on Linux both are the LLVM major the
 pinned release was built with, which `make toolchain` installs. CI runs it
