@@ -1,0 +1,824 @@
+struct TraceScope {
+  doc "Diagnostic-only exact live source payload counts, partitioned by whether any source lies outside the edited DOM subtree. Mixed paragraphs count as outside.";
+  blocks: u64;
+  paragraphs: u64;
+  contexts: u64;
+  routes: u64;
+  outside_blocks: u64;
+  outside_paragraphs: u64;
+  outside_contexts: u64;
+  outside_routes: u64;
+  mixed_paragraphs: u64;
+}
+
+struct TraceSource {
+  doc "Diagnostic source certificate. Failure bits name missing unique complete ownership, counter/quote effects, open-inline split ownership, inline/contents/hidden box, and unstable generated references.";
+  matches: u64;
+  failure: u32;
+}
+
+fn empty_trace_scope() -> made: TraceScope pure {
+  return TraceScope(blocks: 0_u64, paragraphs: 0_u64, contexts: 0_u64, routes: 0_u64, outside_blocks: 0_u64, outside_paragraphs: 0_u64, outside_contexts: 0_u64, outside_routes: 0_u64, mixed_paragraphs: 0_u64);
+}
+
+fn empty_trace_source() -> made: TraceSource pure {
+  return TraceSource(matches: 0_u64, failure: 0_u32);
+}
+
+fn trace_style_inside(style: StyleRef, document: &Document, edit: u32, root: u32) -> inside: Bool reads(document) {
+  let supplier = use_element(style: style, root: root);
+  let node = cvt::<u32, u64>(supplier);
+  let ancestor = cvt::<u32, u64>(edit);
+  return inside_element(document: document, node: node, element: ancestor);
+}
+
+fn trace_paragraph_partition(paragraph: &Paragraph, document: &Document, edit: u32, root: u32) -> partition: u32 reads(paragraph), reads(document) {
+  doc "0 means wholly inside, 1 wholly outside and 2 mixed. Bytes use their text-node identity, other source pieces use their explicit source style. Empty paragraphs use the strut supplier.";
+  let count = paragraph^.pieces.inner.len;
+  let some_inside = False();
+  let some_outside = False();
+  for (k in 0_u64..count) {
+    let piece = paragraph^.pieces.inner[k];
+    let within = match piece {
+      Bytes(style: source_style, node: source_node, ..) => {
+        if source_node != no_index {
+          let at = cvt::<u32, u64>(source_node);
+          let ancestor = cvt::<u32, u64>(edit);
+          give inside_element(document: document, node: at, element: ancestor);
+        } else {
+          give trace_style_inside(style: source_style, document: document, edit: edit, root: root);
+        }
+      }
+      Generated(style: source_style, ..) => {
+        give trace_style_inside(style: source_style, document: document, edit: edit, root: root);
+      }
+      Scalar(style: source_style, ..) => {
+        give trace_style_inside(style: source_style, document: document, edit: edit, root: root);
+      }
+      Begin(style: source_style) => {
+        give trace_style_inside(style: source_style, document: document, edit: edit, root: root);
+      }
+      End(style: source_style) => {
+        give trace_style_inside(style: source_style, document: document, edit: edit, root: root);
+      }
+      Object(style: source_style, ..) => {
+        give trace_style_inside(style: source_style, document: document, edit: edit, root: root);
+      }
+    }
+    set some_inside = bor(some_inside, within);
+    let outside = bnot(within);
+    set some_outside = bor(some_outside, outside);
+  }
+  if count == 0_u64 {
+    let within = trace_style_inside(style: paragraph^.style, document: document, edit: edit, root: root);
+    set some_inside = within;
+    set some_outside = bnot(within);
+  }
+  if some_outside {
+    if some_inside {
+      return 2_u32;
+    }
+    return 1_u32;
+  }
+  return 0_u32;
+}
+
+fn trace_scope_tree(context: &Context, document: &Document, edit: u32, root: u32) -> made: TraceScope reads(context), reads(document) {
+  doc "Read-only live source census. Blocks are counted from live Open events rather than append-only payload length; retired paragraphs and contexts are omitted. Each subtree contributes independent scalar reductions.";
+  let made = empty_trace_scope();
+  if context^.retired {
+    return made;
+  }
+  set made.contexts = 1_u64;
+  let context_inside = trace_style_inside(style: context^.style, document: document, edit: edit, root: root);
+  if context_inside {
+  } else {
+    set made.outside_contexts = 1_u64;
+  }
+  let events = flow_length(context: context);
+  for (at in 0_u64..events) {
+    let event = flow_event(context: context, at: at);
+    match event {
+      Open(block: source_block) => {
+        let index = cvt::<u32, u64>(source_block);
+        if index < context^.blocks.inner.len {
+          set made.blocks = made.blocks +sat 1_u64;
+          let within = trace_style_inside(style: context^.blocks.inner[index].style, document: document, edit: edit, root: root);
+          if within {
+          } else {
+            set made.outside_blocks = made.outside_blocks +sat 1_u64;
+          }
+        }
+      }
+      Close(..) => {
+      }
+      Text(..) => {
+      }
+      Child(..) => {
+      }
+      Float(..) => {
+      }
+      Out(..) => {
+      }
+    }
+  }
+  let paragraphs = context^.paragraphs.inner.len;
+  for (p in 0_u64..paragraphs) {
+    if context^.paragraphs.inner[p].retired {
+    } else {
+      set made.paragraphs = made.paragraphs +sat 1_u64;
+      let partition = trace_paragraph_partition(paragraph: &context^.paragraphs.inner[p], document: document, edit: edit, root: root);
+      if partition != 0_u32 {
+        set made.outside_paragraphs = made.outside_paragraphs +sat 1_u64;
+      }
+      if partition == 2_u32 {
+        set made.mixed_paragraphs = made.mixed_paragraphs +sat 1_u64;
+      }
+    }
+  }
+  let children = context^.children.inner.len;
+  for (k in 0_u64..children) {
+    let below = trace_scope_tree(context: &context^.children.inner[k], document: document, edit: edit, root: root);
+    set made.blocks = made.blocks +sat below.blocks;
+    set made.paragraphs = made.paragraphs +sat below.paragraphs;
+    set made.contexts = made.contexts +sat below.contexts;
+    set made.outside_blocks = made.outside_blocks +sat below.outside_blocks;
+    set made.outside_paragraphs = made.outside_paragraphs +sat below.outside_paragraphs;
+    set made.outside_contexts = made.outside_contexts +sat below.outside_contexts;
+    set made.mixed_paragraphs = made.mixed_paragraphs +sat below.mixed_paragraphs;
+  }
+  return made;
+}
+
+fn trace_scope_at(context: &Context, steps: &[ContextStep], depth: u64, document: &Document, edit: u32, root: u32) -> made: TraceScope reads(context), reads(steps), reads(document) {
+  if depth >= steps^.len {
+    return trace_scope_tree(context: context, document: document, edit: edit, root: root);
+  }
+  let route = steps^[depth];
+  let child = cvt::<u32, u64>(route.child);
+  if child < context^.children.inner.len {
+    if context^.slot == route.parent {
+      if context^.children.inner[child].slot == route.slot {
+        let next = depth +sat 1_u64;
+        return trace_scope_at(context: &context^.children.inner[child], steps: steps, depth: next, document: document, edit: edit, root: root);
+      }
+    }
+  }
+  return empty_trace_scope();
+}
+
+fn trace_source_payload(style: StyleRef, neutral: Bool, split: Bool, styles: &Styles, edit: u32) -> made: TraceSource reads(styles) {
+  let made = empty_trace_source();
+  let plain = style.pseudo == no_pseudo;
+  let not_anonymous = bnot(style.anonymous);
+  let named = band(plain, not_anonymous);
+  let same_element = style.element == edit;
+  let matches = band(named, same_element);
+  if matches {
+    set made.matches = 1_u64;
+    if neutral {
+    } else {
+      set made.failure = ior(made.failure, 2_u32);
+    }
+    if split {
+      set made.failure = ior(made.failure, 4_u32);
+    }
+    let group = box_of(styles: styles, style: style);
+    let inline = is_inline_level(display: group.display);
+    let contents = group.display == display_contents;
+    let hidden = group.display == display_none;
+    let absent = bor(contents, hidden);
+    let incomplete = bor(inline, absent);
+    if incomplete {
+      set made.failure = ior(made.failure, 8_u32);
+    }
+  }
+  return made;
+}
+
+fn trace_source_tree(context: &Context, styles: &Styles, edit: u32) -> made: TraceSource reads(context), reads(styles) {
+  doc "Source-only classifier using the actual builder's neutral effect result and named complete ownership. It deliberately does not inspect margin, height, float-motion or ordinary-transfer geometry certificates.";
+  let made = empty_trace_source();
+  if context^.retired {
+    return made;
+  }
+  let own = trace_source_payload(style: context^.style, neutral: context^.neutral, split: context^.split_head, styles: styles, edit: edit);
+  set made = own;
+  let events = flow_length(context: context);
+  for (at in 0_u64..events) {
+    let item = flow_event(context: context, at: at);
+    match item {
+      Open(block: source_block) => {
+        let index = cvt::<u32, u64>(source_block);
+        if index < context^.blocks.inner.len {
+          let found = trace_source_payload(style: context^.blocks.inner[index].style, neutral: context^.blocks.inner[index].neutral, split: context^.blocks.inner[index].split_head, styles: styles, edit: edit);
+          set made.matches = made.matches +sat found.matches;
+          set made.failure = ior(made.failure, found.failure);
+        }
+      }
+      Close(..) => {
+      }
+      Text(..) => {
+      }
+      Child(..) => {
+      }
+      Float(..) => {
+      }
+      Out(..) => {
+      }
+    }
+  }
+  let children = context^.children.inner.len;
+  for (k in 0_u64..children) {
+    let found = trace_source_tree(context: &context^.children.inner[k], styles: styles, edit: edit);
+    set made.matches = made.matches +sat found.matches;
+    set made.failure = ior(made.failure, found.failure);
+  }
+  return made;
+}
+
+fn trace_path_inside(paths: &RouteTable<ContextPath>, serial: u32, scope: u32) -> inside: Bool reads(paths) {
+  let at = serial;
+  for (step in 0_u64..paths^.len) {
+    let wide = cvt::<u32, u64>(at);
+    let path = route_read::<ContextPath>(table: paths, at: wide);
+    if path.live {
+    } else {
+      return False();
+    }
+    if at == scope {
+      return True();
+    }
+    if path.parent == no_index {
+      return False();
+    }
+    set at = path.parent;
+  }
+  return False();
+}
+
+fn trace_route_partition_at(context: &Context, steps: &[ContextStep], depth: u64, route: StyleRoute, document: &Document, edit: u32, root: u32) -> partition: u32 reads(context), reads(steps), reads(document) {
+  if depth >= steps^.len {
+    let p = cvt::<u32, u64>(route.paragraph);
+    if p < context^.paragraphs.inner.len {
+      return trace_paragraph_partition(paragraph: &context^.paragraphs.inner[p], document: document, edit: edit, root: root);
+    }
+    let b = cvt::<u32, u64>(route.block);
+    let style = context^.style;
+    if b < context^.blocks.inner.len {
+      set style = context^.blocks.inner[b].style;
+    }
+    let within = trace_style_inside(style: style, document: document, edit: edit, root: root);
+    if within {
+      return 0_u32;
+    }
+    return 1_u32;
+  }
+  let step = steps^[depth];
+  let child = cvt::<u32, u64>(step.child);
+  if child < context^.children.inner.len {
+    if context^.slot == step.parent {
+      if context^.children.inner[child].slot == step.slot {
+        let next = depth +sat 1_u64;
+        return trace_route_partition_at(context: &context^.children.inner[child], steps: steps, depth: next, route: route, document: document, edit: edit, root: root);
+      }
+    }
+  }
+  return 3_u32;
+}
+
+fn trace_scope_routes(context: &Context, paths: &RouteTable<ContextPath>, routes: &RouteTable<StyleRoute>, scope: u32, from: u64, until: u64, document: &Document, edit: u32, root: u32) -> (count: u64, outside: u64) reads(context), reads(paths), reads(routes), reads(document) {
+  doc "Counts actual emitted route records only for the selected live context subtree. from/until distinguish newly constructed records from copied surviving outside-directory records; no bound is substituted for a count.";
+  let count = 0_u64;
+  let outside = 0_u64;
+  let total = imin(until, routes^.len);
+  for (at in from..total) {
+    let route = route_read::<StyleRoute>(table: routes, at: at);
+    let within = trace_path_inside(paths: paths, serial: route.serial, scope: scope);
+    if within {
+      set count = count +sat 1_u64;
+      let partition = match relative_steps(paths: paths, from: context^.slot, to: route.serial) {
+        Some(value: steps) => {
+          let length = steps.inner.len;
+          give trace_route_partition_at(context: context, steps: &steps.inner[0_u64..length], depth: 0_u64, route: route, document: document, edit: edit, root: root);
+        }
+        None() => {
+          give 3_u32;
+        }
+      }
+      if partition != 0_u32 {
+        set outside = outside +sat 1_u64;
+      }
+    }
+  }
+  return count, outside;
+}
+
+fn trace_seam_item(context: &Context, item: Flow) -> ready: Bool reads(context) {
+  doc "A source seam admits complete ordinary or floated child/block ownership and transparent whitespace only. It uses no width, margin, height or float-motion certificate.";
+  match item {
+    Open(block: source_block) => {
+      let at = cvt::<u32, u64>(source_block);
+      if at < context^.blocks.inner.len {
+        return bnot(context^.blocks.inner[at].split_head);
+      }
+    }
+    Child(context: child) => {
+      let at = cvt::<u32, u64>(child);
+      if at < context^.children.inner.len {
+        return bnot(context^.children.inner[at].split_head);
+      }
+    }
+    Float(context: child) => {
+      let at = cvt::<u32, u64>(child);
+      if at < context^.children.inner.len {
+        return bnot(context^.children.inner[at].split_head);
+      }
+    }
+    Text(paragraph: source_paragraph) => {
+      let at = cvt::<u32, u64>(source_paragraph);
+      if at < context^.paragraphs.inner.len {
+        let p = &context^.paragraphs.inner[at];
+        let marks = p^.marks.inner.len;
+        if p^.lines.inner.len != 0_u64 {
+          return False();
+        }
+        if p^.fragments.inner.len != 0_u64 {
+          return False();
+        }
+        for (k in 0_u64..marks) {
+          match p^.marks.inner[k] {
+            Node(..) => {
+            }
+            Open(..) => {
+              return False();
+            }
+            Close(..) => {
+              return False();
+            }
+            Atomic(..) => {
+              return False();
+            }
+          }
+        }
+        return True();
+      }
+    }
+    Close(..) => {
+    }
+    Out(..) => {
+    }
+  }
+  return False();
+}
+
+fn trace_sequence_seam(context: &Context, sequence: &EntrySequence, selected: u32, removing: Bool) -> ready: Bool reads(context), reads(sequence) {
+  let visits = no_boundary_visits();
+  let rank = boundary_rank(sequence: sequence, slot: selected, visits: &visits);
+  let root = sequence_node(sequence: sequence, slot: sequence^.root);
+  if selected != no_index {
+    let chosen = sequence_node(sequence: sequence, slot: selected);
+    if chosen.live {
+    } else {
+      return False();
+    }
+  }
+  if rank > 0_u64 {
+    let before = rank - 1_u64;
+    let slot = direct_slot(sequence: sequence, rank: before, visits: &visits);
+    let item = sequence_payload(sequence: sequence, slot: slot);
+    let complete = trace_seam_item(context: context, item: item);
+    if complete {
+    } else {
+      return False();
+    }
+  }
+  let after = if removing {
+    give rank +sat 1_u64;
+  } else {
+    give rank;
+  }
+  if after < root.total_count {
+    let slot = direct_slot(sequence: sequence, rank: after, visits: &visits);
+    let item = sequence_payload(sequence: sequence, slot: slot);
+    return trace_seam_item(context: context, item: item);
+  }
+  return True();
+}
+
+fn trace_source_seam_at(context: &Context, steps: &[ContextStep], depth: u64, owner: u32, before: Flow, removed: Flow, removing: Bool, ending: Bool) -> ready: Bool reads(context), reads(steps) {
+  if depth < steps^.len {
+    let route = steps^[depth];
+    let child = cvt::<u32, u64>(route.child);
+    if child < context^.children.inner.len {
+      if context^.slot == route.parent {
+        if context^.children.inner[child].slot == route.slot {
+          let next = depth +sat 1_u64;
+          return trace_source_seam_at(context: &context^.children.inner[child], steps: steps, depth: next, owner: owner, before: before, removed: removed, removing: removing, ending: ending);
+        }
+      }
+    }
+    return False();
+  }
+  let visits = no_boundary_visits();
+  let selected = no_index;
+  if removing {
+    let handle = splice_handle(context: context, item: removed, visits: &visits);
+    if handle.owner != owner {
+      return False();
+    }
+    if handle.slot == no_index {
+      return False();
+    }
+    set selected = handle.slot;
+  } else if ending {
+  } else {
+    let handle = splice_handle(context: context, item: before, visits: &visits);
+    if handle.owner != owner {
+      return False();
+    }
+    if handle.slot == no_index {
+      return False();
+    }
+    set selected = handle.slot;
+  }
+  if owner == no_index {
+    return trace_sequence_seam(context: context, sequence: &context^.entries, selected: selected, removing: removing);
+  }
+  let at = cvt::<u32, u64>(owner);
+  if at < context^.blocks.inner.len {
+    if context^.blocks.inner[at].split_head {
+      return False();
+    }
+    return trace_sequence_seam(context: context, sequence: &context^.blocks.inner[at].entries, selected: selected, removing: removing);
+  }
+  return False();
+}
+
+fn trace_push_signed(cell: &Box<Slots<i64>>, value: i64) -> result: unit writes(cell) {
+  let pushed = push_item::<i64>(cell: cell, value: value, ceiling: item_ceiling);
+  return unit;
+}
+
+fn trace_item_identity(context: &Context, item: Flow, root: u32) -> (kind: u32, node: u32, owner: u32, slot: u32) reads(context) {
+  match item {
+    Open(block: b) => {
+      let at = cvt::<u32, u64>(b);
+      if at < context^.blocks.inner.len {
+        let style = context^.blocks.inner[at].style;
+        let node = use_element(style: style, root: root);
+        return 1_u32, node, context^.blocks.inner[at].parent, context^.blocks.inner[at].entry_slot;
+      }
+    }
+    Text(paragraph: p) => {
+      let at = cvt::<u32, u64>(p);
+      if at < context^.paragraphs.inner.len {
+        let node = first_text_node(paragraph: &context^.paragraphs.inner[at]);
+        if node == no_index {
+          set node = use_element(style: context^.paragraphs.inner[at].style, root: root);
+        }
+        return 2_u32, node, context^.paragraphs.inner[at].block, context^.paragraphs.inner[at].entry_slot;
+      }
+    }
+    Child(context: c) => {
+      let at = cvt::<u32, u64>(c);
+      if at < context^.children.inner.len {
+        let node = use_element(style: context^.children.inner[at].style, root: root);
+        return 3_u32, node, context^.children.inner[at].block, context^.children.inner[at].entry_slot;
+      }
+    }
+    Float(context: c) => {
+      let at = cvt::<u32, u64>(c);
+      if at < context^.children.inner.len {
+        let node = use_element(style: context^.children.inner[at].style, root: root);
+        return 4_u32, node, context^.children.inner[at].block, context^.children.inner[at].entry_slot;
+      }
+    }
+    Out(context: c) => {
+      let at = cvt::<u32, u64>(c);
+      if at < context^.children.inner.len {
+        let node = use_element(style: context^.children.inner[at].style, root: root);
+        return 5_u32, node, context^.children.inner[at].block, context^.children.inner[at].entry_slot;
+      }
+    }
+    Close(..) => {
+    }
+  }
+  return 0_u32, no_index, no_index, no_index;
+}
+
+fn trace_dependency_row(cell: &Box<Slots<i64>>, floating: u32, kind: u32, consumer: u32, reach: i64, old_floor: i64, new_floor: i64, predicate: u32) -> result: unit writes(cell) {
+  let float_value = cvt::<u32, i64>(floating);
+  let kind_value = cvt::<u32, i64>(kind);
+  let consumer_value = cvt::<u32, i64>(consumer);
+  let predicate_value = cvt::<u32, i64>(predicate);
+  trace_push_signed(cell: cell, value: float_value);
+  trace_push_signed(cell: cell, value: kind_value);
+  trace_push_signed(cell: cell, value: consumer_value);
+  trace_push_signed(cell: cell, value: reach);
+  trace_push_signed(cell: cell, value: old_floor);
+  trace_push_signed(cell: cell, value: new_floor);
+  trace_push_signed(cell: cell, value: predicate_value);
+  return unit;
+}
+
+fn trace_float_extrema(context: &Context, serial: u32, owner: u32, selected: u32, reach: i64, old_floor: i64, new_floor: i64, added_floor: i64, delta: i64, removing: Bool, styles: &Styles, root: u32, edit: u32) -> made: Box<Slots<i64>> reads(context), reads(styles) {
+  doc "Records the actual max-reach and min-natural contributors of the refused motion certificate. Rows are proof blockers, not a claim of a physical exclusion intersection. Prefix floats and suffix consumers are read by stable identities; only extrema matching the captured operands qualify.";
+  let made = box_slots_new::<i64>(capacity: 0_u64);
+  if context^.slot != serial {
+    let count = context^.children.inner.len;
+    for (k in 0_u64..count) {
+      let below = trace_float_extrema(context: &context^.children.inner[k], serial: serial, owner: owner, selected: selected, reach: reach, old_floor: old_floor, new_floor: new_floor, added_floor: added_floor, delta: delta, removing: removing, styles: styles, root: root, edit: edit);
+      let length = below.inner.len;
+      for (at in 0_u64..length) {
+        trace_push_signed(cell: &made, value: below.inner[at]);
+      }
+    }
+    return move made;
+  }
+  let events = flow_length(context: context);
+  let owner_end = events;
+  if owner != no_index {
+    for (at in 0_u64..events) {
+      let item = flow_event(context: context, at: at);
+      match item {
+        Close(block: source_block) => {
+          if source_block == owner {
+            set owner_end = imin(owner_end, at);
+          }
+        }
+        Open(..) => {
+        }
+        Text(..) => {
+        }
+        Child(..) => {
+        }
+        Float(..) => {
+        }
+        Out(..) => {
+        }
+      }
+    }
+  }
+  let cut = owner_end;
+  for (at in 0_u64..events) {
+    let item = flow_event(context: context, at: at);
+    let (kind, node, item_owner, slot) = trace_item_identity(context: context, item: item, root: root);
+    let same_owner = item_owner == owner;
+    let same_slot = slot == selected;
+    let named_slot = selected != no_index;
+    let identity = band(same_owner, same_slot);
+    let same = band(identity, named_slot);
+    if same {
+      set cut = imin(cut, at);
+    }
+  }
+  let matched = 0_u64;
+  let removed_events = 0_u64;
+  if removing {
+    if owner == no_index {
+      let chosen = sequence_node(sequence: &context^.entries, slot: selected);
+      set removed_events = chosen.own_events;
+    } else {
+      let at = cvt::<u32, u64>(owner);
+      if at < context^.blocks.inner.len {
+        let chosen = sequence_node(sequence: &context^.blocks.inner[at].entries, slot: selected);
+        set removed_events = chosen.own_events;
+      }
+    }
+  }
+  let after_cut = if removing {
+    give cut +sat removed_events;
+  } else {
+    give cut;
+  }
+  let selected_floor = imin(old_floor, new_floor);
+  for (at in 0_u64..cut) {
+    let item = flow_event(context: context, at: at);
+    match item {
+      Float(..) => {
+        let (float_kind, float_node, float_owner, float_slot) = trace_item_identity(context: context, item: item, root: root);
+        let motion = entry_motion(context: context, item: item, styles: styles);
+        let origin = block_origin(context: context, block: float_owner);
+        let absolute = shift_motion(output: motion, delta: origin.y);
+        if absolute.float_reach == reach {
+          let consumers = 0_u64;
+          for (after in after_cut..owner_end) {
+            let consumer_item = flow_event(context: context, at: after);
+            let (consumer_kind, consumer_node, consumer_owner, consumer_slot) = trace_item_identity(context: context, item: consumer_item, root: root);
+            if consumer_kind != 0_u32 {
+              let consumer_motion = entry_motion(context: context, item: consumer_item, styles: styles);
+              let consumer_origin = block_origin(context: context, block: consumer_owner);
+              let consumer_absolute = shift_motion(output: consumer_motion, delta: consumer_origin.y);
+              if selected_floor == old_floor {
+                if consumer_absolute.natural_floor == old_floor {
+                  trace_dependency_row(cell: &made, floating: float_node, kind: consumer_kind, consumer: consumer_node, reach: reach, old_floor: old_floor, new_floor: new_floor, predicate: 1_u32);
+                  set consumers = consumers +sat 1_u64;
+                }
+              } else if consumer_absolute.natural_floor != 9223372036854775807_i64 {
+                let moved_natural = consumer_absolute.natural_floor +sat delta;
+                if moved_natural == new_floor {
+                  trace_dependency_row(cell: &made, floating: float_node, kind: consumer_kind, consumer: consumer_node, reach: reach, old_floor: old_floor, new_floor: new_floor, predicate: 2_u32);
+                  set consumers = consumers +sat 1_u64;
+                }
+              }
+            }
+          }
+          if consumers == 0_u64 {
+            if removing {
+              trace_dependency_row(cell: &made, floating: no_index, kind: 0_u32, consumer: no_index, reach: reach, old_floor: old_floor, new_floor: new_floor, predicate: 4_u32);
+            } else if new_floor < old_floor {
+              if added_floor == new_floor {
+                trace_dependency_row(cell: &made, floating: float_node, kind: 6_u32, consumer: edit, reach: reach, old_floor: old_floor, new_floor: new_floor, predicate: 2_u32);
+              } else {
+                trace_dependency_row(cell: &made, floating: no_index, kind: 0_u32, consumer: no_index, reach: reach, old_floor: old_floor, new_floor: new_floor, predicate: 4_u32);
+              }
+            } else {
+              trace_dependency_row(cell: &made, floating: no_index, kind: 0_u32, consumer: no_index, reach: reach, old_floor: old_floor, new_floor: new_floor, predicate: 4_u32);
+            }
+          }
+          set matched = matched +sat 1_u64;
+        }
+      }
+      Open(..) => {
+      }
+      Close(..) => {
+      }
+      Text(..) => {
+      }
+      Child(..) => {
+      }
+      Out(..) => {
+      }
+    }
+  }
+  if matched == 0_u64 {
+    trace_dependency_row(cell: &made, floating: no_index, kind: 0_u32, consumer: no_index, reach: reach, old_floor: old_floor, new_floor: new_floor, predicate: 4_u32);
+  }
+  return move made;
+}
+
+fn trace_float_exports(context: &Context, styles: &Styles, document: &Document, root: u32, edit: u32) -> made: Box<Slots<i64>> reads(context), reads(styles), reads(document) {
+  doc "Records changed float exports for the exact added.floats or removed.floats rejection. Consumer kind 0 is intentional: this guard rejects export membership before consulting any consumer.";
+  let made = box_slots_new::<i64>(capacity: 0_u64);
+  let events = flow_length(context: context);
+  for (at in 0_u64..events) {
+    let item = flow_event(context: context, at: at);
+    match item {
+      Float(..) => {
+        let (kind, node, owner, slot) = trace_item_identity(context: context, item: item, root: root);
+        let wide = cvt::<u32, u64>(node);
+        let ancestor = cvt::<u32, u64>(edit);
+        let within = inside_element(document: document, node: wide, element: ancestor);
+        if within {
+          let motion = entry_motion(context: context, item: item, styles: styles);
+          let origin = block_origin(context: context, block: owner);
+          let absolute = shift_motion(output: motion, delta: origin.y);
+          trace_dependency_row(cell: &made, floating: node, kind: 0_u32, consumer: no_index, reach: absolute.float_reach, old_floor: 9223372036854775807_i64, new_floor: 9223372036854775807_i64, predicate: 3_u32);
+        }
+      }
+      Open(..) => {
+      }
+      Close(..) => {
+      }
+      Text(..) => {
+      }
+      Child(..) => {
+      }
+      Out(..) => {
+      }
+    }
+  }
+  let children = context^.children.inner.len;
+  for (k in 0_u64..children) {
+    let below = trace_float_exports(context: &context^.children.inner[k], styles: styles, document: document, root: root, edit: edit);
+    let count = below.inner.len;
+    for (at in 0_u64..count) {
+      trace_push_signed(cell: &made, value: below.inner[at]);
+    }
+  }
+  return move made;
+}
+
+fn trace_frontier_payload_at(context: &Context, steps: &[ContextStep], depth: u64, block: u32, node: u32, styles: &Styles) -> supported: Bool reads(context), reads(steps), reads(styles) {
+  if depth < steps^.len {
+    let route = steps^[depth];
+    let child = cvt::<u32, u64>(route.child);
+    if child < context^.children.inner.len {
+      if context^.slot == route.parent {
+        if context^.children.inner[child].slot == route.slot {
+          let next = depth +sat 1_u64;
+          return trace_frontier_payload_at(context: &context^.children.inner[child], steps: steps, depth: next, block: block, node: node, styles: styles);
+        }
+      }
+    }
+    return False();
+  }
+  let at = cvt::<u32, u64>(block);
+  if at < context^.blocks.inner.len {
+    let held = &context^.blocks.inner[at];
+    if held^.style.element != node {
+      return False();
+    }
+    if held^.split_head {
+      return False();
+    }
+    if held^.neutral {
+    } else {
+      return False();
+    }
+    let group = box_of(styles: styles, style: held^.style);
+    if group.display != display_block {
+      return False();
+    }
+    if group.position != position_static {
+      return False();
+    }
+    if group.float != float_none {
+      return False();
+    }
+    let independent = establishes(group: group);
+    if independent {
+      return False();
+    }
+    let columns = multicol(styles: styles, style: held^.style);
+    if columns {
+      return False();
+    }
+    return True();
+  }
+  return False();
+}
+
+fn trace_source_frontier(layout: &Layout, document: &Document, styles: &Styles, traversal: &Traversal, changed: &[u32], edit: u32) -> supported: Bool reads(layout), reads(document), reads(styles), reads(traversal), reads(changed) {
+  doc "Proves construction correspondence for the existing sparse outside style frontier without borrowing retained geometry. A boxes-only ordinary complete block can change geometry while retaining its source ownership. Other outside consumers require wider checkpoint work and fail bit 8 rather than being inferred neutral from the splice reason.";
+  let count = changed^.len;
+  let supported = True();
+  for (k in 0_u64..count) {
+    let bare = iand(changed^[k], 2147483647_u32);
+    let index = cvt::<u32, u64>(bare);
+    if index < traversal^.elements.inner.len {
+      let node = traversal^.elements.inner[index];
+      let at = cvt::<u32, u64>(node.index);
+      let ancestor = cvt::<u32, u64>(edit);
+      let within = inside_element(document: document, node: at, element: ancestor);
+      if within {
+      } else {
+        let boxes_only = iand(changed^[k], changed_boxes_only);
+        if boxes_only == 0_u32 {
+          set supported = False();
+        } else {
+          let owner = splice_owner(layout: layout, node: node);
+          let frontier_supported = match path_steps(layout: layout, serial: owner.serial) {
+            Ok(value: steps) => {
+              let depth = steps.inner.len;
+              give trace_frontier_payload_at(context: &layout^.root, steps: &steps.inner[0_u64..depth], depth: 0_u64, block: owner.block, node: node.index, styles: styles);
+            }
+            Err(..) => {
+              give False();
+            }
+          }
+          set supported = band(supported, frontier_supported);
+        }
+      }
+    } else {
+      set supported = False();
+    }
+  }
+  return supported;
+}
+
+fn trace_scope_existing_routes(layout: &Layout, scope: u32, document: &Document, edit: u32, root: u32) -> (count: u64, outside: u64) reads(layout), reads(document) {
+  doc "Counts reachable existing supplier-chain records, excluding abandoned historical records in append-only storage. Supplier chains have disjoint records and contribute independent reductions. Each chain follows its own next-record dependency.";
+  let count = 0_u64;
+  let outside = 0_u64;
+  for (supplier in 0_u64..layout^.uses.len) {
+    let style_use = route_read::<StyleUse>(table: &layout^.uses, at: supplier);
+    let cursor = style_use.head;
+    for (step in 0_u64..layout^.routes.len) {
+      if cursor == no_index {
+        break;
+      }
+      let at = cvt::<u32, u64>(cursor);
+      let route = route_read::<StyleRoute>(table: &layout^.routes, at: at);
+      let within = trace_path_inside(paths: &layout^.paths, serial: route.serial, scope: scope);
+      if within {
+        set count = count +sat 1_u64;
+        let partition = match relative_steps(paths: &layout^.paths, from: layout^.root.slot, to: route.serial) {
+          Some(value: steps) => {
+            let length = steps.inner.len;
+            give trace_route_partition_at(context: &layout^.root, steps: &steps.inner[0_u64..length], depth: 0_u64, route: route, document: document, edit: edit, root: root);
+          }
+          None() => {
+            give 3_u32;
+          }
+        }
+        if partition != 0_u32 {
+          set outside = outside +sat 1_u64;
+        }
+      }
+      set cursor = route.next;
+    }
+  }
+  return count, outside;
+}
