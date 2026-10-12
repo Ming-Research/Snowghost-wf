@@ -1257,6 +1257,184 @@ runs. The `--par` profiles run four workers serialized by valgrind, so
 their totals include scheduling, while their chain's per-function counts do
 not depend on it.
 
+### Results
+
+**Run.** Workflow `style-scan-cost`, run 38312337441 at 97eeaf7, pin
+`wf-d837678c6905`, hosted `ubuntu-24.04` on an AMD EPYC 7763, clang 22.1.8,
+valgrind 3.22.0. The three sequential builds print the same check on ecma262
+(179,471 elements, 336 rules, checksum fae8a9b77c6b818a), and the twin is
+base's binary byte for byte. Shape A calls `selector_matches` 179,471 x 336 =
+60,302,256 times per repetition.
+
+**A defect in the first run.** `profile_run` assigned its fifth argument to
+the caller's variable, so after the first `--par` run the sequential `A 1`
+runs were recorded without the cache and branch simulators (Ir only) while
+the `A 0` runs had them. Instruction counts are unaffected; the simulated
+misses that hypothesis 1 reads are missing. The script now keeps the
+options in its own variable, and `scan-cost.py compare` refuses four
+profiles whose events differ.
+
+**Twin.** Base and twin have the same stage Ir, 17,117,359,662, and every
+function's count is equal (`compare-twin.txt`). Counts are deterministic,
+so a difference between base and noparam is the builds'.
+
+**r_Ir.** Base 17,117,359,662, noparam 15,486,307,786: r_Ir = 0.9047 and ΔIr
+= 1,631,051,876, 27.05 instructions per `selector_matches` call out of
+283.86 (9.5 percent). The `--par` builds give the same ratio, 0.9047, and the
+same per-function differences.
+
+**Where ΔIr lies** (base minus noparam, stage only; calls are equal in both
+builds unless named):
+
+| function | ΔIr | share | per call |
+|---|---:|---:|---:|
+| `match_complex` (106,853,532 calls) | 784,372,654 | 48.1% | 7.34 |
+| `style_element` (holds the inlined `selector_matches` and `list_matches`) | 698,789,055 | 42.8% | 6 per `match_complex` call + 1 per `selector_matches` call |
+| `instr_matches` (115,247,629 calls) | 140,339,980 | 8.6% | 1.22 |
+| `class_records` (966,416 calls in base, none in noparam) | 5,798,496 | 0.4% | 6 |
+| `nth_scan` (91,763 calls) | 1,379,499 | 0.1% | 15.0 |
+| `nth_of_type_matches` (7,596 calls in base, inlined in noparam) | 372,204 | 0.0% | 49 |
+
+These six sum to ΔIr exactly. `selector_matches`, `list_matches` and
+`compound_matches` are inlined in both builds, so `compare-seq.txt`'s
+"chain share" (0.5716) leaves out `style_element`, which holds the first two;
+the annotated disassembly below accounts for all of `style_element`'s
+difference.
+
+**What the extra instructions are** (annotated disassembly of the linked
+binaries):
+
+- `style_element`, per call of `match_complex` (106,310,750 calls), 19
+  instructions in base against 13 in noparam. Base passes the empty table in
+  `rcx` (`lea 0x60(%rsp),%rcx`) and `r8` (`xor %r8d,%r8d`), which moves
+  `comp_end`, the target's address and the context's address onto the stack
+  (`sub $0x8,%rsp`, three `push`es, `add $0x20,%rsp`). Noparam passes
+  `comp_end` in `r8`, the target's address in `r9` and only the context's
+  address on the stack (`lea 0x30(%rsp),%rax; mov %rax,(%rsp)`). The
+  remaining instruction per `selector_matches` call is
+  `movq $0x0,0x58(%rsp)`: the scanning entry's one-word empty array,
+  written on every call (60,302,256 instructions, 3.7 percent of ΔIr).
+- `match_complex`, on its common path (the subject's first simple selector
+  fails), 66 instructions in base against 59. Base receives nine argument
+  words, so it loads `comp_end` and the target's address from the stack
+  (`mov 0x370(%rsp),%r14d`, `mov 0x378(%rsp),%rax`), keeps `atoms` and the
+  table's two words in stack slots (`mov %rdx,0x18(%rsp)`,
+  `mov %rcx,0x20(%rsp)`, `mov %r8,0x28(%rsp)`), and before each call of
+  `instr_matches` reloads all three and pushes two stack arguments
+  (`push 0x380(%rsp)`, `push %rax`, then `add $0x10,%rsp`): 24 instructions
+  per call of `instr_matches` against 19.
+- `instr_matches` receives eight argument words in base, six in noparam, and
+  loads the two from the stack in its prologue (`mov 0x88(%rsp),%r12`,
+  `mov 0x80(%rsp),%rbx` against `mov %r9,%rbx`): one more instruction on all
+  115,247,629 calls; the remaining 25,092,351 lie in its class and
+  structural arms.
+
+**The hypotheses by their rules.**
+
+1. *Not instructions*: neither holds nor is rejected. r_Ir = 0.9047 lies
+   between 0.90 and 0.97. Executed instructions explain 61 percent of the
+   hosted time difference by the least times (1 - 0.9047 = 0.095 against
+   1 - 0.845 = 0.155) and 68 percent by the medians (against 1 - 0.860). The
+   rest is not decided: the simulated misses were not recorded (the defect
+   above). The added instructions are stack stores, loads, pushes and stack
+   adjustments on the call path, which may cost more than the average
+   instruction; that is a guess, not a result.
+2. *Argument passing through calls that stay calls*: holds. The chain,
+   counting the inlined `selector_matches` and `list_matches` in
+   `style_element`, carries all of ΔIr; the largest single function carries
+   48.1 percent, under half; the per-call differences are 1.22 to 7.34 in
+   the functions called on every test (15 and 49 in two rare leaves with
+   91,763 and 7,596 calls, together 0.1 percent of ΔIr); and the
+   disassembly shows the difference at argument moves, stack arguments,
+   spills and reloads. The two table words push the argument count of
+   `match_complex` from seven words to nine and of `instr_matches` from six
+   to eight, past the six integer argument registers of the x86-64 C calling
+   convention that Whitefoot's calls use.
+3. *Different inlining*: not rejected by its rule, but it carries at most 2
+   percent. `class_records` (966,416 calls) and `nth_of_type_matches` (7,596
+   calls) are calls in base only. In noparam `class_records` is gone because
+   its argument is a constant empty table, and `nth_of_type_matches` is
+   inlined because it shrank: both are consequences of hypothesis 5's
+   folding. The main chain's boundaries are the same in both builds:
+   `match_complex`, `instr_matches`, `nth_scan` and `backtrack` are calls
+   with equal counts, and `selector_matches`, `list_matches` and
+   `compound_matches` are inlined in both.
+4. *A check per iteration or per call*: rejected. In base's emitted IR the
+   table's two words are used outside calls only to pack them into a pair at
+   each function's entry, in phis that carry the pair through loops
+   (`compound_matches`, `list_matches`, `match_complex`, `nth_scan`,
+   `nth_qualifies`, `count_siblings`), and in the reads of its length in
+   `class_records`, `positioned_scan` and the class test
+   (`%v136 = extractvalue { ptr, i64 } %v3, 1` in `instr_matches`, the line
+   `let length = positions^.len;` the patch changes). `match_complex`'s loop
+   in the binary compares nothing on the table; it only reloads its words
+   for the next call.
+5. *The lookups the patch folds*: rejected. `class_records` (5,798,496),
+   `nth_of_type_matches` (372,204), `nth_scan` (1,379,499) and all of
+   `instr_matches` beyond its one prologue instruction per call (25,092,351)
+   together are at most 32,642,550 instructions, 2.0 percent of ΔIr, against
+   the quarter the rule requires.
+6. *Parallel captures*: rejected for `--par` builds. With line numbers
+   removed, the two `--par` ledgers differ only in the statement pairs and
+   chains of the lines the patch adds or edits (the `array_filled` lets, the
+   positioned entry's `length` let and `list_matches` calls); no loop's
+   verdict or captures differ, and the `--par` profiles repeat the
+   sequential ratio.
+
+**Who acts.** The cost is not in Snowghost's own code (hypothesis 5 is 2.0
+percent; the scanning entry's empty-array store another 3.7 percent) and not
+a check Whitefoot emits (4) or a change of inlining (3). It is the cost of
+two more argument words on every call of a matcher chain that is not inlined
+(2). Whitefoot compiles this signature as a C compiler would compile the
+same nine-word signature. What makes the cost Whitefoot's question is that a
+Whitefoot writer cannot write the form that avoids it: a record of the
+chain's borrowed inputs (list, document, atoms, table) passed as one
+reference is refused, because no stored position may hold a reference kind
+[TYPE-8, GRAM-3], so every borrowed input of a recursive read-only chain is
+its own argument, a range reference two of them, and the calls use the C
+convention's six integer argument registers. Small copy records also cross
+calls as pointers to stack copies: `NodeId` (one `u32`) and `MatchContext`
+are `ptr %wf.arg.vN` parameters with no `readonly`, `dereferenceable` or
+`noalias` facts, which the compiler's parameter ABI gives every stored
+aggregate, while a small aggregate result already returns in registers.
+Removing the parameter from the chain, or a scan-only copy of the chain,
+would route around this and is not done; the gap goes to Whitefoot with a
+minimal witness, and the owner decides the direction (a record of borrowed
+references, a calling convention with more argument registers for
+Whitefoot's own calls, or accepting the cost). Snowghost's one local item is
+the scanning entry's per-call empty array (3.7 percent of ΔIr), which goes
+away with whatever form the table takes and is not worth a change alone.
+
+**Witness.** `witness-argument-words.wf` in this directory reduces the chain
+to two mutually recursive read-only functions, `step` (a loop over a range
+of items, as `match_complex` and `compound_matches`) and `test` (one item,
+recursing into `step` for a nested range, as `instr_matches` does for
+`:not()`), that thread three borrowed records, an `Id` (one word), a
+`Context` (two `Option<Id>`) and, in the `with` copy only, an empty table
+of a local one-word array they forward and read in one rare arm. The two
+copies give `step` nine argument words against seven and `test` eight
+against six, as in the renderer. `scan-param.sh witness` builds it as the
+renderer is built (function fragments, ThinLTO), requires both copies to
+count the same matches, and prints each copy's calls and instructions per
+call under callgrind with their disassembly. It was written after this run
+and has not yet been built. The result that would show the gap: the `with`
+copy's `step` and `test` execute more instructions per call than the
+`without` copy's, by about the renderer's 7 and 1, at the argument moves,
+stack arguments and reloads. Acceptance depends on the direction chosen:
+with a record of borrowed references, the witness rewritten to pass one
+such record keeps its per-call instructions when the table joins the
+record (within 1 per call); with a different calling convention for
+Whitefoot's own calls, the `with` copy costs at most 2 more instructions
+per `step` call and 1 per `test` call than the `without` copy; and either way
+shape A on ecma262 then gives r_Ir of at least 0.98 under this experiment.
+
+**Not settled.** What the 32 to 39 percent of the time difference that
+instructions do not explain is: the rerun with the simulators, and the
+14900K's hardware counters if the simulators show no difference. The share
+of the real stage's time that this cost takes: the stage's positioned entries
+carry the table, and its index and filter call the chain on 28 to 46 tests
+per element instead of shape A's 336.
+
 ## Owner rulings
 
 - **2026-10-02, Q64, the level cascade,** written in Chinese after the

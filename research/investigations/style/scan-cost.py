@@ -16,6 +16,10 @@ builds' instruction counts differ.
         driver's output line of the BASE run, the difference is also given
         per selector_matches call of shape A (elements times rules).
 
+    scan-cost.py calls PROFILE REGEX
+        Prints, for each function of one profile whose name matches REGEX,
+        its calls, exclusive and inclusive Ir and exclusive Ir per call.
+
     scan-cost.py annotate PROFILE DISASSEMBLY
         DISASSEMBLY is `objdump -d` text of some functions of the profiled
         binary. Prints each instruction with the exclusive events callgrind
@@ -174,8 +178,8 @@ def compare(arguments):
     if len(rest) != 4 or chain is None:
         raise SystemExit("usage: scan-cost.py compare BASE BASE_ZERO OTHER OTHER_ZERO --chain REGEX [--top N] [--result FILE]")
     base_full, base_empty, other_full, other_empty = (Profile(p) for p in rest)
-    if base_full.events != other_full.events:
-        raise SystemExit("the two builds were profiled with different events")
+    if any(profile.events != base_full.events for profile in (base_empty, other_full, other_empty)):
+        raise SystemExit("the four profiles were not recorded with the same events")
     events = base_full.events
     base, base_totals = stage(base_full, base_empty)
     other, other_totals = stage(other_full, other_empty)
@@ -233,6 +237,19 @@ def compare(arguments):
         print(row(name))
 
 
+def calls(arguments):
+    if len(arguments) != 2:
+        raise SystemExit("usage: scan-cost.py calls PROFILE REGEX")
+    profile = Profile(arguments[0])
+    pattern = re.compile(arguments[1])
+    print(f"{'calls':>13} {'excl Ir':>15} {'incl Ir':>15} {'excl/call':>10}  function")
+    for name in sorted(n for n in profile.functions() if pattern.search(n)):
+        count = profile.calls.get(name, 0)
+        own = profile.excl(name)
+        per_call = f"{own / count:.2f}" if count else "-"
+        print(f"{count:>13,} {own:>15,} {profile.incl(name):>15,} {per_call:>10}  {name}")
+
+
 DIS_HEAD = re.compile(r"^([0-9a-f]+) <(.+)>:$")
 DIS_LINE = re.compile(r"^\s+([0-9a-f]+):\t(.*)$")
 
@@ -284,6 +301,8 @@ def main():
     command, arguments = sys.argv[1], sys.argv[2:]
     if command == "compare":
         compare(arguments)
+    elif command == "calls":
+        calls(arguments)
     elif command == "annotate":
         annotate(arguments)
     else:

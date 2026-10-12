@@ -48,7 +48,15 @@
 #                                  and inclusive listings of each A 1 run
 #                                  are kept beside them
 #
-# Its outputs are under build/scan-param/{disasm,emit,callgrind}.
+#   scan-param.sh witness          builds witness-argument-words.wf (the
+#                                  chain's shape with and without a forwarded
+#                                  table) as the renderer is built, runs it,
+#                                  and under callgrind prints each copy's calls
+#                                  and instructions per call; keeps its
+#                                  emitted IR's signatures and the copies'
+#                                  disassembly
+#
+# Its outputs are under build/scan-param/{disasm,emit,callgrind,witness}.
 #
 # The patch removes the positions parameter from the ten matcher functions
 # between selector_matches and the leaf tests (the eight of the chain and the
@@ -328,12 +336,12 @@ emit() {
 # Runs one build under callgrind: $1 the run's name, $2 the executable, $3
 # REPS, $4 WF_WORKERS, $5 the simulators' options, then the page's arguments.
 profile_run() {
-	run=$1 executable=$2 reps=$3 workers=$4 simulators=$5
+	run=$1 executable=$2 reps=$3 workers=$4 options=$5
 	shift 5
 	started=$(date +%s)
 	status=0
-	# $simulators is unquoted on purpose: it is zero or more options.
-	WF_WORKERS=$workers valgrind --tool=callgrind --dump-instr=yes --compress-strings=no --compress-pos=no $simulators \
+	# $options is unquoted on purpose: it is zero or more options.
+	WF_WORKERS=$workers valgrind --tool=callgrind --dump-instr=yes --compress-strings=no --compress-pos=no $options \
 		--callgrind-out-file="$work/callgrind/$run-A$reps.out" "$executable" A "$reps" "$@" \
 		>"$work/callgrind/$run-A$reps.stdout" 2>"$work/callgrind/$run-A$reps.log" || status=$?
 	echo "$run A $reps: exit $status in $(($(date +%s) - started)) s: $(cat "$work/callgrind/$run-A$reps.stdout")"
@@ -347,11 +355,11 @@ callgrind() {
 	page=${1:-ecma262}
 	sheets=$(sheets_of "$page")
 	mkdir -p "$work/callgrind"
-	simulators='--cache-sim=yes --branch-sim=yes'
+	sims='--cache-sim=yes --branch-sim=yes'
 	for reps in 0 1; do
-		profile_run base-seq "$work/base/proto_style_seq" "$reps" 1 "$simulators" "$data/$page.html" "$ua" $sheets
-		profile_run noparam-seq "$work/noparam/proto_style_seq" "$reps" 1 "$simulators" "$data/$page.html" "$ua" $sheets
-		profile_run twin-seq "$work/twin/proto_style_seq" "$reps" 1 "$simulators" "$data/$page.html" "$ua" $sheets
+		profile_run base-seq "$work/base/proto_style_seq" "$reps" 1 "$sims" "$data/$page.html" "$ua" $sheets
+		profile_run noparam-seq "$work/noparam/proto_style_seq" "$reps" 1 "$sims" "$data/$page.html" "$ua" $sheets
+		profile_run twin-seq "$work/twin/proto_style_seq" "$reps" 1 "$sims" "$data/$page.html" "$ua" $sheets
 		profile_run base-par "$work/base/proto_style_par" "$reps" 4 "" "$data/$page.html" "$ua" $sheets
 		profile_run noparam-par "$work/noparam/proto_style_par" "$reps" 4 "" "$data/$page.html" "$ua" $sheets
 	done
@@ -376,6 +384,33 @@ callgrind() {
 	gzip -f "$cg"/*.out
 }
 
+witness() {
+	out=$work/witness
+	mkdir -p "$out"
+	"$compiler" --cache "$root/build/whitefoot-cache" --fragments function -o "$out/argument_words" "$here/witness-argument-words.wf"
+	"$compiler" --emit-llvm -o "$out/argument_words.ll" "$here/witness-argument-words.wf"
+	grep -E '^define .*@wf_(step|test)_with(out)?\(' "$out/argument_words.ll" >"$out/signatures.txt" || :
+	cat "$out/signatures.txt"
+	status=0
+	"$out/argument_words" || status=$?
+	echo "witness exit $status (0: both copies count the same matches)"
+	if [ "$status" -ne 0 ]; then
+		exit 1
+	fi
+	valgrind --tool=callgrind --dump-instr=yes --compress-strings=no --compress-pos=no \
+		--callgrind-out-file="$out/argument_words.out" "$out/argument_words" 2>"$out/callgrind.log"
+	python3 -I "$here/scan-cost.py" calls "$out/argument_words.out" '(step|test)_with(out)?([.].*)?$|^wf_main' >"$out/calls.txt"
+	cat "$out/calls.txt"
+	nm --defined-only "$out/argument_words" | awk '{ print $NF }' | grep -E '(step|test)_with(out)?([.].*)?$' >"$out/symbols.txt" || :
+	: >"$out/argument_words.s"
+	while read -r symbol; do
+		objdump -d --no-show-raw-insn --disassemble="$symbol" "$out/argument_words" | sed -n '/^[0-9a-f]* <.*>:$/,$p' >>"$out/argument_words.s"
+	done <"$out/symbols.txt"
+	python3 -I "$here/scan-cost.py" annotate "$out/argument_words.out" "$out/argument_words.s" >"$out/annotate.txt"
+	summarize_disassembly "$out/argument_words.s"
+	gzip -f "$out/argument_words.out" "$out/argument_words.ll"
+}
+
 case ${1:-} in
 build) build ;;
 check)
@@ -387,6 +422,7 @@ time)
 	timing "$@"
 	;;
 build-par) build_par ;;
+witness) witness ;;
 disasm) disasm ;;
 emit) emit ;;
 callgrind)
@@ -394,7 +430,7 @@ callgrind)
 	callgrind "$@"
 	;;
 *)
-	echo "usage: scan-param.sh build | check [PAGE...] | time [PAGE...] | build-par | disasm | emit | callgrind [PAGE]" >&2
+	echo "usage: scan-param.sh build | check [PAGE...] | time [PAGE...] | build-par | disasm | emit | callgrind [PAGE] | witness" >&2
 	exit 2
 	;;
 esac
