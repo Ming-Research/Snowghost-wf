@@ -367,11 +367,13 @@ effects.
 renderer sources; the temporary workflow builds those sources and applies
 only diagnostic instrumentation or individual mutations to private trees.
 The [bounded union arithmetic](source-union-range.md) uses exact `+`, since
-the existing type bounds and ceiling preflights exclude saturation. The
-remaining front-end refusal is [result contract transport](source-result-contract.md):
-explicit success bounds establish the nested result invariant, but a forwarded
-generic error helper cannot communicate its always-failure outcome to the
-success-routed obligation. This is separate from `sg-inverse-proof-gap`.
+the existing type bounds and ceiling preflights exclude saturation. Whitefoot#398
+carries the source owners' type invariant through `Result` payloads, so the
+explicit success bounds were removed. The remaining front-end refusals are in
+[result contract transport](source-result-contract.md): a producer's invariant
+does not reach a union inside its own recursive call-graph component (observed),
+and does not survive delivery through a value initializer (inferred). Both are
+separate from `sg-inverse-proof-gap`.
 The ordinary-layout, supplier-chain, retained-identity and F1/F9/F13 checks
 remain wired but have not executed for this implementation. No runtime bounds
 substitute, serial union or changed error-production form is used.

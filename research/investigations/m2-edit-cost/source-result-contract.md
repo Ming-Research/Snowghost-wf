@@ -1,68 +1,107 @@
 # Source result contract transport
 
-After the bounded source union changed to its intended exact `+`, the pinned
-front end reached two independent contract boundaries. These witnesses concern
-only result contracts; they do not test the owner/entry inverse or parallel
-publication. Whether either overlaps Whitefoot's helper-frame fix remains
-unverified.
+`SourceRouteOwners` (`renderer/layout/source_route_owners.wf`) bounds both of
+its arrays by a type invariant, so the ownership union can add two counts and
+index the sum with exact arithmetic. Its producers return it inside
+`Result<SourceRouteOwners, LayoutError>` and reduce independent proposals by
+balanced recursion. These witnesses concern only how that invariant reaches
+each union call; they do not test the owner/entry inverse or parallel
+publication.
 
-Compiler: `wf-78223721f77d`, Whitefoot revision
-`78223721f77db615c950b6df1bcc690629f9fe4b`. Each witness was copied alone to
-`layout/witness.wf` in a private scratch graph containing `pkg::layout: [];`.
-Its `layout/module.wfm` contained only the canonical final newline. The only
-compiler command was the authorized front-end check:
+Each witness is checked alone with the pinned compiler's front end:
 
 ```text
-whitefootc --graph modules.wfg --check-module pkg::layout
+whitefootc --check research/investigations/m2-edit-cost/<witness>.wf
 ```
 
-`source-result-invariant.wf` constructs a valid `BoundedSource`, returns it in
-`Ok`, propagates it, then passes it to an ordinary reference parameter. The
-check exited 1 in 0.01 seconds:
+## Enum payloads (resolved by Whitefoot#398)
+
+On `wf-78223721f77d` (spec v0.135) a struct invariant did not cross a function
+boundary inside `Result`:
+
+- `source-result-invariant.wf`: a valid source returned in `Ok`, propagated
+  and passed to `&BoundedSource` was refused with FN-8 at that call.
+- `source-error-forward.wf`: with a written
+  `ensures when Ok(value: produced): ...` bound, the branch forwarding a
+  generic always-`Err` helper was refused with FN-9.
+
+Whitefoot#398, released as `wf-exp-fdbd95c73d50` (spec v0.136, TYPE-11),
+makes each invariant of a struct carried in an enum variant a postcondition
+routed by that variant: a producer proves it at every `Ok` exit, a generic
+failure helper's instance holds it vacuously, and a caller receives it in the
+`Ok` context that `propagate` or a `match` arm selects. The two witnesses are
+the programs of Whitefoot's conformance cases
+`type11-pos-enum-payload-propagated-result` and
+`type11-pos-enum-payload-failure-helper`; Snowghost's CI has not yet checked
+them on this pin. The renderer's hand-written `ensures when Ok` bounds, which
+restated the invariant, were removed: the generated route states the same
+relation.
+
+## Recursive component (observed, open)
+
+With the explicit bounds still present, the gate on the `wf-exp-fdbd95c73d50`
+pin refused `pkg::layout` first at the union in `source_piece_owners`:
 
 ```text
-./layout/witness.wf:20:16: error[FN-8]: UndischargedCallRequirement
-source:   let length = source_length(source: &source);
-instantiated_goal: source.values.inner.len <= 1073741824_u64
+./layout/source_route_owners.wf:125:22: error[FN-8]: UndischargedCallRequirement
+source: return union_source_owners(first: &direct, second: &nested);
+requires_clause: invariant supplier_limit(owner): owner.suppliers.inner.len <= 1073741824_u64;
+instantiated_goal: nested.suppliers.inner.len <= 1073741824_u64
 disposition: Unproved
 ```
 
-TYPE-11 publishes a struct invariant as a postcondition when the result
-ordinal's declared type is that struct. It does not state that publication for
-a struct inside `Result`. A success-routed postcondition is the natural explicit
-contract for that boundary, so the active producers now declare both array
-length bounds. This first witness does not by itself prevent the implementation.
+`direct` comes from `source_style_owners` and `nested` from
+`source_context_owners`; both are ordinary functions returning the struct in
+`Result`, neither a container element nor a generic wrapper. The difference is
+recursion: `source_piece_owners`, `source_context_owners`,
+`source_context_range` and `source_paragraph_owners` form one call-graph
+component, and FN-9 withholds every summary of a component from its own
+members ("no member of that component may use a summary withheld by this
+rule"). The generated TYPE-11 postcondition is such a summary, so a payload
+returned by a member of the caller's own component carries no invariant.
 
-`source-error-forward.wf` adds that truthful success-routed postcondition.
-Its failure branch calls the ordinary generic helper whose body returns only
-`Err`. The check exited 1 in 0.00 seconds:
+`source-recursive-invariant.wf` is the smallest form: a self-recursive
+producer passes its recursive call's `Ok` payload to `&BoundedSource`. The
+expected refusal is FN-8 at `source_length(source: &inner)` with goal
+`inner.values.inner.len <= 1073741824_u64`, or FN-9 at the return forwarding
+`inner` if the checker reports that first.
 
-```text
-./layout/witness.wf:16:5: error[FN-9]: UndischargedPostcondition
-source:     return source_failure::<BoundedSource>();
-relation: <success payload>.values.inner.len - 0 <= 1073741824
-disposition: Unproved
-```
+The renderer sites, after the bounds' removal: FN-8 at the unions on lines
+116, 141, 153, 217, 247, 248, 252 and 327 (`source_removed_range` is
+self-recursive), and FN-9 at the returns forwarding a component member on
+lines 184, 206 and 337 (`source_removed_at` is self-recursive).
 
-FN-9 excludes a direct known failure return from a success-routed obligation,
-but a forwarded outcome with no transported tag evidence retains an unknown
-success payload. The generic failure helper cannot state its actual
-always-`Err` result through the pinned contract interface: FN-9 admits only
-success `Ok`/`Some` routes, excludes whole `Result` and Boolean result data, and
-rejects an empty selected-return set for a success clause. A counterfeit
-numeric constraint on an impossible success payload would not be a truthful
-representation of the helper's interface.
+The recursion is the producers' dependency structure: each balanced reduction
+depends only on its two halves. Removing it would add an order the algorithm
+does not need, and a ceiling preflight in the union would be a run-time check
+standing in for the missing proof, so neither is used.
 
-The active renderer therefore retains its natural generic error helper calls
-and the truthful explicit success bounds. No direct `Err` substitution,
-runtime bound guard, serial producer or extra storage directory was introduced.
-The full renderer first failed the analogous FN-8 in 8.46 seconds, then the
-analogous FN-9 in 12.18 seconds. Later failures, including recursive producer
-contract verification, remain unexamined behind this first refusal.
+Acceptance: `source-recursive-invariant.wf` is accepted; the same producer
+whose base case constructs a source of 1073741825 values is still refused at
+that construction; and `pkg::layout` passes these sites unchanged.
 
-Acceptance for the remaining refusal: `source-error-forward.wf` checks, and
-the renderer's success bounds cross ordinary generic error returns without
-introducing a runtime check or changing the producer's dependency graph.
-`source-result-invariant.wf` records the existing explicit-contract requirement;
-accepting it unchanged is not required to unblock this increment. No code
-generation, renderer execution or tests ran locally.
+## Value initializer (inferred, not yet observed)
+
+GIVE-1 delivers facts through a `value_if` or `value_match` only for a fragment
+integer and, by ENT-5, for a local `Result` or `Option`. A struct delivered by
+`give` keeps none of its facts, its type invariant included, because TYPE-11
+makes an invariant a fact only at a function boundary. The pinned compiler's
+value-delivery join returns at once for a non-fragment result type.
+
+`source-give-invariant.wf`: each branch of a `value_if` obtains a valid source
+from a function returning the struct, and the delivered binding is passed to
+`&BoundedSource`. The expected refusal is FN-8 at
+`source_length(source: &chosen)` with goal
+`chosen.values.inner.len <= 1073741824_u64`.
+
+The renderer sites: the unions on `source_route_owners.wf` lines 201
+(`style`, an optionally styled column) and 252 (`owned`, an optionally styled
+context), and on `source_routes.wf` line 128 (`removed_owners`, present only on
+removal). A `Result`-valued initializer followed by one `propagate` would carry
+the `Ok` context under the current rules; it is not used, since it changes the
+spelling only to avoid the refusal.
+
+Acceptance: `source-give-invariant.wf` is accepted, and a delivery whose one
+branch breaks the invariant before `give` is refused at the requiring call.
+
+No code generation, renderer execution or test ran locally.
