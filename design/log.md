@@ -4,6 +4,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `Nodes:` naming every node changed, `Owner-approved:` and `Summary:`;
 the design-tree part of the owner-wide agent instructions owns the form.
 
+## 2026-10-12 Hash each interning table's values outside the in-order chain
+
+Nodes: vocabulary
+
+Owner-approved: On 2026-10-12 the owner chose option A on the status board card asking whether interning should first hash all of each table's values in parallel and then number them in order of first appearance, written into the design tree.
+
+Summary: Each group's table now hashes all its values in a loop whose iterations are independent before its probe-and-append loop, which keeps the identifiers in first-occurrence order, the one true dependency; hashing inside that loop is rejected because it kept 28 and 30 percent of sequential interning on ecma262 and html5 in the only sequential chain. On the hosted runner four-worker interning became 40 and 34 percent faster, with the dumps byte-identical, and fell to 13.9 and 15.4 percent of the four-worker stage ([hashing outside the chain](../research/investigations/style/DESIGN.md#hashing-outside-the-chain-b)); the decision stays provisional until the 14900K measurement and the call-grain change that lets the tables run in parallel.
+
 ## 2026-10-11 Bound the structural restyle of next-sibling `+` chains by their length
 
 Nodes: pipeline/style
