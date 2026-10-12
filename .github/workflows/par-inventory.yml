@@ -133,8 +133,20 @@ jobs:
           name: layout-par-profile-apollo11-${{ github.sha }}-${{ github.run_id }}
           path: build/layout-par-pages/apollo11
 
-      - name: Require matching provenance, inputs and three identical sequential drivers
-        timeout-minutes: 1
+      - name: Binutils for raw section and function-table extraction
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          mkdir -p build/layout-par
+          {
+            sudo apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=30 update
+            sudo apt-get install -y --no-install-recommends binutils
+            objdump --version
+            objcopy --version
+          } > build/layout-par/summary-binutils.log 2>&1
+
+      - name: Require matching provenance, selected section bytes and normalized functions
+        timeout-minutes: 3
         run: |
           python3 -I - <<'PY'
           import hashlib
@@ -154,7 +166,7 @@ jobs:
           if ledger_hash != json.loads((ledger / 'drivers.json').read_text())['par']['sha256']:
               raise ValueError('downloaded ledger driver hash differs')
           reference = json.loads((profiles / 'ecma262/provenance.json').read_text())
-          driver_hashes = {}
+          driver_identities = {}
           for page in harness.PAGES:
               folder = profiles / page
               left = json.loads((folder / 'provenance.json').read_text())
@@ -164,16 +176,20 @@ jobs:
               recorded = json.loads((folder / 'drivers.json').read_text())['seq']['sha256']
               if actual != recorded:
                   raise ValueError(('downloaded sequential driver hash differs', page))
-              driver_hashes[page] = actual
-          common_driver = harness.validate_page_drivers(driver_hashes)
+              identity = harness.extract_driver_identity(folder / 'layout-seq', folder)
+              if identity['file_sha256'] != actual:
+                  raise ValueError(('driver changed between integrity check and extraction', page))
+              driver_identities[page] = identity
+          common = harness.validate_page_drivers(driver_identities)
           out.mkdir(parents=True, exist_ok=True)
+          (out / 'driver-identities.json').write_text(json.dumps(driver_identities, indent=2) + '\n')
           for page in harness.PAGES:
               for name in (page + '.callgrind', page + '.raw', page + '-zero.callgrind', page + '-zero.raw'):
                   shutil.copyfile(profiles / page / name, out / name)
           (out / 'join-provenance.json').write_text(json.dumps({
               'status': 'matched', 'workflow_revision': reference['workflow_revision'],
               'compiler_sha256': reference['compiler_sha256'], 'whitefoot_pin': reference['whitefoot_pin'],
-              'sequential_driver_sha256': common_driver, 'page_driver_sha256': driver_hashes
+              'driver_identities': driver_identities, **common
           }, indent=2) + '\n')
           PY
 

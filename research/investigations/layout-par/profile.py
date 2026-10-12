@@ -24,6 +24,7 @@ OUT = ROOT / 'build/layout-par'
 DATA = Path('build/research/concurrency')
 ENTRY = 'wf_layout.lay_out'
 PAGES = ('ecma262', 'html5', 'apollo11')
+SECTIONS = ('.text', '.rodata', '.data')
 BUDGET_SECONDS = {'profile': 25 * 60, 'ledger': 42 * 60}
 RESERVE_SECONDS = 60
 
@@ -48,35 +49,52 @@ def sheets(page):
     raise ValueError(('unknown page', page))
 
 
+def load_accounting():
+    if 'layout_inventory' not in sys.modules:
+        spec = importlib.util.spec_from_file_location('layout_inventory',
+                                                    Path(__file__).with_name('inventory.py'))
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+    return sys.modules['layout_inventory']
+
+
 def parse_direct_calls(text, entry=ENTRY, symbol_address=None):
     """Require a real x86 direct call to the exported entry's exact address.
 
     Input is objdump -d --no-show-raw-insn, not a symbol listing. Header,
     comment, indirect-call, offset-target and non-call text cannot pass.
     """
+    normalize = load_accounting().normalize_llvm_symbol
+    entry = normalize(entry)
     header = re.compile(r'^\s*([0-9a-fA-F]+) <([^<>]+)>:\s*$')
     instruction = re.compile(r'^\s*([0-9a-fA-F]+):\s+(callq?)\s+([0-9a-fA-F]+) <([^<>]+)>\s*$')
     definitions = [int(match[1], 16) for line in text.splitlines()
-                   if (match := header.fullmatch(line)) and match[2] == entry]
+                   if (match := header.fullmatch(line)) and normalize(match[2]) == entry]
     if len(definitions) != 1:
         raise ValueError(('objdump must contain exactly one exported entry definition', entry, definitions))
     address = definitions[0]
     if symbol_address is not None and address != symbol_address:
         raise ValueError(('objdump entry address differs from nm', entry, address, symbol_address))
     caller = None
+    caller_raw = None
+    header_raw = None
     callsites = []
     for line_number, line in enumerate(text.splitlines(), 1):
         if match := header.fullmatch(line):
-            caller = match[2]
+            caller_raw = match[2]
+            caller = normalize(caller_raw)
+            header_raw = line
             continue
         match = instruction.fullmatch(line)
-        if not match or match[4] != entry or int(match[3], 16) != address:
+        if not match or normalize(match[4]) != entry or int(match[3], 16) != address:
             continue
         if caller is None or caller == entry or caller.startswith(entry + '.body'):
             continue
-        callsites.append(dict(caller=caller, line=line_number,
+        callsites.append(dict(caller=caller, caller_raw=caller_raw, header_raw=header_raw,
+                              line=line_number,
                               instruction_address=match[1], mnemonic=match[2],
-                              target_address=match[3], target=entry, raw=line))
+                              target_address=match[3], target=entry, target_raw=match[4], raw=line))
     if not callsites:
         raise ValueError(('no direct call instruction to the exported layout entry', entry))
     return callsites
@@ -97,16 +115,138 @@ def validate_join(left, right, revision, run_id, include_inputs=False, expected_
         raise ValueError(('artifact page differs or is missing', expected_page, left.get('page')))
 
 
-def validate_page_drivers(hashes):
-    """Only one identical SHA-256 across all three page jobs may be joined."""
-    if set(hashes) != set(PAGES):
-        raise ValueError(('page driver inventory must contain exactly the three pages', sorted(hashes)))
-    if any(not isinstance(value, str) or re.fullmatch(r'[0-9a-f]{64}', value) is None
-           for value in hashes.values()):
-        raise ValueError('page driver hash missing or not a SHA-256 digest')
-    if len(set(hashes.values())) != 1:
-        raise ValueError(('sequential page drivers differ', hashes))
-    return hashes[PAGES[0]]
+def parse_section_sizes(text):
+    row = re.compile(r'^\s*\d+\s+(\S+)\s+([0-9a-fA-F]+)\s+[0-9a-fA-F]+\s+[0-9a-fA-F]+\s+[0-9a-fA-F]+\s+2\*\*\d+\s*$')
+    sizes = {}
+    for line in text.splitlines():
+        match = row.fullmatch(line)
+        if match and match[1] in SECTIONS:
+            if match[1] in sizes:
+                raise ValueError(('duplicate required section header', match[1]))
+            sizes[match[1]] = int(match[2], 16)
+    if set(sizes) != set(SECTIONS):
+        raise ValueError(('missing required section headers', sorted(sizes)))
+    return sizes
+
+
+def parse_function_symbols(text):
+    """Read every explicit ELF F entry, preserving duplicates and raw names."""
+    normalize = load_accounting().normalize_llvm_symbol
+    prefix = re.compile(r'^\s*([0-9a-fA-F]+)\s(.{7})\s+(.*)$')
+    functions = []
+    for line in text.splitlines():
+        match = prefix.fullmatch(line)
+        if not match:
+            if re.match(r'^\s*[0-9a-fA-F]+\s+.*\bF\b', line):
+                raise ValueError(('malformed function symbol flags', line))
+            continue
+        if match[2][6] != 'F':
+            continue
+        fields = match[3].split()
+        if len(fields) == 4 and fields[2] in {'.hidden', '.protected', '.internal'}:
+            fields.pop(2)
+        if len(fields) != 3 or re.fullmatch(r'[0-9a-fA-F]+', fields[1]) is None:
+            raise ValueError(('malformed function symbol size/name', line))
+        raw = fields[2]
+        functions.append(dict(raw=raw, normalized=normalize(raw), size=int(fields[1], 16), type='F'))
+    if not functions:
+        raise ValueError('function symbol table is empty or absent')
+    return functions
+
+
+def normalized_function_table(functions):
+    return sorted((dict(name=entry['normalized'], size=entry['size']) for entry in functions),
+                  key=lambda entry: (entry['name'], entry['size']))
+
+
+def llvm_variants(functions):
+    return [dict(raw=raw, normalized=normalized) for raw, normalized in
+            sorted({(entry['raw'], entry['normalized']) for entry in functions
+                    if entry['raw'] != entry['normalized']})]
+
+
+def validate_page_drivers(identities):
+    """Join equal selected sections and normalized function tables, not files."""
+    if set(identities) != set(PAGES):
+        raise ValueError(('page driver inventory must contain exactly the three pages', sorted(identities)))
+    normalize = load_accounting().normalize_llvm_symbol
+    reference = identities[PAGES[0]]
+    for page, identity in identities.items():
+        if re.fullmatch(r'[0-9a-f]{64}', identity.get('file_sha256', '')) is None:
+            raise ValueError(('invalid whole-file integrity hash', page))
+        sections = identity.get('sections', {})
+        if set(sections) != set(SECTIONS):
+            raise ValueError(('incomplete section inventory', page))
+        for section, data in sections.items():
+            if re.fullmatch(r'[0-9a-f]{64}', data.get('sha256', '')) is None or type(data.get('size')) is not int or data['size'] < 0:
+                raise ValueError(('invalid section hash or size', page, section))
+        functions = identity.get('functions', [])
+        if not functions:
+            raise ValueError(('missing function table', page))
+        for function in functions:
+            if not function.get('raw') or function.get('normalized') != normalize(function['raw']) or function.get('type') != 'F' or type(function.get('size')) is not int or function['size'] < 0:
+                raise ValueError(('invalid raw/normalized function record', page))
+        table = normalized_function_table(functions)
+        variants = llvm_variants(functions)
+        if identity.get('normalized_function_table') != table or identity.get('llvm_suffix_variants') != variants:
+            raise ValueError(('function identity or LLVM audit does not match raw symbols', page))
+        if sections != reference['sections'] or table != reference['normalized_function_table']:
+            raise ValueError(('selected driver sections or normalized functions differ', page))
+    return dict(common_sections=reference['sections'],
+                common_function_table=reference['normalized_function_table'],
+                whole_file_hash_variation=len({entry['file_sha256'] for entry in identities.values()}) > 1,
+                llvm_symbol_variations={page: entry['llvm_suffix_variants'] for page, entry in identities.items()})
+
+
+def identity_tool(folder, label, command):
+    if os.environ.get('GITHUB_ACTIONS') != 'true':
+        raise ValueError('driver extraction runs only in CI')
+    started = time.monotonic()
+    status, expired, problem = None, False, None
+    with (folder / (label + '.raw')).open('w') as stdout, (folder / (label + '.stderr')).open('w') as stderr:
+        try:
+            status = subprocess.run(command, stdout=stdout, stderr=stderr, timeout=30).returncode
+        except subprocess.TimeoutExpired:
+            expired = True
+        except OSError as error:
+            problem = str(error)
+    record = dict(label=label, command=list(map(str, command)), exit=status,
+                  timeout=expired, spawn_error=problem, elapsed_seconds=time.monotonic() - started)
+    with (folder / 'driver-identity-processes.jsonl').open('a') as output:
+        output.write(json.dumps(record) + '\n')
+    if expired or problem is not None or status != 0:
+        raise RuntimeError(('driver identity tool failed', record))
+
+
+def extract_driver_identity(driver, folder):
+    """Inspect copied artifact bytes with an explicit disposable objcopy output."""
+    before = digest(driver)
+    try:
+        identity_tool(folder, 'driver-section-headers', ['objdump', '-h', str(driver)])
+        sizes = parse_section_sizes((folder / 'driver-section-headers.raw').read_text())
+        identity_tool(folder, 'driver-function-symbols', ['objdump', '-t', str(driver)])
+        functions = parse_function_symbols((folder / 'driver-function-symbols.raw').read_text())
+        dumps = {section: folder / ('driver' + section + '.bin') for section in SECTIONS}
+        if any(path.exists() for path in dumps.values()):
+            raise ValueError('section dumps from a prior extraction are not valid new evidence')
+        command = ['objcopy', *['--dump-section=' + section + '=' + str(path)
+                               for section, path in dumps.items()], str(driver), '/dev/null']
+        identity_tool(folder, 'driver-section-bytes', command)
+        sections = {}
+        for section, path in dumps.items():
+            if not path.is_file() or path.stat().st_size != sizes[section]:
+                raise ValueError(('section dump missing or size differs from header', section))
+            sections[section] = dict(sha256=digest(path), size=sizes[section])
+        identity = dict(file_sha256=before, sections=sections, functions=functions,
+                        normalized_function_table=normalized_function_table(functions),
+                        llvm_suffix_variants=llvm_variants(functions))
+        write_json(folder / 'driver-identity.json', identity)
+        return identity
+    finally:
+        after = digest(driver)
+        write_json(folder / 'driver-extraction-integrity.json', dict(before_sha256=before, after_sha256=after))
+        if after != before:
+            raise ValueError('driver bytes changed during read-only identity extraction')
 
 
 def dry_run():
@@ -119,6 +259,11 @@ def dry_run():
     observed = parse_direct_calls(good, symbol_address=0x401000)
     if len(observed) != 2 or observed[0]['caller'] != 'wf_oracle.layout.drive.resume':
         raise AssertionError('valid direct call instructions were not recognized')
+    suffixed = good.replace('wf_layout.lay_out', 'wf_layout.lay_out.llvm.14052526461537462625').replace(
+        'wf_oracle.layout.drive.resume', 'wf_oracle.layout.drive.llvm.22.resume')
+    normalized_calls = parse_direct_calls(suffixed, symbol_address=0x401000)
+    if normalized_calls[0]['caller'] != observed[0]['caller'] or normalized_calls[0]['target'] != ENTRY or normalized_calls[0]['target_raw'] == ENTRY:
+        raise AssertionError('LLVM-only direct-call spelling was not joined with raw evidence')
     variants = [
         good.replace('  400110: call 401000 <wf_layout.lay_out>\n', '').replace('  400115: callq 401000 <wf_layout.lay_out>\n', ''),
         good.replace('call ', 'jmp ').replace('callq ', 'jmp '),
@@ -186,13 +331,77 @@ def dry_run():
             rejected += 1
         else:
             raise AssertionError('accepted a mislabeled or missing artifact page')
-    drivers = {page: 'a' * 64 for page in PAGES}
-    if validate_page_drivers(drivers) != 'a' * 64:
-        raise AssertionError('identical three-page drivers did not join')
-    wrong_drivers = [{**drivers, 'html5': 'b' * 64},
-                     {page: value for page, value in drivers.items() if page != 'html5'},
-                     {**drivers, 'html5': ''}, {**drivers, 'extra': 'a' * 64},
-                     {page: 'not-a-sha256' for page in PAGES}]
+    headers = ('  1 .text 00000003 00000100 00000100 00000100 2**4\n'
+               '  2 .rodata 00000002 00000200 00000200 00000200 2**3\n'
+               '  3 .data 00000001 00000300 00000300 00000300 2**3\n')
+    if parse_section_sizes(headers) != {'.text': 3, '.rodata': 2, '.data': 1}:
+        raise AssertionError('valid section header sizes were not read')
+    symbols = ('00000100 l     F .text 00000010 wf__floor_stack_low.llvm.11\n'
+               '00000110  w    F .text 00000010 wf__floor_stack_low.llvm.12\n'
+               '00000120 g     F .text 00000008 .hidden wf_layout.lay_out\n'
+               '00000300  w    O .data 00000001 weak_object\n'
+               '00000130 g       .text 00000000 code_label\n')
+    functions = parse_function_symbols(symbols)
+    if len(functions) != 3 or functions[0]['normalized'] != 'wf__floor_stack_low' or functions[0]['size'] != 16 or functions[2]['raw'] != ENTRY:
+        raise AssertionError('function flags, size or LLVM normalization were not read')
+    for wrong in (headers.replace('  3 .data 00000001 00000300 00000300 00000300 2**3\n', ''),
+                  headers + headers.splitlines(keepends=True)[0]):
+        try:
+            parse_section_sizes(wrong)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('accepted missing or duplicate required section header')
+    for wrong in ('', symbols.replace('F .text', 'O .text'), symbols.replace('00000010', 'not-a-size')):
+        try:
+            parse_function_symbols(wrong)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('accepted absent or malformed function symbols')
+    sections = {name: dict(sha256=hashlib.sha256(data).hexdigest(), size=len(data))
+                for name, data in (('.text', b'tex'), ('.rodata', b'ro'), ('.data', b'd'))}
+    drivers = {}
+    for index, page in enumerate(PAGES):
+        rows = parse_function_symbols(symbols.replace('.llvm.11', f'.llvm.{100 + index}').replace('.llvm.12', f'.llvm.{200 + index}'))
+        drivers[page] = dict(file_sha256='abc'[index] * 64, sections=sections,
+                             functions=rows, normalized_function_table=normalized_function_table(rows),
+                             llvm_suffix_variants=llvm_variants(rows))
+    joined = validate_page_drivers(drivers)
+    if not joined['whole_file_hash_variation'] or len(joined['common_function_table']) != 3:
+        raise AssertionError('LLVM-only names and different file hashes did not join with multiplicity')
+    wrong_drivers = [{page: value for page, value in drivers.items() if page != 'html5'},
+                     {**drivers, 'extra': drivers['html5']}]
+    def broken():
+        return json.loads(json.dumps(drivers))
+    for name in SECTIONS:
+        wrong = broken()
+        wrong['html5']['sections'][name]['sha256'] = 'f' * 64
+        wrong_drivers.append(wrong)
+    for field in ('functions', 'normalized_function_table'):
+        wrong = broken()
+        del wrong['html5'][field]
+        wrong_drivers.append(wrong)
+    wrong = broken()
+    del wrong['html5']['sections']['.data']
+    wrong_drivers.append(wrong)
+    wrong = broken()
+    wrong['html5']['file_sha256'] = ''
+    wrong_drivers.append(wrong)
+    for change in ('real-name', 'size', 'multiplicity', 'nonnumeric-llvm'):
+        wrong = broken()
+        rows = wrong['html5']['functions']
+        if change == 'real-name':
+            rows[0]['raw'] = rows[0]['normalized'] = 'different_function'
+        elif change == 'size':
+            rows[0]['size'] += 1
+        elif change == 'multiplicity':
+            rows.pop(0)
+        else:
+            rows[0]['raw'] = rows[0]['normalized'] = 'wf__floor_stack_low.llvm.notnumeric'
+        wrong['html5']['normalized_function_table'] = normalized_function_table(rows)
+        wrong['html5']['llvm_suffix_variants'] = llvm_variants(rows)
+        wrong_drivers.append(wrong)
     for wrong in wrong_drivers:
         try:
             validate_page_drivers(wrong)
@@ -208,15 +417,12 @@ class Investigation:
     def __init__(self, mode, page=None):
         self.mode = mode
         self.page = page
+        self.collection_entry = ENTRY
         self.started = time.monotonic()
         self.budget = min(BUDGET_SECONDS[mode], float(os.environ['LAYOUT_PAR_DEADLINE']) - time.time())
         if self.budget <= RESERVE_SECONDS:
             raise ValueError(f'{mode} job deadline leaves no harness budget')
-        spec = importlib.util.spec_from_file_location('layout_inventory',
-                                                    Path(__file__).with_name('inventory.py'))
-        self.accounting = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = self.accounting
-        spec.loader.exec_module(self.accounting)
+        self.accounting = load_accounting()
 
     def remaining(self):
         return self.budget - (time.monotonic() - self.started)
@@ -381,20 +587,26 @@ class Investigation:
     def entry_check(self):
         self.run('symbols-seq', ['nm', '--defined-only', str(OUT / 'layout-seq')], 15)
         symbols = [line.split() for line in (OUT / 'symbols-seq.raw').read_text().splitlines()
-                   if line.split() and line.split()[-1] == ENTRY]
+                   if line.split() and self.accounting.normalize_llvm_symbol(line.split()[-1]) == ENTRY]
         if len(symbols) != 1 or len(symbols[0]) != 3 or symbols[0][1] not in {'t', 'T'}:
             raise ValueError(('exact layout entry missing or ambiguous; do not change compiler or source',
                               ENTRY, symbols))
         address = int(symbols[0][0], 16)
+        self.collection_entry = symbols[0][-1]
         self.run('disassembly-seq', ['objdump', '-d', '--no-show-raw-insn', str(OUT / 'layout-seq')], 60)
         callsites = parse_direct_calls((OUT / 'disassembly-seq.raw').read_text(), symbol_address=address)
-        write_json(OUT / 'direct-calls.json', dict(entry=ENTRY, symbol_address=hex(address), callsites=callsites))
+        write_json(OUT / 'direct-calls.json', dict(entry=ENTRY, entry_raw=self.collection_entry,
+                                                nm_raw=symbols[0], symbol_address=hex(address), callsites=callsites))
+        provenance = json.loads((OUT / 'provenance.json').read_text())
+        provenance['collection_entry'] = self.collection_entry
+        provenance['collection_entry_normalized'] = ENTRY
+        write_json(OUT / 'provenance.json', provenance)
 
     def profile(self, page, count, cap, label=None):
         label = label or page
         driver = str((OUT / 'layout-seq').relative_to(ROOT))
         command = ['valgrind', '--tool=callgrind', '--collect-atstart=no',
-                   '--toggle-collect=' + ENTRY,
+                   '--toggle-collect=' + self.collection_entry,
                    '--callgrind-out-file=' + str((OUT / (label + '.callgrind')).relative_to(ROOT)),
                    driver, 'layout', str(count), str(DATA / (page + '.html')),
                    'renderer/style/ua.css', *sheets(page)]

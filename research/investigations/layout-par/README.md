@@ -121,7 +121,10 @@ comments, data, indirect calls, target offsets, other callees and tail jumps
 cannot satisfy this check. Calls from the entry itself or its body variants
 are excluded. The artifact retains full disassembly and structured callsite
 records with caller, disassembly line, instruction and target addresses and
-the raw instruction. If no such callsite exists, profiling stops before the
+the raw instruction. Numeric `.llvm.<digits>` segments are normalized in the
+entry's `nm` name and the disassembly's caller, header and call target; raw
+spellings remain in the evidence and collection uses the actual emitted entry
+name. Nonnumeric LLVM spellings remain distinct. If no such callsite exists, profiling stops before the
 zero control; no source or compiler change is made to invent one. Static
 callsite presence still does not prove dynamic execution; the positive pilot
 and its exact root accounting remain required.
@@ -174,9 +177,31 @@ Before joining, it requires equal actual source and workflow revisions, run
 identity, Whitefoot pin, compiler executable hash, release manifest, renderer
 source hashes and methodology hashes. Page identities must match their
 artifact names, and all three pages must record identical input and font
-hashes. It verifies each downloaded driver against its recorded hash, then
-requires all three sequential driver SHA-256 hashes to be exactly identical.
-There is no fallback or skipped page when hashes differ. Only after those
+hashes. It still verifies each downloaded whole file against that artifact's
+recorded SHA-256; those integrity checks do not require hashes from different
+page builds to match. Cross-page equivalence requires identical SHA-256 hashes
+and sizes for all three `.text`, `.rodata` and `.data` sections, plus identical
+normalized function names and sizes with duplicate entries preserved. The
+normalization removes only numeric `.llvm.<digits>` segments at a segment
+boundary, preserving every other spelling. Real name or size differences,
+missing sections and changed section bytes stop the join; no page is skipped.
+
+The summary job installs binutils explicitly and retains `objdump -h` section
+headers, the complete `objdump -t` symbol table and extracted section bytes in
+each page directory. Only explicit `F` function entries form the function
+table; a code-section label or weak object is not a function. `objcopy
+--dump-section` uses an explicit `/dev/null` output so it does not rewrite the
+driver. Every dump must exist and match its section header's size, and the
+whole-file hash is checked before and after extraction. These formats follow
+the [GNU objdump documentation](https://sourceware.org/binutils/docs/binutils/objdump.html)
+and [GNU objcopy documentation](https://sourceware.org/binutils/docs/binutils/objcopy.html).
+
+`driver-identities.json` and `join-provenance.json` retain whole-file hashes,
+section hashes and sizes, raw and normalized function records, the common
+function table and observed LLVM suffix spellings. The summary reports
+observed whole-file hash and suffix variation. Matching these selected sections
+and tables does not establish complete ELF identity or prove that suffixes are
+the only difference. Only after the integrity and equivalence
 checks does it copy each page's `PAGE.callgrind`, `PAGE.raw`,
 `PAGE-zero.callgrind` and `PAGE-zero.raw` into flat `build/layout-par/` for
 accounting. The summary artifact retains those outputs, all three complete
@@ -203,7 +228,9 @@ coverage. Profile mode requires `--page` (ecma262, html5 or apollo11); ledger
 mode accepts no page. The dependent summary job's `summarize` command reads
 all three page dumps and raw protocols plus all three page-specific zero
 controls, then writes the source and ledger
-inventory. Its Callgrind parser resolves compressed function identifiers and
+inventory. The shared numeric LLVM-segment normalizer is used by source,
+Callgrind, ledger and disassembly symbol joins, with raw spellings retained in
+the symbol audits. Its Callgrind parser resolves compressed function identifiers and
 uses the `Ir` event column. Regular cost rows are exclusive; the cost row
 following a `calls=` marker is an inclusive edge and is excluded from the
 exclusive reconciliation. The marker is used only to distinguish row kinds;
@@ -251,8 +278,20 @@ command ran a compiler, build, renderer or test suite.
 A separate fresh `gpt-6.1-sol` agent at high effort reviewed all four changed
 files read-only against base `ecf972e`, the project checklist and applicable
 pipeline/layout decisions, and reported no static findings within scope.
-Actual matrix jobs, identical driver bytes, all three page profiles and the
-complete CSV inventory remain pending CI.
+That review covered the original whole-file equality criterion, which the
+driver-identity repair below supersedes. The new extraction and normalization
+controls were checked by the primary agent's allowed local Python `-I -B`
+handmade dry runs: `profile.py --dry-run` exited 0 and rejected 12 corrupt
+callsite artifacts, 24 corrupt joins and 13 corrupt page-driver fixtures;
+`inventory.py --dry-run` exited 0 and rejected 19 corrupt artifacts. Neither
+command ran a compiler, build, renderer or binutils extraction.
+
+A separate fresh `gpt-6.1-sol` agent at high effort reviewed all four changed
+files read-only against base `30eb22b`, the project checklist and applicable
+pipeline/layout decisions, and reported no static findings within scope.
+Actual binutils extraction, the selected-section/normalized-function-table
+join, observed raw suffix variation and the ranked CSV inventory remain
+pending CI.
 
 ## Results
 
@@ -271,6 +310,17 @@ remaining-page budget gate stopped because its 941-second caps exceeded the
 independently verified from run logs. They motivate one independent page job
 per profile rather than reducing work or weakening the accounting controls;
 they establish no renderer performance conclusion or complete inventory.
+
+The owner reported that [the page-matrix inventory run](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38195975328)
+passed the ledger and all three page profiles, then failed the whole-file
+hash-equality join. The owner's inspection found identical `.text`, `.rodata`
+and `.data` bytes and matching function names and sizes after stripping
+numeric LLVM suffixes; raw names varied, including
+`wf__floor_stack_low.llvm.14052526461537462625`. These observations have not
+been independently verified from run artifacts in this session. They motivate
+the specified section-and-function-table criterion while retaining every
+artifact's whole-file integrity check; they establish no broader claim of
+ELF identity or renderer performance.
 
 Pending CI: no instruction costs, regenerated ledger counts or dependency
 classifications are claimed yet. Archive the complete Actions

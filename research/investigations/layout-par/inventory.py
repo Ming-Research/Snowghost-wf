@@ -8,6 +8,7 @@ raw artifacts without rewriting them. --dry-run uses only handmade fixtures.
 import argparse
 import csv
 from collections import defaultdict
+import json
 from pathlib import Path
 import re
 import sys
@@ -319,17 +320,101 @@ def join_loops(loops, ledger):
     return joined
 
 
+def normalize_llvm_symbol(symbol):
+    """Remove numeric LLVM promotion segments; retain all other spelling."""
+    return re.sub(r"\.llvm\.[0-9]+(?=\.|\$|'|$)", "", symbol)
+
+
 def normalize_symbol(symbol):
     """Pinned source symbols: wf_NAME, $instance$..., .body[.llvm.N]."""
+    symbol = normalize_llvm_symbol(symbol)
     if not symbol.startswith("wf_"):
         return None
     name = symbol[3:]
     if name.startswith("_par_seq_"):
         name = name[len("_par_seq_"):]
     name = re.sub(r"(?:'\d+)+$", "", name)
-    name = re.sub(r"\.llvm\.\d+$", "", name)
     name = re.sub(r"\.body$", "", name)
     return name.split("$instance$", 1)[0]
+
+
+def symbol_audit(page, profile, own, edges, source_names):
+    rows = []
+    for raw in sorted(set(own) | {symbol for pair in edges for symbol in pair}):
+        source = normalize_symbol(raw)
+        rows.append({"page": page, "profile": profile, "raw_symbol": raw,
+                     "llvm_normalized_symbol": normalize_llvm_symbol(raw),
+                     "source_function": source if source in source_names else ""})
+    return rows
+
+
+def ledger_symbol_audit(text, source_names):
+    rows = []
+    pattern = re.compile(r"^PAR split\s+(\S+)\s+loop at (\d+(?:\.\d+)*)\s+(.+)$")
+    for number, raw_line in enumerate(text.splitlines(), 1):
+        if not raw_line.startswith("PAR split"):
+            continue
+        match = pattern.fullmatch(raw_line)
+        if match is None:
+            raise Invalid(f"ledger:{number}: malformed split actualization row")
+        raw, node_path, _ = match.groups()
+        normalized = normalize_llvm_symbol(raw)
+        source = normalize_symbol(normalized if normalized.startswith("wf_") else "wf_" + normalized)
+        rows.append({"raw_symbol": raw, "llvm_normalized_symbol": normalized,
+                     "source_function": source if source in source_names else "",
+                     "node_path": node_path, "raw_line": raw_line})
+    return rows
+
+
+def driver_observations(path):
+    """Check the producer's driver join evidence before rendering observations."""
+    try:
+        provenance = json.loads(path.read_text())
+        identities = provenance["driver_identities"]
+        common_sections = provenance["common_sections"]
+        common_table = provenance["common_function_table"]
+        if set(identities) != set(PAGES) or set(common_sections) != {".text", ".rodata", ".data"}:
+            raise Invalid(f"{path}: driver identities or section inventory is incomplete")
+        for section in common_sections.values():
+            if not re.fullmatch(r"[0-9a-f]{64}", section["sha256"]) or type(section["size"]) is not int or section["size"] < 0:
+                raise Invalid(f"{path}: invalid section hash or size")
+        hashes, variants = {}, {}
+        for page in PAGES:
+            identity = identities[page]
+            hashes[page] = identity["file_sha256"]
+            if not re.fullmatch(r"[0-9a-f]{64}", hashes[page]):
+                raise Invalid(f"{path}: invalid {page} whole-file hash")
+            if identity["sections"] != common_sections:
+                raise Invalid(f"{path}: {page} driver sections differ")
+            functions = identity["functions"]
+            for function in functions:
+                if function["normalized"] != normalize_llvm_symbol(function["raw"]) or type(function["size"]) is not int or function["size"] < 0:
+                    raise Invalid(f"{path}: {page} function normalization or size is invalid")
+            table = sorted(({"name": function["normalized"], "size": function["size"]} for function in functions),
+                           key=lambda entry: (entry["name"], entry["size"]))
+            if identity["normalized_function_table"] != table or common_table != table:
+                raise Invalid(f"{path}: {page} normalized function names or sizes differ")
+            variants[page] = [{"raw": raw, "normalized": normalized} for raw, normalized in sorted({
+                (function["raw"], function["normalized"]) for function in functions
+                if function["raw"] != function["normalized"]})]
+            if identity["llvm_suffix_variants"] != variants[page]:
+                raise Invalid(f"{path}: {page} LLVM suffix audit differs from raw symbols")
+        varied = len(set(hashes.values())) > 1
+        if provenance["whole_file_hash_variation"] is not varied or provenance["llvm_symbol_variations"] != variants:
+            raise Invalid(f"{path}: driver variation observation differs from evidence")
+    except (KeyError, TypeError, json.JSONDecodeError) as error:
+        raise Invalid(f"{path}: incomplete or malformed driver join provenance") from error
+    examples = sorted({(entry["raw"], entry["normalized"]) for entries in variants.values() for entry in entries})
+    lines = ["## Driver join observations", "",
+             f"The three page drivers have {len(set(hashes.values()))} distinct whole-file SHA-256 hashes "
+             f"({'variation observed' if varied else 'all equal'}). The recorded .text, .rodata and .data hashes and sizes match, "
+             "and their normalized function names and sizes match with duplicates preserved.", "",
+             f"Observed numeric LLVM suffix variants: {sum(len(entries) for entries in variants.values())} page-symbol records "
+             f"({len(examples)} distinct raw-to-normalized pairs). Raw driver evidence remains in join-provenance.json; "
+             "matching measured sections and function tables does not establish whole-file identity or prove these suffixes are the only difference.", ""]
+    lines.extend(f"- `{raw}` → `{normalized}`" for raw, normalized in examples[:10])
+    lines.append("")
+    return lines
 
 
 def aggregate_profile(own, edges, source_names):
@@ -390,9 +475,11 @@ def summarize(root, ledger_path, out):
     functions, loops, joined = inventory(root, ledger_path, out)
     names = {function["function"] for function in functions}
     profiles = {}
+    audit = []
     for page in PAGES:
         path = out / f"{page}.callgrind"
         total, own, edges = parse_callgrind(path)
+        audit.extend(symbol_audit(page, page, own, edges, names))
         self_cost, inclusive, symbols, unmatched = aggregate_profile(own, edges, names)
         if total <= 0 or inclusive.get("layout.lay_out", 0) <= 0:
             raise Invalid(f"{path}: layout.lay_out is unobserved/nonpositive or total is nonpositive")
@@ -405,10 +492,13 @@ def summarize(root, ledger_path, out):
         profiles[page] = (total, self_cost, inclusive, symbols, unmatched, raw, ranks)
     for page in PAGES:
         control = out / f"{page}-zero.callgrind"
-        zero, _, _ = parse_callgrind(control)
+        zero, own, edges = parse_callgrind(control)
+        audit.extend(symbol_audit(page, f"{page}-zero", own, edges, names))
         if zero != 0:
             raise Invalid(f"{control}: zero control recorded {zero} Ir")
         read_raw(out / f"{page}-zero.raw", 0)
+    observations = driver_observations(out / "join-provenance.json")
+    ledger_symbols = ledger_symbol_audit(ledger_path.read_text(), names)
 
     by_function = defaultdict(list)
     for row in joined:
@@ -443,6 +533,8 @@ def summarize(root, ledger_path, out):
     out.mkdir(parents=True, exist_ok=True)
     write_csv(out / "loops.csv", joined, LOOP_FIELDS)
     write_csv(out / "functions.csv", rows, function_fields)
+    write_csv(out / "symbol-map.csv", audit, ["page", "profile", "raw_symbol", "llvm_normalized_symbol", "source_function"])
+    write_csv(out / "ledger-symbols.csv", ledger_symbols, ["raw_symbol", "llvm_normalized_symbol", "source_function", "node_path", "raw_line"])
     summary = ["# Layout loop inventory", "", f"Source functions: {len(functions)}. Source loops: {len(loops)} "
                f"({sum(loop['kind'] == 'counted' for loop in loops)} counted; {sum(loop['kind'] == 'ordinary' for loop in loops)} ordinary).",
                f"Ledger verdict rows: {sum(row['verdict'] != 'uncovered' for row in joined)}. "
@@ -457,6 +549,10 @@ def summarize(root, ledger_path, out):
                "A compiler permission is not proof of runtime parallel execution; raw PAR split rows remain in the ledger artifact.", "",
                "Totals reconcile every exclusive event against each Callgrind totals footer. The profile's layout.lay_out inclusive Ir "
                "also equals its total, and all three page-specific zero-repetition controls have zero Ir. Call counts are not read as costs or reported.", ""]
+    summary += ["Numeric .llvm.N segments are removed only for symbol joins; all raw names remain in symbol-map.csv and ledger-symbols.csv. "
+                "Loop permission rows join by file and line, independently of symbol suffixes. Split rows join only to source function families: "
+                "their structural NodePaths cannot be joined to source loop file/line sites without further compiler evidence.", ""]
+    summary += observations
     for page, (total, own, inclusive, _, unmatched, raw, _) in profiles.items():
         summary += [f"## {page}", "", f"Ir: {total}; layout elements {raw[0]}, contexts {raw[1]}, paragraphs {raw[2]}, reps {raw[3]}. "
                     f"Observed source functions: {len(inclusive)}; unmatched exclusive Ir: {sum(cost or 0 for cost in unmatched.values())}.", "",
@@ -516,6 +612,21 @@ totals: 14 4
         _, inclusive, _, _ = aggregate_profile(own, edges, {"layout.lay_out", "layout.text.prepare"})
         assert inclusive == {"layout.lay_out": 14, "layout.text.prepare": 9}
         assert normalize_symbol("wf_layout.text.prepare$instance$7.body.llvm.1'2") == "layout.text.prepare"
+        assert normalize_llvm_symbol("runtime_helper.llvm.12.llvm.34") == "runtime_helper"
+        assert normalize_llvm_symbol("runtime_helper.llvm.56") == "runtime_helper"
+        assert normalize_llvm_symbol("runtime_helper.llvm.foo") == "runtime_helper.llvm.foo"
+        assert normalize_llvm_symbol("runtime_helper.llvm.123foo") == "runtime_helper.llvm.123foo"
+        assert normalize_llvm_symbol("runtime_other.llvm.56") != normalize_llvm_symbol("runtime_helper.llvm.12")
+        assert normalize_symbol("wf_layout.llvm.1.text.prepare$instance$7.llvm.2.body'2") == "layout.text.prepare"
+        audited = symbol_audit("ecma262", "ecma262", {"runtime_helper.llvm.12": 3,
+                              "wf_layout.llvm.1.lay_out.body.llvm.2": 5}, {}, {"layout.lay_out"})
+        assert audited[0]["raw_symbol"] == "runtime_helper.llvm.12" and audited[0]["source_function"] == ""
+        assert audited[0]["llvm_normalized_symbol"] == "runtime_helper"
+        assert audited[1]["source_function"] == "layout.lay_out"
+        split_line = "PAR split       layout.llvm.1.lay_out$instance$7.llvm.2  loop at 0.3.9  split independent map over 1 captured binding"
+        split_audit = ledger_symbol_audit(split_line, {"layout.lay_out"})
+        assert split_audit[0]["raw_line"] == split_line and split_audit[0]["node_path"] == "0.3.9"
+        assert split_audit[0]["source_function"] == "layout.lay_out"
         default_positions = "events: Ir Dr\nfn=wf_layout.lay_out\n1 4\n+1\ntotals: 4 0\n"
         path.write_text(default_positions)
         assert parse_callgrind(path) == (4, {"wf_layout.lay_out": 4}, {})
@@ -599,12 +710,43 @@ fn example() -> result: unit pure {
         out.mkdir()
         ledger_path = out / "ledger.log"
         ledger_path.write_text("PAR loop        layout/test.wf:2  loop  denied      condition 1: fixture denial\n"
-                               "PAR loop        layout/text/test.wf:2  loop  permitted   eligible; no accumulator\n")
+                               "PAR loop        layout/text/test.wf:2  loop  permitted   eligible; no accumulator\n" + split_line + "\n")
         for page in PAGES:
             (out / f"{page}.callgrind").write_text(good)
             (out / f"{page}.raw").write_text("layout elements 2 contexts 1 paragraphs 1 reps 1\n")
             (out / f"{page}-zero.callgrind").write_text(zero)
             (out / f"{page}-zero.raw").write_text("layout elements 2 contexts 0 paragraphs 0 reps 0\n")
+        sections = {name: {"sha256": "a" * 64, "size": 20} for name in (".text", ".rodata", ".data")}
+        identities = {}
+        for number, page in enumerate(PAGES, 1):
+            functions = [{"raw": f"wf_layout.llvm.{number}.lay_out.body.llvm.{number + 10}",
+                          "normalized": "wf_layout.lay_out.body", "size": 42, "type": "F"},
+                         {"raw": f"runtime_helper.llvm.{number}", "normalized": "runtime_helper", "size": 8, "type": "F"},
+                         {"raw": f"runtime_helper.llvm.{number + 100}", "normalized": "runtime_helper", "size": 8, "type": "F"}]
+            table = sorted(({"name": function["normalized"], "size": function["size"]} for function in functions),
+                           key=lambda entry: (entry["name"], entry["size"]))
+            variants = [{"raw": raw, "normalized": normalized} for raw, normalized in sorted({
+                (function["raw"], function["normalized"]) for function in functions})]
+            identities[page] = {"file_sha256": str(number) * 64, "sections": sections, "functions": functions,
+                                "normalized_function_table": table, "llvm_suffix_variants": variants}
+        provenance = {"driver_identities": identities, "common_sections": sections, "common_function_table": table,
+                      "whole_file_hash_variation": True,
+                      "llvm_symbol_variations": {page: identity["llvm_suffix_variants"] for page, identity in identities.items()}}
+        provenance_path = out / "join-provenance.json"
+        provenance_path.write_text(json.dumps(provenance))
+        assert "variation observed" in "\n".join(driver_observations(provenance_path))
+        changed = json.loads(json.dumps(provenance))
+        changed["driver_identities"]["html5"]["functions"][0]["raw"] = "wf_layout.different.body.llvm.12"
+        changed["driver_identities"]["html5"]["functions"][0]["normalized"] = "wf_layout.different.body"
+        provenance_path.write_text(json.dumps(changed))
+        try:
+            driver_observations(provenance_path)
+        except Invalid as error:
+            assert "html5 normalized function names or sizes differ" in str(error)
+            checks += 1
+        else:
+            raise AssertionError("accepted a real function-name difference after LLVM normalization")
+        provenance_path.write_text(json.dumps(provenance))
         summarize(root, ledger_path, out)
         with (out / "functions.csv").open() as stream:
             reported = {row["function"]: row for row in csv.DictReader(stream)}
@@ -612,6 +754,15 @@ fn example() -> result: unit pure {
         assert reported["layout.lay_out"]["ecma262_self_share"] == "0.357142857"
         assert reported["layout.unobserved"]["ecma262_inclusive_Ir"] == ""
         assert "fixture denial" in (out / "summary.md").read_text()
+        assert "3 distinct whole-file SHA-256 hashes (variation observed)" in (out / "summary.md").read_text()
+        assert "Observed numeric LLVM suffix variants: 9 page-symbol records" in (out / "summary.md").read_text()
+        with (out / "symbol-map.csv").open() as stream:
+            symbol_rows = list(csv.DictReader(stream))
+        assert any(row["raw_symbol"] == "wf_layout.text.prepare$instance$7.body.llvm.1" and
+                   row["llvm_normalized_symbol"] == "wf_layout.text.prepare$instance$7.body" and
+                   row["source_function"] == "layout.text.prepare" for row in symbol_rows)
+        with (out / "ledger-symbols.csv").open() as stream:
+            assert list(csv.DictReader(stream))[0]["raw_line"] == split_line
         assert "all three page-specific zero-repetition controls have zero Ir" in (out / "summary.md").read_text()
         for missing in (out / "html5-zero.callgrind", out / "apollo11-zero.raw"):
             original = missing.read_text()
