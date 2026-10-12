@@ -84,9 +84,10 @@ $(BUILD)/static_atoms $(BUILD)/dom_selftest: compiler FORCE
 # until one does the check measures a stand-in: layout_oracle, the driver that
 # runs the whole pipeline (HTML parsing, style, text and layout, and edits
 # applied incrementally), built with --par and left unstripped as linked. CI
-# gates the Linux x86-64 build only. The choices of limit, binary, platform and
-# stripping are the design tree's binary-size node (design/scope/binary-size.md); the
-# measurements behind them are in research/investigations/binary-size/.
+# gates the Linux x86-64 build only. The choices of limit, binary, platform
+# and stripping are the design tree's binary-size node
+# (design/scope/binary-size.md); the measurements behind them are in
+# research/investigations/binary-size/.
 BINARY_SIZE_LIMIT := 10000000
 ENGINE_BINARY := $(BUILD)/layout_oracle_par
 

@@ -127,7 +127,7 @@ the check follows.
    one exists.
 2. MB or MiB. The proposal and the Makefile's constant are 10 000 000 bytes
    (10 MB read decimally). If the owner meant 10 MiB (10 485 760 bytes), the
-   limit is 4.6 % looser.
+   limit is 4.9 % looser (10 MB is 4.6 % below 10 MiB).
 3. Which platform. CI gates the Linux x86-64 build only. macOS arm64 or
    another target could be larger; the measurement above shows by how much.
 4. Stripped or not. The check measures the binary as linked. A shipped

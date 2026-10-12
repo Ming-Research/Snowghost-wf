@@ -63,9 +63,8 @@ speed decides only between candidates of equal dependencies.
   driver `layout_oracle` built with `--par`, a stand-in for the engine binary
   until one exists, stays within the owner's 10 MB, 10 000 000-byte, limit;
   the gate measures the Linux x86-64 build only) and `make design-lint`. It
-  needs git,
-  Python 3, curl, `/usr/bin/clang` and on Linux LLD of the LLVM major the
-  release names (`make toolchain` installs it, `make toolchain-check`
+  needs git, Python 3, curl, `/usr/bin/clang` and on Linux LLD of the LLVM
+  major the release names (`make toolchain` installs it, `make toolchain-check`
   checks it), and the `design/skill` and `whitefoot-kit` submodules;
   `make check WHITEFOOTC=<path>` uses another compiler.
 - The readiness check adds `make pin-ready`: `whitefoot.pin` names no
