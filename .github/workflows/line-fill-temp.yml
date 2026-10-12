@@ -1,0 +1,112 @@
+# Temporary, for research/line-fill: judges tab widths, hanging pre-wrap
+# spaces and text-align: justify against Chromium on the layout case pages,
+# and the tab-size column on the style cases page, on GitHub-hosted CI so no
+# renderer is compiled on the owner's machine. Removed before the branch is
+# ready.
+name: line-fill-temp
+
+on:
+  push:
+    branches: [research/line-fill]
+  workflow_dispatch:
+
+concurrency:
+  group: line-fill-temp-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  oracles:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Toolchain, fonts and the reference browser
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-mono fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          npm install --prefix build/reference playwright@1.56.1
+          build/reference/node_modules/.bin/playwright install --with-deps chromium
+          echo "PLAYWRIGHT=$GITHUB_WORKSPACE/build/reference/node_modules/playwright" >> "$GITHUB_ENV"
+          node -e 'console.log("CHROMIUM=" + require("./build/reference/node_modules/playwright").chromium.executablePath())' >> "$GITHUB_ENV"
+          make -s toolchain compiler oracle-fonts
+      - name: Chromium's boxes for the layout case pages and computed styles for the style cases
+        run: |
+          set -euo pipefail
+          "$CHROMIUM" --version
+          mkdir -p build/oracle/layout build/oracle/style
+          for page in tests/layout/*-cases.html; do
+            name=$(basename "$page" .html)
+            node tests/layout/layout_oracle.mjs dump "$page" > "build/oracle/layout/$name.chromium.tsv"
+          done
+          node tests/css/style_oracle.mjs dump tests/css/style-cases.html > build/oracle/style/cases.chromium.tsv
+      - name: Layout case pages against Chromium, sequential and --par
+        id: layout
+        run: |
+          set -euo pipefail
+          pages=$(cd tests/layout && ls *-cases.html | sed 's/\.html$//' | tr '\n' ' ')
+          sh research/investigations/layout/run.sh check $pages
+      - name: Every line-fill case agrees with Chromium
+        if: ${{ !cancelled() && steps.layout.conclusion != 'skipped' }}
+        run: |
+          set -euo pipefail
+          cat build/research/layout/line-fill-cases.compare.txt
+          for measure in 'block-level boxes' 'inline-level boxes' 'text nodes'; do
+            grep -E "^$measure: [0-9]+/[0-9]+ 100\.00% within 1px" build/research/layout/line-fill-cases.compare.txt
+          done
+      - name: Mismatched boxes and text fragments, Chromium beside Snowghost
+        if: ${{ !cancelled() && steps.layout.conclusion != 'skipped' }}
+        run: |
+          python3 -B - <<'PYEOF'
+          from pathlib import Path
+
+          def rects(field):
+              return [tuple(float(n) for n in r.split(',')) for r in field.split(' ')] if field else []
+
+          def load(path):
+              found = {}
+              for line in Path(path).read_text().splitlines():
+                  parts = line.split('\t')
+                  if parts[0] == 'E':
+                      found[('E', parts[1])] = (parts[2], parts[4], rects(parts[5]))
+                  elif parts[0] == 'T':
+                      found[('T', parts[1])] = (parts[2], 't', rects(parts[3]))
+              return found
+
+          for page in ('line-fill-cases', 'flow-cases'):
+              chromium = load(f'build/oracle/layout/{page}.chromium.tsv')
+              snowghost = load(f'build/research/layout/{page}.seq.tsv')
+              print(f'== {page}: mismatched widths or fragment counts (x,y,width,height)')
+              for key in sorted(set(chromium) | set(snowghost), key=lambda k: (k[0], int(k[1]))):
+                  c = chromium.get(key)
+                  s = snowghost.get(key)
+                  if c is None or s is None:
+                      print(key, 'chromium', c, 'snowghost', s)
+                      continue
+                  if c[1] == 'n':
+                      continue
+                  same = len(c[2]) == len(s[2]) and all(abs(a[2] - b[2]) <= 1 for a, b in zip(c[2], s[2]))
+                  if c[1] == 'b' and same:
+                      same = all(abs(a[3] - b[3]) <= 1 for a, b in zip(c[2], s[2]))
+                  if not same:
+                      print(key, c[0])
+                      print('  chromium ', c[2])
+                      print('  snowghost', s[2])
+          PYEOF
+      - name: Style cases against Chromium, including tab-size
+        if: ${{ !cancelled() }}
+        run: sh research/investigations/style/run.sh check cases
+      - name: Keep the dumps
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: line-fill-dumps
+          path: |
+            build/oracle/layout/*.tsv
+            build/oracle/style/cases.chromium.tsv
+            build/research/layout/*.tsv
+            build/research/layout/*.compare.txt
+            build/research/style/cases.seq.tsv
+          if-no-files-found: warn
