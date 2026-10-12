@@ -61,6 +61,7 @@ alias layout_changes = pkg::style::layout_changes;
 alias styles_changed = pkg::layout::styles_changed;
 alias structure_changed = pkg::layout::structure_changed;
 alias structure_splice = pkg::layout::structure_splice;
+alias structure_retain_source = pkg::layout::structure_retain_source;
 alias structure_counts = pkg::layout::structure_counts;
 alias place_boxes = pkg::layout::place_boxes;
 alias now = std::time::now;
@@ -1323,7 +1324,7 @@ fn structure_flags(started: Instant, page: &Page, done: &Restyled, removed: Opti
 }
 
 fn apply_structure_edit(page: &Page, fonts: &FontSet, kept: &Built, parent: NodeId, previous: Option<NodeId>, next: Option<NodeId>, inserted: Option<NodeId>, removed: Option<NodeId>, environment: Environment, viewport: Viewport, timing: Bool, compare: Bool, clock: &Clock, report: &Box<Slots<u8>>, number: u64) -> result: Result<StyleUpdate, u8> reads(fonts), writes(page), writes(kept), writes(clock), writes(report) {
-  doc "Times the stable-slot structural restyle, tries the private complete-block splice with the stable frontier, translating slots to dense flags only for structure_changed after an explicit fallback. The kept tables and pseudo identities retain every old reference, so both style arguments share the kept result. A full request takes the previous full traversal/state path.";
+  doc "Times the stable-slot structural restyle, tries the private complete-block splice with the stable frontier, then a separate source-retaining ordinary layout after an unpublished refusal. The original splice reason remains the path observation. Source-repair refusals and precommit errors translate slots to dense flags only for structure_changed. Reason 10 reconstructs the already published current source exactly once. The kept tables and pseudo identities retain every old reference, so both style arguments share the kept result. A full request takes the previous full traversal/state path.";
   let style_started = now(clock: clock);
   let done = match structure_after(started: style_started, page: page, kept: kept, environment: environment, parent: parent, previous: previous, next: next, inserted: inserted, removed: removed) {
     Ok(value: found) => {
@@ -1360,7 +1361,23 @@ fn apply_structure_edit(page: &Page, fonts: &FontSet, kept: &Built, parent: Node
   }
   put_structure_path(buffer: report, number: number, reason: splice_reason);
   let no = False();
-  let marked = if splice_reason == 0_u32 {
+  let retained = if splice_reason == 0_u32 {
+    give False();
+  } else if splice_reason == 10_u32 {
+    give False();
+  } else {
+    match structure_retain_source(layout: &kept^.layout, document: &page^.document, styles: &kept^.state.styles, traversal: &page^.traversal, atoms: &page^.atoms, changed: &done.changed.inner[0_u64..changed_count], parent: parent, before: next, inserted: inserted, removed: removed, references_stable: stable, fonts: fonts, picks: &kept^.picks) {
+      Ok(value: source_kept) => {
+        give source_kept;
+      }
+      Err(..) => {
+        give False();
+      }
+    }
+  }
+  let admitted = splice_reason == 0_u32;
+  let published = bor(admitted, retained);
+  let marked = if published {
     give Ok<unit, LayoutError>(value: unit);
   } else {
     let changed = propagate structure_flags(started: started, page: page, done: &done, removed: removed);

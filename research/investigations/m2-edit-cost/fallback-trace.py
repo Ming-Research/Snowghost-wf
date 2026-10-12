@@ -164,6 +164,14 @@ def decode(raw, expected, exact_guards, script):
             if neutral not in (0, 1) or failures < 0 or failures & ~63 or (neutral == 1) != (failures == 0):
                 raise ValueError('inconsistent source-neutral certificate')
             row.update(source_neutral=neutral, source_failures=failures)
+        elif kind == 'retained' and len(values) == 3:
+            retained, identity_ok, identity_count = values
+            if retained not in (0, 1) or identity_ok not in (0, 1) or identity_count < 0:
+                raise ValueError('invalid source-retention outcome')
+            if not retained and (identity_ok or identity_count):
+                raise ValueError('identity audit attached to a non-retaining outcome')
+            row.update(retained_source=retained, retained_identity_ok=identity_ok,
+                       retained_identity_count=identity_count)
         elif kind == 'float' and len(values) == len(FLOAT_FIELDS):
             float_node, consumer_kind, consumer_node = values[:3]
             dependency_kind = values[-2]
@@ -200,17 +208,26 @@ def decode(raw, expected, exact_guards, script):
         if rows[edit].get('edited_node') != node:
             raise ValueError('diagnostic insertion identity differs from created record')
     for edit, row in rows.items():
-        required = {(edit, kind) for kind in ('edit', 'guard', 'neutral')}
+        required = {(edit, kind) for kind in ('edit', 'guard', 'neutral', 'retained')}
         if not required <= seen:
             raise ValueError(f'edit {edit}: missing diagnostic record')
         if (row['admitted'] == 1) != (row['guard_id'] == 0):
             raise ValueError('exact guard disagrees with splice admission')
         if row['admitted']:
-            if (edit, 'scope') in seen or row['floats']:
+            if (edit, 'scope') in seen or row['floats'] or row['retained_source']:
                 raise ValueError('admitted splice reports fallback-only source/dependencies')
             continue
-        if (edit, 'scope') not in seen or row['existing_contexts'] == 0 or row['built_contexts'] == 0:
-            raise ValueError('refusal lacks complete rebuilt checkpoint scope')
+        if (edit, 'scope') not in seen or row['existing_contexts'] == 0:
+            raise ValueError('refusal lacks original checkpoint scope')
+        if row['retained_source']:
+            if row['retained_identity_ok'] != 1 or row['retained_identity_count'] == 0:
+                raise ValueError('source-retaining fallback lacks a complete surviving identity audit')
+            if not row['source_neutral']:
+                raise ValueError('source-retaining fallback lacks complete-block certificate')
+            if any(row[f'outside_built_{kind}'] for kind in KINDS) or row['mixed_built_paragraphs']:
+                raise ValueError('source-retaining fallback constructed outside the edited subtree')
+        elif row['built_contexts'] == 0:
+            raise ValueError('reconstruction refusal lacks complete rebuilt checkpoint scope')
         if construction.get(edit) != (row['built_contexts'], row['built_paragraphs']):
             raise ValueError('checkpoint construction counts differ from ordinary structural observation')
         for phase in ('existing', 'built'):
@@ -261,12 +278,19 @@ def summarize(args, canonical=False):
         raise ValueError('script length differs from fixed path inventory')
     exact_guards = guards(args.manifest)
     clean, rows = decode(args.diagnostic.read_text(), expected, exact_guards, script)
+    if canonical:
+        retained = {row['edit'] for row in rows if row['retained_source']}
+        required_retention = {1, 2, 3, 4, 5, 6, 9, 10, 17, 18, 19, 20,
+                              23, 24, 29, 30, 39, 40, 51, 52}
+        if retained != required_retention:
+            raise ValueError('canonical motion refusals did not retain their source scope')
     filtered = args.out / 'diagnostic.ordinary'
     filtered.write_text(clean)
     reconcile(args.ordinary, filtered, expected, script, args.out)
     fields = ('edit', 'operation', 'admitted', 'reason', 'parent_node', 'edited_node',
               'guard_id', 'guard_file', 'guard_function', 'guard_line', 'guard', 'guard_kind',
-              'source_neutral', 'source_failures', 'source_failure_names',
+              'source_neutral', 'source_failures', 'source_failure_names', 'retained_source',
+              'retained_identity_ok', 'retained_identity_count',
               *SCOPE_FIELDS, 'float_dependencies')
     (args.out / 'trace-schema.json').write_text(json.dumps(dict(
         scope_fields=SCOPE_FIELDS, float_fields=FLOAT_FIELDS,
@@ -292,16 +316,18 @@ def summarize(args, canonical=False):
     groups = defaultdict(list)
     for row in refused:
         scope = 'complete block neutral' if row['source_neutral'] else 'source-only criterion not certified'
-        groups[row['guard_id'], scope, row['source_failures']].append(row)
+        outcome = 'source retained' if row['retained_source'] else 'checkpoint rebuilt'
+        groups[row['guard_id'], scope, row['source_failures'], outcome].append(row)
     text = ['# Increment 0 fallback trace', '',
         f'{len(rows)} structural operations: {len(rows) - len(refused)} admitted, {len(refused)} refused. '
         'Every operation matches fresh full layout; fixed paths and ordinary output are unchanged.', '',
-        'Counts describe source payloads and route records under the selected checkpoint. '
+        'Existing counts describe the original exact checkpoint; built counts describe actual '
+        'constructed payloads and route records. Source retention excludes its private synthetic context. '
         'Outside counts are relative to the edited subtree; mixed paragraphs are reported separately. '
         'Float records identify the operands of the refusing proof, not a measured physical intersection.', '',
-        '| Exact failing guard | Source scope | IDs | Existing / built payloads | Outside existing / built |',
-        '| --- | --- | --- | --- | --- |']
-    for (guard_id, scope, failures), group in sorted(groups.items()):
+        '| Exact failing guard | Source scope | Fallback outcome | IDs | Existing / built payloads | Outside existing / built |',
+        '| --- | --- | --- | --- | --- | --- |']
+    for (guard_id, scope, failures, outcome), group in sorted(groups.items()):
         entry = exact_guards[guard_id]
         guard = entry['guard'].replace('|', '\\|').replace('\n', ' ')
         source = f"{entry['file']}:{entry['line']} `{entry['function']}`"
@@ -309,7 +335,7 @@ def summarize(args, canonical=False):
             scope += ': ' + '; '.join(name for bit, name in NEUTRAL_FAILURES.items() if failures & bit)
         def counts(prefix):
             return ', '.join(f'{sum(row[prefix + kind] for row in group)} {kind}' for kind in KINDS)
-        text.append(f'| {source}: `{guard}` | {scope} | '
+        text.append(f'| {source}: `{guard}` | {scope} | {outcome} | '
                     f'{", ".join(str(row["edit"]) for row in group)} | '
                     f'{counts("existing_")} / {counts("built_")} | '
                     f'{counts("outside_existing_")} / {counts("outside_built_")} |')

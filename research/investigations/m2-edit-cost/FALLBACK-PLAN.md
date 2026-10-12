@@ -336,30 +336,45 @@ source repair; fresh inserted domains prepare independently; supplier-local
 route precedence is the only route order. Ordinary geometry runs with current
 parent constraints, then payload/route publication and parent summaries finish
 as in section 2. No fallible operation may leave a half-repaired source tree.
-The first implementation must expose the independent destination proof through
-the existing accessors; the compiler questions in section 4 are addressed
-before substituting a shared writer.
-
-Increment 1 is landable only after that proof gate passes (or Whitefoot supplies
-the required fix), the private preparation/preflight succeeds before commit,
-and ordinary geometry plus route publication completes without a recoverable
+Increment 1 lands with the same natural publication form as the existing
+splice: independent per-destination writes, with no hand-added serialization,
+runtime uniqueness check or additional directory. Each affected loop's owning
+`doc` names `sg-inverse-proof-gap`, which currently withholds parallel
+permission. Private preparation/preflight must succeed before commit, and
+ordinary geometry plus route publication must complete without a recoverable
 exit. New `SourceRepair` planning is read-only on retained state; the internal
 commit uses factored `commit_splice_sequence`/payload publication, followed by
 ordinary current-source geometry and completed validity/routes. A broad
 `writes(context)` convenience wrapper must not order independently writable
 destinations.
 
-**Current proof gate.** The natural retained order/target inverse cannot be
-stated through the frozen recursive sequence accessor at the pin: the
-[minimal witness](source-repair-proof/sequence-inverse.wf) is refused by
-RANGE-1 because its range term calls a function. See the
-[proof record](source-repair-proof/README.md) for the exact diagnostic and
-separate route-accessor admission probe. Private source preparation is factored
-for sharing, but retained-source dispatch and commit remain inactive until the
-required independence proof is available; no serial publication substitute or
-new storage layer is introduced. The retained-source fixture and F1/F9/F13
-mutation subcases below require that admission, so their evidence is not yet
-claimed.
+**Deferred parallel proof.** The existing
+[inverse witness](inverse-proof/README.md) and
+[storage ruling](SPLIT-CONTRACT.md#released-inverse-proof-and-recursive-order-storage)
+own the known RANGE-1 limitation (`sg-inverse-proof-gap`). The owner/entry
+type invariant and parallel publication proof follow
+[PR #61, Paged adoption](https://github.com/Ming-Research/Snowghost-wf/pull/61)
+and Whitefoot's small-owner, Bool-guard, `take_back` image and helper-frame
+fixes; they do not gate increment 1. Separately, `route_write` writes shared
+high-water metadata and `slot_write` declares whole-page-tree effects. A later
+route-publication change should allocate/reserve privately, reduce the final
+high-water mark once, and expose writes to already existing disjoint cells
+through precise accessor contracts. That Snowghost effect-shape limitation is
+deferred; this increment changes neither those internals nor their truthful
+effects.
+
+**Implementation state.** Source retention is implemented in the active
+renderer sources; the temporary workflow builds those sources and applies
+only diagnostic instrumentation or individual mutations to private trees.
+The [bounded union arithmetic](source-union-range.md) uses exact `+`, since
+the existing type bounds and ceiling preflights exclude saturation. The
+remaining front-end refusal is [result contract transport](source-result-contract.md):
+explicit success bounds establish the nested result invariant, but a forwarded
+generic error helper cannot communicate its always-failure outcome to the
+success-routed obligation. This is separate from `sg-inverse-proof-gap`.
+The ordinary-layout, supplier-chain, retained-identity and F1/F9/F13 checks
+remain wired but have not executed for this implementation. No runtime bounds
+substitute, serial union or changed error-production form is used.
 
 **Evidence.** Add a small retained-source fixture with an unchanged earlier
 paragraph/context, a complete inserted/deleted block beside an earlier float,
@@ -686,7 +701,7 @@ pinned syntax: `doc` fields, `else if`, and all constructor fields named.
 
 | Pressure point and code site | Smallest natural form to test | What refusal would mean; required acceptance |
 | --- | --- | --- |
-| Logical disjoint writes through recursive pages: `sequence.wf:slot_write,slot_store_output`, route publication | Two known distinct live logical slots in one `SlotPages` tree; independent calls `slot_write(pages: pages, slot: a, ...)` and `slot_write(pages: pages, slot: b, ...)`, with `a != b` established by construction | Existing accessor effects write the recursive page prefix, so distinct logical slots may still appear overlapping. A minimal witness must establish the actual recursive storage invariant and permit/emit independent writes through the existing abstraction. Neither serial publication nor direct page-pattern matching is an authorized substitute. |
+| Logical disjoint writes through recursive pages: `sequence.wf:slot_write,slot_store_output`, route publication | Two known distinct live logical slots in one `SlotPages` tree; independent calls `slot_write(pages: pages, slot: a, ...)` and `slot_write(pages: pages, slot: b, ...)`, with `a != b` established by construction | Existing accessor effects write the recursive page prefix. Increment 1 retains the approved natural loop form without a parallel certificate, naming `sg-inverse-proof-gap` in its owning `doc`. Paged and the pending range fixes supply later parallel permission; shared high-water metadata is a separate deferred Snowghost effect-shape change. No runtime uniqueness check or extra inverse directory is added. |
 | Owner/slot inverse through accessors: retained entry -> payload publication and marking | For independent logical entries, `target = sequence_payload(sequence: owner_entries, slot: k)`; write `blocks[target.Open.block].flow_result`, using the construction-maintained inverse `(owner, entry_slot)` | `RANGE` terms may not express the recursive logical lookup; the existing `inverse-proof/recursive-fact.wf` records that historical limitation. Witness both construction of the relation and the forwarded writer call, then loop permission/emission. Do not add a parallel inverse directory, sort targets or runtime uniqueness pass to conceal it. |
 | Indexed/field effect precision through helpers: `prepare_spaces`, `place_float`, payload publication | A helper reads immutable parent inputs plus a child result and writes only `paragraphs[k].line_result` or `children[k].anchor`; two different `k` calls are independent | Existing broad `writes(context)` implementations are refactoring targets, not proof of a language gap. First state truthful narrow effects on existing owned destinations. If the compiler widens them through calls/descendant boxes despite the specified contracts, file that smaller case. Never weaken the declared reads. |
 | Independent recursive calls returning several results: route counts, validity and summaries | `let (left_count, left_ok) = count(left_slice); let (right_count, right_ok) = count(right_slice);` followed by count/validity reduction | Preserve `bulk-parallel-results.wf` as the minimal historical lead. Expect independent calls before the reduction; compile and inspect permission/emission at the pin. Do not replace the result shape solely to hide denied parallel permission. |
@@ -744,11 +759,14 @@ The following uncertainties must remain visible in implementation reports:
    the necessary checkpoint increment forward before claiming early coverage;
    do not broaden neutrality by assumption. Missing exact checkpoints may
    leave reason 7 above budget and reject the implementation's M2 claim.
-2. **Proof through frozen storage.** The owner/slot inverse and recursive page
-   effects may prevent the required independent writes through existing
-   accessors. CI witnesses settle this. The approved response is Whitefoot
-   work; changing storage or accepting semantic serial order would change the
-   authorized direction and must return to the owner.
+2. **Parallel permission after storage adoption.** `sg-inverse-proof-gap` is
+   the known owner/slot inverse limitation, with the existing natural
+   publication loops approved until Paged and the pending range fixes supply
+   their parallel proof. It does not block increment 1. Later evidence must
+   distinguish source acceptance from parallel permission/emission, and
+   Snowghost's shared route high-water effects remain a separate deferred
+   limitation. No semantic serial order, runtime uniqueness check or second
+   directory is introduced for either limitation.
 3. **Complete comparisons at acceptable cost.** Exact float state and
    membership/child-output comparisons may cost more than the saved work.
    Count them from increment 2. A new projection requires an explicit proof;

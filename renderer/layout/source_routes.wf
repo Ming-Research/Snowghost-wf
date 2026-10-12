@@ -1,0 +1,161 @@
+alias Document = pkg::dom::Document;
+alias NodeId = pkg::dom::NodeId;
+
+struct RemovedRouteTarget {
+  doc "One removed source owner: an entire context, a block or a paragraph in a retained context.";
+  serial: u32;
+  block: u32;
+  paragraph: u32;
+  whole: Bool;
+}
+
+fn source_route_removed(route: StyleRoute, targets: &[RemovedRouteTarget]) -> removed: Bool reads(targets) {
+  doc "Tests explicit source ownership rather than supplier identity, preserving shared ancestor suppliers.";
+  let count = targets^.len;
+  for (k in 0_u64..count) {
+    let target = targets^[k];
+    if route.serial == target.serial {
+      if target.whole {
+        return True();
+      }
+      if target.block != no_index {
+        if route.block == target.block {
+          return True();
+        }
+      }
+      if target.paragraph != no_index {
+        if route.paragraph == target.paragraph {
+          return True();
+        }
+      }
+    }
+  }
+  return False();
+}
+
+fn prepare_supplier_routes(layout: &Layout, routes: &RouteTable<StyleRoute>, route_base: u64, new_head: u32, targets: &[RemovedRouteTarget], supplier: &SupplierHead) -> result: Result<unit, LayoutError> reads(layout), reads(routes), reads(targets), writes(supplier) {
+  doc "Prepares one supplier's owned link changes. Next-link traversal is the only chain dependency; all other supplier results have disjoint owners.";
+  let element = supplier^.element;
+  let at = cvt::<u32, u64>(element);
+  let old_use = route_read::<StyleUse>(table: &layout^.uses, at: at);
+  let surviving_head = old_use.head;
+  if 0_u64 < targets^.len {
+    let cursor = old_use.head;
+    let survivors = box_slots_new::<u32>(capacity: 0_u64);
+    for (step in 0_u64..layout^.routes.len) {
+      if cursor == no_index {
+        break;
+      }
+      let index = cvt::<u32, u64>(cursor);
+      if index < layout^.routes.len {
+      } else {
+        return inconsistent::<unit>();
+      }
+      let route = route_read::<StyleRoute>(table: &layout^.routes, at: index);
+      let omitted = source_route_removed(route: route, targets: targets);
+      if omitted {
+      } else {
+        let pushed = propagate push_or_fail::<u32>(cell: &survivors, value: cursor);
+      }
+      set cursor = route.next;
+    }
+    if cursor != no_index {
+      return inconsistent::<unit>();
+    }
+    let survivor_count = survivors.inner.len;
+    set surviving_head = no_index;
+    if 0_u64 < survivor_count {
+      set surviving_head = survivors.inner[0_u64];
+    }
+    for (k in 0_u64..survivor_count) {
+      let index = survivors.inner[k];
+      let wide = cvt::<u32, u64>(index);
+      let route = route_read::<StyleRoute>(table: &layout^.routes, at: wide);
+      let next = no_index;
+      let following = k +sat 1_u64;
+      if following < survivors.inner.len {
+        set next = survivors.inner[following];
+      }
+      if route.next != next {
+        set route.next = next;
+        let rewrite = RouteRewrite(at: index, value: route);
+        let pushed = propagate push_or_fail::<RouteRewrite>(cell: &supplier^.rewrites, value: rewrite);
+      }
+    }
+  }
+  let head = new_head;
+  if head == no_index {
+    set head = surviving_head;
+  } else {
+    let new_cursor = head;
+    let joined = False();
+    let new_count = routes^.len -sat route_base;
+    for (step in 0_u64..new_count) {
+      let index = cvt::<u32, u64>(new_cursor);
+      let route = route_read::<StyleRoute>(table: routes, at: index);
+      if route.next == no_index {
+        set route.next = surviving_head;
+        let narrow = cvt.wrap::<u64, u32>(index);
+        let rewrite = RouteRewrite(at: narrow, value: route);
+        let pushed = propagate push_or_fail::<RouteRewrite>(cell: &supplier^.rewrites, value: rewrite);
+        set joined = True();
+        break;
+      }
+      set new_cursor = route.next;
+    }
+    if joined {
+    } else {
+      return inconsistent::<unit>();
+    }
+  }
+  set supplier^.head = head;
+  return Ok<unit, LayoutError>(value: unit);
+}
+
+fn prepare_source_routes(layout: &Layout, fresh: &Context, input: SpliceInput, removed: Flow, removing: Bool, document: &Document, node: Option<NodeId>, root: u32, skipped: &[u32]) -> result: Result<RoutePatch, LayoutError> reads(layout), reads(document), reads(skipped), writes(fresh) {
+  doc "Prepares only chains supplied by edited source. The supplier loop writes one owned result per index with no shared cursor or rewrite append; sg-inverse-proof-gap withholds parallel permission for its deduplicated supplier destinations. Local failure reduction follows independent preparation. No live directory or payload is modified.";
+  let patch = propagate splice_routes(fresh: fresh, input: input, serial: input.serial, document: document, node: node, root: root, route_base: layout^.routes.len, path_base: layout^.paths.len, skipped: skipped);
+  let no = False();
+  let fresh_owners = propagate source_context_owners(context: fresh, own: no, removing: no, root: root);
+  let removed_owners = if removing {
+    let steps = propagate path_steps(layout: layout, serial: input.serial);
+    let length = steps.inner.len;
+    let found = propagate source_removed_at(context: &layout^.root, steps: &steps.inner[0_u64..length], depth: 0_u64, removed: removed, root: root);
+    give move found;
+  } else {
+    give empty_source_owners();
+  }
+  let owners = propagate union_source_owners(first: &fresh_owners, second: &removed_owners);
+  let suppliers = owners.suppliers.inner.len;
+  for (k in 0_u64..suppliers) {
+    if owners.suppliers.inner[k] == no_index {
+      continue;
+    }
+    let rewrites = box_slots_new::<RouteRewrite>(capacity: 0_u64);
+    let supplier = SupplierHead(element: owners.suppliers.inner[k], head: no_index, failed: no, rewrites: move rewrites);
+    let pushed = propagate push_or_fail::<SupplierHead>(cell: &patch.supplier_heads, value: move supplier);
+  }
+  let target_count = owners.targets.inner.len;
+  let supplier_count = patch.supplier_heads.inner.len;
+  for (k in 0_u64..supplier_count) {
+    let element = patch.supplier_heads.inner[k].element;
+    let at = cvt::<u32, u64>(element);
+    let new_use = route_read::<StyleUse>(table: &patch.uses, at: at);
+    let prepared = prepare_supplier_routes(layout: layout, routes: &patch.routes, route_base: patch.route_base, new_head: new_use.head, targets: &owners.targets.inner[0_u64..target_count], supplier: &patch.supplier_heads.inner[k]);
+    match prepared {
+      Ok(..) => {
+      }
+      Err(..) => {
+        set patch.supplier_heads.inner[k].failed = True();
+      }
+    }
+  }
+  let failed = False();
+  for (k in 0_u64..supplier_count) {
+    set failed = bor(failed, patch.supplier_heads.inner[k].failed);
+  }
+  if failed {
+    return inconsistent::<RoutePatch>();
+  }
+  return Ok<RoutePatch, LayoutError>(value: move patch);
+}

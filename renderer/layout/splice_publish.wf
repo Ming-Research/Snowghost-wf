@@ -1,14 +1,29 @@
 alias Document = pkg::dom::Document;
 alias NodeId = pkg::dom::NodeId;
 
+struct SupplierHead {
+  doc "One prepared supplier head with owned next-link replacements and local preparation outcome; the private preparation deduplicates suppliers before publication.";
+  element: u32;
+  head: u32;
+  failed: Bool;
+  rewrites: Box<Slots<RouteRewrite>>;
+}
+
+struct RouteRewrite {
+  doc "One route's prepared next-link replacement, preserving surviving identity or joining a fresh chain tail to its retained head.";
+  at: u32;
+  value: StyleRoute;
+}
+
 struct RoutePatch {
-  doc "Unpublished directory records for an inserted subtree, using final serials and payload slots. Only touched NodeIds and the appended serial intervals are committed.";
+  doc "Unpublished directory records for an inserted subtree, using final serials and payload slots, plus source-retention supplier heads and owned next-link changes. Only touched NodeIds, supplier chains and appended serial intervals are committed.";
   listing: RouteTable<TextUnit>;
   uses: RouteTable<StyleUse>;
   routes: RouteTable<StyleRoute>;
   paths: RouteTable<ContextPath>;
   context_of: RouteTable<u32>;
   nodes: Box<Slots<u32>>;
+  supplier_heads: Box<Slots<SupplierHead>>;
   route_base: u64;
   path_base: u64;
 }
@@ -80,12 +95,13 @@ fn splice_routes(fresh: &Context, input: SpliceInput, serial: u32, document: &Do
     let done = propagate record_tree(context: &fresh^.children.inner[at], parent: serial, child: child, paths: &paths, listing: &listing, uses: &uses, routes: &routes, context_of: &context_of, root: root);
   }
   record_skipped_nodes(nodes: skipped, listing: &listing);
-  let patch = RoutePatch(listing: move listing, uses: move uses, routes: move routes, paths: move paths, context_of: move context_of, nodes: move nodes, route_base: route_base, path_base: path_base);
+  let supplier_heads = box_slots_new::<SupplierHead>(capacity: 0_u64);
+  let patch = RoutePatch(listing: move listing, uses: move uses, routes: move routes, paths: move paths, context_of: move context_of, nodes: move nodes, supplier_heads: move supplier_heads, route_base: route_base, path_base: path_base);
   return Ok<RoutePatch, LayoutError>(value: move patch);
 }
 
 fn publish_splice_routes(layout: &Layout, patch: &RoutePatch, removed_nodes: &[u32]) -> result: unit reads(patch), reads(removed_nodes), writes(layout.text_units), writes(layout.uses), writes(layout.routes), writes(layout.context_of), writes(layout.paths) {
-  doc "Publishes only the edited NodeIds and new directory intervals. No retained prefix is copied or scanned and removed identities remain tombstones.";
+  doc "Publishes only edited NodeIds, new directory intervals, prepared retained next rewrites and deduplicated supplier heads. Every loop writes independent prepared destinations; sg-inverse-proof-gap withholds parallel permission for the supplier/route inverse. No retained prefix is copied or scanned and removed identities remain tombstones.";
   let absent_text = absent_text_unit();
   let absent_use = unused_style();
   let removed_count = removed_nodes^.len;
@@ -114,6 +130,19 @@ fn publish_splice_routes(layout: &Layout, patch: &RoutePatch, removed_nodes: &[u
   for (at in patch^.path_base..path_end) {
     let path = route_read::<ContextPath>(table: &patch^.paths, at: at);
     route_write::<ContextPath>(table: &layout^.paths, at: at, value: path);
+  }
+  let suppliers = patch^.supplier_heads.inner.len;
+  for (k in 0_u64..suppliers) {
+    let supplier = &patch^.supplier_heads.inner[k];
+    let rewrites = supplier^.rewrites.inner.len;
+    for (r in 0_u64..rewrites) {
+      let rewrite = supplier^.rewrites.inner[r];
+      let route_at = cvt::<u32, u64>(rewrite.at);
+      route_write::<StyleRoute>(table: &layout^.routes, at: route_at, value: rewrite.value);
+    }
+    let at = cvt::<u32, u64>(supplier^.element);
+    let supplier_use = StyleUse(head: supplier^.head);
+    route_write::<StyleUse>(table: &layout^.uses, at: at, value: supplier_use);
   }
   return unit;
 }
@@ -230,7 +259,7 @@ fn vacant_paragraph(style: StyleRef) -> made: Paragraph pure {
 }
 
 fn publish_splice_payloads(context: &Context, fresh: &Context) -> result: unit writes(context.blocks), writes(context.paragraphs), writes(context.children), writes(context.definite_free), writes(context.has_out), writes(fresh) {
-  doc "Appends preflighted payloads to the existing context-wide stable pools. The Slots append boundary orders publication only; subtree preparation has already completed independently.";
+  doc "Appends preflighted payloads to the existing context-wide stable pools. The block, paragraph and child loops keep their natural per-destination form; sg-inverse-proof-gap withholds their routed destination parallel permission. The Slots append boundary orders publication only; subtree preparation has already completed independently.";
   let definite_free = band(context^.definite_free, fresh^.definite_free);
   set context^.definite_free = definite_free;
   let has_out = bor(context^.has_out, fresh^.has_out);
@@ -339,7 +368,7 @@ fn retire_splice_atomics(paragraph: &Paragraph, children: &[Context], paths: &Ro
 }
 
 fn retire_splice_payloads(context: &Context, items: &[Flow], paths: &RouteTable<ContextPath>) -> (contexts: u64, paragraphs: u64) reads(items), writes(context.blocks.inner), writes(context.paragraphs.inner), writes(context.children.inner), writes(paths) {
-  doc "Drops only removed payloads and tombstones their context routes, including positioned, floated and paragraph-owned atomic contexts. Counts are subtree deltas, never a retained-root census.";
+  doc "Drops only removed payloads and tombstones their context routes, including positioned, floated and paragraph-owned atomic contexts. The item loop writes distinct retired destinations in its natural form; sg-inverse-proof-gap withholds the routed inverse parallel permission. Counts are subtree deltas, never a retained-root census.";
   let contexts = 0_u64;
   let paragraphs = 0_u64;
   let count = items^.len;

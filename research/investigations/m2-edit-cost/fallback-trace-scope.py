@@ -13,9 +13,11 @@ def patch(tree, once):
     split = template.index('fn empty_trace_scope')
     interface = tree / 'renderer/layout/module.wfm'
     source = interface.read_text()
-    fields = '  trace_old_scope: TraceScope;\n  trace_built_scope: TraceScope;\n  trace_source: TraceSource;\n  trace_edit: u32;\n  trace_parent: u32;\n  trace_root: u32;\n  trace_context: u32;\n  trace_context_node: u32;\n  trace_removing: Bool;\n  trace_floats: Box<Slots<i64>>;\n'
+    fields = '  trace_old_scope: TraceScope;\n  trace_built_scope: TraceScope;\n  trace_source: TraceSource;\n  trace_edit: u32;\n  trace_parent: u32;\n  trace_root: u32;\n  trace_context: u32;\n  trace_context_node: u32;\n  trace_removing: Bool;\n  trace_retained: Bool;\n  trace_identity_ok: Bool;\n  trace_identity_count: u64;\n  trace_floats: Box<Slots<i64>>;\n'
     source = once(source, 'public struct Layout {\n', template[:split].rstrip() + '\n\npublic struct Layout {\n' + fields)
     source = source.rstrip() + '\n\npublic fn fallback_trace_scope(layout: &Layout) -> made: Box<Array<u64>> reads(layout) doc "Private diagnostic live checkpoint census.";\n\npublic fn fallback_trace_data(layout: &Layout) -> (parent: u32, edit: u32, neutral: u32, failure: u32, guard: u32) reads(layout) doc "Private source-only seam certificate and actual guard.";\n\npublic fn fallback_trace_floats(layout: &Layout) -> made: Box<Slots<i64>> reads(layout) doc "Private copied proof-contributor rows.";\n'
+    interface.write_text(source)
+    source = interface.read_text().rstrip() + '\n\npublic fn fallback_trace_retained(layout: &Layout) -> (retained: u32, identity_ok: u32, identity_count: u64) reads(layout) doc "Private observation of the completed source-retaining fallback and its complete surviving identity audit.";\n'
     interface.write_text(source)
     build = tree / 'renderer/layout/build.wf'
     source = build.read_text()
@@ -23,9 +25,11 @@ def patch(tree, once):
   let trace_built_scope = empty_trace_scope();
   let trace_source = empty_trace_source();
   let trace_removing = False();
+  let trace_retained = False();
+  let trace_identity_ok = False();
   let trace_floats = box_slots_new::<i64>(capacity: 0_u64);
 """
-    constructor = 'Layout(trace_old_scope: trace_old_scope, trace_built_scope: trace_built_scope, trace_source: trace_source, trace_edit: no_index, trace_parent: no_index, trace_root: no_index, trace_context: no_index, trace_context_node: no_index, trace_removing: trace_removing, trace_floats: move trace_floats, '
+    constructor = 'Layout(trace_old_scope: trace_old_scope, trace_built_scope: trace_built_scope, trace_source: trace_source, trace_edit: no_index, trace_parent: no_index, trace_root: no_index, trace_context: no_index, trace_context_node: no_index, trace_removing: trace_removing, trace_retained: trace_retained, trace_identity_ok: trace_identity_ok, trace_identity_count: 0_u64, trace_floats: move trace_floats, '
     source = once(source, '  let made = Layout(', init + '  let made = ' + constructor)
     build.write_text(source)
     helper = tree / 'renderer/layout/fallback-trace-layout.wf'
@@ -84,9 +88,51 @@ def patch(tree, once):
   set layout^.trace_built_scope.routes = trace_new_routes;
   set layout^.trace_built_scope.outside_routes = trace_outside_new_routes;''')
     structure.write_text(source)
+    retention = tree / 'renderer/layout/retain_source.wf'
+    source = retention.read_text()
+    anchor = '  let (private_contexts, added_paragraphs) = count_tree(context: &fresh);'
+    source = once(source, anchor, '''  trace_retained_checkpoint(layout: layout, document: document, styles: styles, parent: parent.index);
+  let trace_snapshot_ok = True();
+  let trace_identity = match trace_identity_snapshot(layout: layout, document: document) {
+    Ok(value: found) => {
+      give move found;
+    }
+    Err(..) => {
+      set trace_snapshot_ok = False();
+      give box_slots_new::<TraceIdentityRow>(capacity: 0_u64);
+    }
+  }
+  let trace_routes_before = layout^.routes.len;
+  let trace_fresh_scope = trace_scope_tree(context: &fresh, document: document, edit: layout^.trace_edit, root: layout^.trace_root);
+  set trace_fresh_scope.contexts = trace_fresh_scope.contexts -sat 1_u64;
+  let trace_synthetic_inside = trace_style_inside(style: fresh.style, document: document, edit: layout^.trace_edit, root: layout^.trace_root);
+  if trace_synthetic_inside {
+  } else {
+    set trace_fresh_scope.outside_contexts = trace_fresh_scope.outside_contexts -sat 1_u64;
+  }
+  set layout^.trace_built_scope = trace_fresh_scope;
+  if inserting {
+    let found = trace_source_tree(context: &fresh, styles: styles, edit: layout^.trace_edit);
+    set layout^.trace_source.matches = found.matches;
+    set layout^.trace_source.failure = ior(layout^.trace_source.failure, found.failure);
+  }
+''' + anchor)
+    anchor = '  publish_splice_routes(layout: layout, patch: &patch, removed_nodes: &removed_nodes.inner[0_u64..removed_count]);'
+    source = once(source, anchor, anchor + '''
+  let (trace_new_routes, trace_outside_new_routes) = trace_scope_routes(context: &layout^.root, paths: &layout^.paths, routes: &layout^.routes, scope: layout^.trace_context, from: trace_routes_before, until: layout^.routes.len, document: document, edit: layout^.trace_edit, root: layout^.trace_root);
+  set layout^.trace_built_scope.routes = trace_new_routes;
+  set layout^.trace_built_scope.outside_routes = trace_outside_new_routes;''')
+    anchor = '  let source_retained = True();'
+    source = once(source, anchor, '''  let trace_identity_count = trace_identity.inner.len;
+  let trace_preserved = trace_identity_preserved(layout: layout, rows: &trace_identity.inner[0_u64..trace_identity_count]);
+  set layout^.trace_identity_count = trace_identity_count;
+  set layout^.trace_identity_ok = band(trace_snapshot_ok, trace_preserved);
+  set layout^.trace_retained = True();
+''' + anchor)
+    retention.write_text(source)
     oracle = tree / 'renderer/oracle/layout/edit.wf'
     source = oracle.read_text()
-    source = once(source, 'alias structure_splice = pkg::layout::structure_splice;', 'alias structure_splice = pkg::layout::structure_splice;\nalias fallback_trace_scope = pkg::layout::fallback_trace_scope;\nalias fallback_trace_data = pkg::layout::fallback_trace_data;\nalias fallback_trace_floats = pkg::layout::fallback_trace_floats;')
+    source = once(source, 'alias structure_splice = pkg::layout::structure_splice;', 'alias structure_splice = pkg::layout::structure_splice;\nalias fallback_trace_scope = pkg::layout::fallback_trace_scope;\nalias fallback_trace_data = pkg::layout::fallback_trace_data;\nalias fallback_trace_floats = pkg::layout::fallback_trace_floats;\nalias fallback_trace_retained = pkg::layout::fallback_trace_retained;')
     anchor = '  let after_delta = stamp(clock: clock, witness: &kept^.layout);'
     # This anchor occurs in several paths; limit to the structural function.
     start = source.index('fn apply_structure_edit(')
@@ -108,6 +154,9 @@ INITIAL = '''  set layout^.trace_old_scope = empty_trace_scope();
   }
   set layout^.trace_edit = no_index;
   set layout^.trace_removing = False();
+  set layout^.trace_retained = False();
+  set layout^.trace_identity_ok = False();
+  set layout^.trace_identity_count = 0_u64;
   match inserted {
     Some(value: node) => {
       set layout^.trace_edit = node.index;
@@ -157,6 +206,20 @@ OLD_SCOPE = '''
     set layout^.trace_floats = trace_float_extrema(context: &layout^.root, serial: trace_visits.trace_serial, owner: trace_visits.trace_owner, selected: trace_visits.trace_selected, reach: trace_visits.trace_reach, old_floor: trace_visits.trace_old_floor, new_floor: trace_visits.trace_new_floor, added_floor: trace_visits.trace_added_floor, delta: trace_visits.trace_delta, removing: layout^.trace_removing, styles: old, root: layout^.trace_root, edit: layout^.trace_edit);
   }'''
 GETTERS = '''
+fn fallback_trace_retained(layout: &Layout) -> (retained: u32, identity_ok: u32, identity_count: u64) reads(layout) {
+  let retained = if layout^.trace_retained {
+    give 1_u32;
+  } else {
+    give 0_u32;
+  }
+  let identity_ok = if layout^.trace_identity_ok {
+    give 1_u32;
+  } else {
+    give 0_u32;
+  }
+  return retained, identity_ok, layout^.trace_identity_count;
+}
+
 fn index_for_trace(element: u64) -> index: u32 pure {
   return cvt.wrap::<u64, u32>(element);
 }
@@ -221,6 +284,8 @@ const trace_scope_label: Array<u8, 21> = "fallback_trace scope ";
 
 const trace_float_label: Array<u8, 21> = "fallback_trace float ";
 
+const trace_retained_label: Array<u8, 24> = "fallback_trace retained ";
+
 fn put_trace_number(buffer: &Box<Slots<u8>>, value: u64) -> result: unit writes(buffer) {
   put_byte(buffer: buffer, value: 32_u8);
   put_decimal(buffer: buffer, value: value);
@@ -269,6 +334,15 @@ fn put_fallback_trace(buffer: &Box<Slots<u8>>, number: u64, reason: u32, layout:
   let failure_value = cvt::<u32, u64>(failure);
   put_trace_number(buffer: buffer, value: neutral_value);
   put_trace_number(buffer: buffer, value: failure_value);
+  put_byte(buffer: buffer, value: 10_u8);
+  put_text(buffer: buffer, text: &trace_retained_label[0_u64..trace_retained_label.len]);
+  put_decimal(buffer: buffer, value: number);
+  let (retained, identity_ok, identity_count) = fallback_trace_retained(layout: layout);
+  let retained_value = cvt::<u32, u64>(retained);
+  put_trace_number(buffer: buffer, value: retained_value);
+  let identity_value = cvt::<u32, u64>(identity_ok);
+  put_trace_number(buffer: buffer, value: identity_value);
+  put_trace_number(buffer: buffer, value: identity_count);
   put_byte(buffer: buffer, value: 10_u8);
   if reason != 0_u32 {
     let scope = fallback_trace_scope(layout: layout);

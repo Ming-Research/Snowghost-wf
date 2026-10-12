@@ -1,0 +1,194 @@
+# Temporary increment-1 lifetime evidence; retire after its evidence is archived.
+name: fallback-source
+on:
+  push:
+    branches: [research/m2-fallback]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  retained-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+      - name: Pinned compiler, LLVM and identical fonts
+        run: |
+          set -euo pipefail
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          make -s compiler toolchain oracle-fonts
+      - name: Record the active source and prepare the fixed baseline
+        run: |
+          set -euo pipefail
+          mkdir -p build/fallback-source
+          git worktree add --detach "$RUNNER_TEMP/fallback-source-baseline" aaec00aeff7c72a1844de1dc1cd4c5911e00c217
+          cp "$RUNNER_TEMP/fallback-source-baseline/whitefoot.pin" build/fallback-source/baseline-original-whitefoot.pin
+          cp whitefoot.pin build/fallback-source/current-whitefoot.pin
+          release=$(sed -n 's/^release = //p' whitefoot.pin)
+          compiler=$(realpath "build/whitefoot/$release/whitefootc")
+          git rev-parse HEAD > build/fallback-source/revision.txt
+          git rev-parse HEAD:renderer >> build/fallback-source/revision.txt
+          cat whitefoot.pin >> build/fallback-source/revision.txt
+          sha256sum "$compiler" > build/fallback-source/compiler.sha256
+          cp "build/whitefoot/$release/whitefoot-release.json" build/fallback-source/
+      - name: Candidate front-end checks must pass before code generation
+        run: |
+          set -euo pipefail
+          release=$(sed -n 's/^release = //p' whitefoot.pin)
+          compiler=$(realpath "build/whitefoot/$release/whitefootc")
+          failed=0
+          for probe in layout:pkg::layout oracle-layout:pkg::oracle::layout; do
+            label=${probe%%:*}
+            module=${probe#*:}
+            status=0
+            (cd "$GITHUB_WORKSPACE/renderer" && /usr/bin/time -p "$compiler" --graph modules.wfg --check-module "$module") > "build/fallback-source/$label-check.stdout" 2> "build/fallback-source/$label-check.stderr" || status=$?
+            printf '%s\n' "$status" > "build/fallback-source/$label-check.status"
+            cat "build/fallback-source/$label-check.stdout" "build/fallback-source/$label-check.stderr"
+            if [ "$status" -ne 0 ]; then failed=1; fi
+          done
+          test "$failed" -eq 0
+      - name: Same-pin baseline and candidate in both modes
+        run: |
+          set -euo pipefail
+          release=$(sed -n 's/^release = //p' whitefoot.pin)
+          compiler=$(realpath "build/whitefoot/$release/whitefootc")
+          for cohort in baseline candidate; do
+            tree="$RUNNER_TEMP/fallback-source-$cohort"
+            if [ "$cohort" = candidate ]; then tree="$GITHUB_WORKSPACE"; fi
+            for mode in seq par; do
+              parallel=()
+              if [ "$mode" = par ]; then parallel=(--par); fi
+              (cd "$tree/renderer" && "$compiler" --cache "$GITHUB_WORKSPACE/build/fallback-source/cache-$cohort" --fragments function "${parallel[@]}" --graph modules.wfg --entry layout_oracle -o "$GITHUB_WORKSPACE/build/fallback-source/layout-$cohort-$mode")
+            done
+          done
+      - name: Candidate Apollo11 source-retention cohort and exact identity audit
+        env:
+          WF_WORKERS: 1
+        run: |
+          set -euo pipefail
+          evidence="$GITHUB_WORKSPACE/build/fallback-source/apollo-trace"
+          diagnostic="$RUNNER_TEMP/fallback-source-diagnostic"
+          mkdir -p "$evidence" build/research/concurrency
+          git worktree add --detach "$diagnostic" HEAD
+          python3 "$diagnostic/research/investigations/m2-edit-cost/fallback-trace-patch.py" patch "$diagnostic" --manifest "$evidence/guards.json"
+          mkdir -p "$diagnostic/build"
+          ln -s "$GITHUB_WORKSPACE/build/fonts" "$diagnostic/build/fonts"
+          tar -czf "$evidence/diagnostic-renderer.tar.gz" -C "$diagnostic" renderer
+          release=$(sed -n 's/^release = //p' whitefoot.pin)
+          compiler=$(realpath "build/whitefoot/$release/whitefootc")
+          (cd "$diagnostic/renderer" && "$compiler" --cache "$GITHUB_WORKSPACE/build/fallback-source/cache-diagnostic" --fragments function --graph modules.wfg --entry layout_oracle -o "$evidence/layout-diagnostic-seq") > "$evidence/diagnostic-build.log" 2>&1
+          cat "$evidence/diagnostic-build.log"
+          tar -xzf tests/layout/fixtures/apollo11/inputs.tar.gz -C build/research/concurrency
+          sha256sum -c tests/layout/fixtures/apollo11/inputs.sha256
+          cp build/fallback-source/layout-candidate-seq build/layout_oracle_seq
+          sh research/investigations/incremental-layout/run.sh prepare apollo11
+          sha256sum build/x5/scripts/apollo11-block.edits build/research/concurrency/* build/fonts/* renderer/style/ua.css tests/layout/fixtures/apollo11/block-paths.json > "$evidence/inputs.sha256"
+          python3 "$diagnostic/research/investigations/m2-edit-cost/fallback-trace.py" run --ordinary build/fallback-source/layout-candidate-seq --diagnostic "$evidence/layout-diagnostic-seq" --script build/x5/scripts/apollo11-block.edits --inventory tests/layout/fixtures/apollo11/block-paths.json --manifest "$evidence/guards.json" --out "$evidence"
+          scripts=research/investigations/incremental-layout/scripts
+          python3 "$scripts/inctime.py" --check build/x5/scripts/apollo11-block.edits "$evidence/ordinary.raw"
+          python3 "$scripts/inctime.py" --check build/x5/scripts/apollo11-block.edits "$evidence/diagnostic.ordinary"
+          python3 "$scripts/splice-cases.py" --check-paths "$evidence/expected.paths" "$evidence/ordinary.raw"
+          python3 "$scripts/splice-cases.py" --check-paths "$evidence/expected.paths" "$evidence/diagnostic.ordinary"
+          python3 "$scripts/roundtrip.py" "$evidence/ordinary.raw" build/x5/scripts/apollo11-block.edits
+          python3 "$scripts/roundtrip.py" "$evidence/diagnostic.ordinary" build/x5/scripts/apollo11-block.edits
+          cp build/x5/scripts/apollo11-block.edits "$evidence/"
+          cat "$evidence/fallback-trace.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Forward-inverse pilot, retained-source lifetimes and fresh full output
+        env:
+          WF_WORKERS: 4
+        run: |
+          set -euo pipefail
+          fixture="$GITHUB_WORKSPACE/research/investigations/m2-edit-cost/retained-source.py"
+          evidence="$GITHUB_WORKSPACE/build/fallback-source"
+          cd "$GITHUB_WORKSPACE"
+          for mode in seq par; do
+            /usr/bin/time -p python3 "$fixture" "$evidence/layout-baseline-$mode" "$evidence/baseline-$mode" --baseline
+            /usr/bin/time -p python3 "$fixture" "$evidence/layout-candidate-$mode" "$evidence/candidate-$mode"
+            python3 "$fixture" unused "$evidence/candidate-$mode" --self-test
+            python3 "$fixture" unused "$evidence/baseline-$mode" --compare "$evidence/candidate-$mode"
+          done
+          python3 "$fixture" unused "$evidence/candidate-seq" --compare "$evidence/candidate-par"
+      - name: Reason-10 removal followed by its consumers and inverse source edit
+        env:
+          WF_WORKERS: 4
+        run: |
+          set -euo pipefail
+          scripts=research/investigations/incremental-layout/scripts
+          evidence="$GITHUB_WORKSPACE/build/fallback-source"
+          cd "$GITHUB_WORKSPACE"
+          for mode in seq par; do
+            driver="$evidence/layout-candidate-$mode"
+            python3 "$scripts/splice-cases.py" "$driver" flex "$evidence/flex-$mode.edits"
+            "$driver" edit "$evidence/flex-$mode.edits" "$scripts/flex-case.html" renderer/style/ua.css > "$evidence/flex-$mode.raw"
+            python3 "$scripts/inctime.py" --check "$evidence/flex-$mode.edits" "$evidence/flex-$mode.raw"
+            python3 "$scripts/splice-cases.py" --check-paths "$evidence/flex-$mode.edits.paths" "$evidence/flex-$mode.raw"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fallback-source-${{ github.sha }}
+          path: build/fallback-source/
+          if-no-files-found: error
+  retained-source-mutations:
+    needs: retained-source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        mutation: [omit-sibling-closure, omit-branch-closure, equal-size-publication-cutoff, omit-source-text-route, omit-source-style-route, omit-source-context-route, reason-10-rank-replay]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: fallback-source-${{ github.sha }}
+          path: build/fallback-source
+      - name: Pinned compiler, LLVM and identical fonts
+        run: |
+          set -euo pipefail
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          make -s compiler toolchain oracle-fonts
+          chmod +x build/fallback-source/layout-candidate-seq build/fallback-source/layout-candidate-par
+      - name: Apply one omission to active source in a private worktree
+        run: |
+          set -euo pipefail
+          git worktree add --detach "$RUNNER_TEMP/fallback-source-mutant" HEAD
+          mkdir -p "$RUNNER_TEMP/fallback-source-mutant/build"
+          ln -s "$GITHUB_WORKSPACE/build/fonts" "$RUNNER_TEMP/fallback-source-mutant/build/fonts"
+          mutator="$GITHUB_WORKSPACE/research/investigations/m2-edit-cost/retained-source-falsify.py"
+          (cd "$RUNNER_TEMP/fallback-source-mutant" && python3 "$mutator" apply '${{ matrix.mutation }}')
+          git -C "$RUNNER_TEMP/fallback-source-mutant" diff -- renderer > build/fallback-source/mutation.diff
+          release=$(sed -n 's/^release = //p' whitefoot.pin)
+          compiler=$(realpath "build/whitefoot/$release/whitefootc")
+          for mode in seq par; do
+            parallel=()
+            if [ "$mode" = par ]; then parallel=(--par); fi
+            (cd "$RUNNER_TEMP/fallback-source-mutant/renderer" && "$compiler" --cache "$GITHUB_WORKSPACE/build/fallback-source/cache-candidate" --fragments function "${parallel[@]}" --graph modules.wfg --entry layout_oracle -o "$GITHUB_WORKSPACE/build/fallback-source/layout-mutant-$mode")
+          done
+      - name: Complete scripts must fail at their intended omission
+        env:
+          WF_WORKERS: 4
+        run: |
+          set -euo pipefail
+          mutator="$GITHUB_WORKSPACE/research/investigations/m2-edit-cost/retained-source-falsify.py"
+          evidence="$GITHUB_WORKSPACE/build/fallback-source"
+          cd "$RUNNER_TEMP/fallback-source-mutant"
+          for mode in seq par; do
+            python3 "$mutator" verify '${{ matrix.mutation }}' "$evidence/layout-candidate-$mode" "$evidence/layout-mutant-$mode" "$evidence/mutation-$mode"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fallback-source-${{ matrix.mutation }}-${{ github.sha }}
+          path: |
+            build/fallback-source/mutation.diff
+            build/fallback-source/mutation-seq/
+            build/fallback-source/mutation-par/
+          if-no-files-found: error

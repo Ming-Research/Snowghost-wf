@@ -1,6 +1,6 @@
 """Apply increment-0 observations to a private CI source tree only.
 
-fallback-trace.yml is the sole caller. The ordinary tree has no diagnostic
+fallback-trace.yml and fallback-source.yml are the callers. The ordinary tree has no diagnostic
 fields, branches, allocations or helper calls. Delete with that workflow.
 All anchors are checked before writing a patched file; a source change must
 be reconciled explicitly rather than silently tracing a different guard.
