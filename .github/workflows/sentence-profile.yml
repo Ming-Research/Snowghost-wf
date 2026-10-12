@@ -1,0 +1,106 @@
+# Temporary hosted investigation: archive its artifact, then remove this
+# workflow and research/investigations/paged-sentence-profile/profile.py.
+# Attributes the html5 sentence edit cost of the Paged entry-sequence
+# candidate against the hand-written page-table base with Callgrind.
+name: sentence-profile
+on:
+  push:
+    branches: [research/paged-sentence-profile]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: sentence-profile-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  profile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    env:
+      BASE: c10c9097987e1c6500e8f157ac220f5fb1a3a7a6
+      CANDIDATE: 644263df2f1f8379507f299eb9eda449c2bf35b9
+      PIN: wf-26355924f942
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Start and record the machine
+        run: |
+          set -euo pipefail
+          out=build/sentence-profile
+          mkdir -p "$out/drivers" "$out/scripts" "$out/source"
+          echo "PROFILE_DEADLINE=$(($(date +%s) + 280 * 60))" >> "$GITHUB_ENV"
+          cp .github/workflows/sentence-profile.yml research/investigations/paged-sentence-profile/profile.py "$out/source/"
+          git diff "$BASE" "$CANDIDATE" -- renderer whitefoot.pin > "$out/base-candidate-source.diff"
+          { uname -a; lscpu; cat /etc/os-release; } > "$out/machine.txt"
+
+      - name: Valgrind and the E1 font set
+        run: |
+          set -euo pipefail
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y --no-install-recommends valgrind binutils fonts-dejavu-core fonts-dejavu-mono fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          make -s oracle-fonts
+          test "$(find build/fonts -type f | wc -l)" -eq 47
+          valgrind --version >> build/sentence-profile/machine.txt
+
+      - name: Build the sequential and --par layout_oracle of each build
+        run: |
+          set -euo pipefail
+          out=$GITHUB_WORKSPACE/build/sentence-profile
+          for cohort in base candidate; do
+            revision=$BASE
+            if [ "$cohort" = candidate ]; then revision=$CANDIDATE; fi
+            tree=$RUNNER_TEMP/sentence-$cohort
+            git worktree add --detach "$tree" "$revision"
+            git -C "$tree" submodule update --init whitefoot-kit design/skill
+            test "$(sed -n 's/^release = //p' "$tree/whitefoot.pin")" = "$PIN"
+            git -C "$tree" rev-parse HEAD HEAD:renderer > "$out/drivers/$cohort.source.txt"
+            make -s -C "$tree" compiler toolchain > "$out/drivers/$cohort.compiler.log" 2>&1
+            make -s -C "$tree" toolchain-check >> "$out/drivers/$cohort.compiler.log" 2>&1
+            wfc=$tree/build/whitefoot/$PIN/whitefootc
+            sha256sum "$wfc" > "$out/drivers/$cohort.compiler.sha256"
+            { /usr/bin/clang --version; ld.lld --version; } > "$out/drivers/$cohort.toolchain.txt"
+            # The E1 flags of time-14900k.yml, unchanged; symbols retained.
+            (cd "$tree/renderer" && "$wfc" --cache "$tree/build/whitefoot-cache" --fragments function --graph modules.wfg --entry layout_oracle -o "$out/drivers/$cohort-seq") > "$out/drivers/$cohort-seq.build.log" 2>&1
+            (cd "$tree/renderer" && "$wfc" --cache "$tree/build/whitefoot-cache" --fragments function --par --graph modules.wfg --entry layout_oracle -o "$out/drivers/$cohort-par") > "$out/drivers/$cohort-par.build.log" 2>&1
+            for mode in seq par; do
+              nm -n -S "$out/drivers/$cohort-$mode" > "$out/drivers/$cohort-$mode.nm"
+              objdump -d "$out/drivers/$cohort-$mode" > "$out/drivers/$cohort-$mode.objdump"
+            done
+          done
+          sha256sum "$out"/drivers/*-seq "$out"/drivers/*-par
+
+      - name: html5 and the unchanged E1 sentence script
+        run: |
+          set -euo pipefail
+          data=build/research/concurrency
+          mkdir -p "$data"
+          set -- $(grep '^html5.html ' research/investigations/concurrency/run.sh)
+          url=$2 pinned=$3
+          curl -fsSL --retry 3 --max-time 120 -o "$data/html5.html" "$url"
+          printf '%s  %s\n' "$pinned" "$data/html5.html" | sha256sum -c -
+          cp build/sentence-profile/drivers/base-seq build/layout_oracle_seq
+          sh research/investigations/incremental-layout/run.sh prepare html5 > build/sentence-profile/prepare.log 2>&1
+          cp build/x5/scripts/html5-sentence.edits build/sentence-profile/scripts/
+          wc -l build/sentence-profile/scripts/html5-sentence.edits
+
+      - name: Profile
+        run: python3 -I research/investigations/paged-sentence-profile/profile.py
+
+      - name: Publish the summary
+        if: always()
+        run: |
+          set -euo pipefail
+          out=build/sentence-profile
+          if [ -f "$out/summary.md" ]; then cat "$out/summary.md" >> "$GITHUB_STEP_SUMMARY"; fi
+          gzip -9 "$out"/drivers/*.objdump "$out"/runs/*.callgrind 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sentence-profile-${{ github.run_id }}
+          path: build/sentence-profile/
+          compression-level: 1
+          if-no-files-found: error
