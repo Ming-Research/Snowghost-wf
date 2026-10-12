@@ -1,8 +1,7 @@
 # Snowghost binary size against the 10 MB limit
 
-Status: draft. The numbers are placeholders until the measure workflow has
-run; the open choices need the owner's answers (decision cards on the status
-board, item sg-target-binary-size).
+Status: measured 2026-10-12; the open choices need the owner's answers
+(decision cards on the status board, item sg-target-binary-size).
 
 ## Question
 
@@ -32,7 +31,7 @@ limit.
 ## Method
 
 The temporary workflow `.github/workflows/binary-size-measure.yml` (removed
-before the pull request is ready) runs on GitHub-hosted `ubuntu-24.04` and
+after the run below; it is in the branch history at `52e7649`) ran on GitHub-hosted `ubuntu-24.04` and
 `macos-15` (arm64), with the gate's own toolchain setup and the compiler
 release `whitefoot.pin` names. Nothing ran on the owner's MacBook. For each
 operating system it builds, from a cold runner:
@@ -54,38 +53,62 @@ as a table line and appended to the job summary.
 
 ## Results
 
-Whitefoot compiler release: `<release>`; Snowghost revision: `<commit>`;
-workflow run: `<link>`. Limit: 10 485 760 bytes (10 MiB) or 10 000 000 bytes
-(10 MB), see the open choices.
+Whitefoot compiler release: `wf-d837678c6905`; Snowghost revision: `52e7649`;
+workflow run: [38240825791](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38240825791),
+2026-10-12. Limit: 10 485 760 bytes (10 MiB) or 10 000 000 bytes (10 MB), see
+the open choices.
 
 | os | entry | flags | bytes |
 |---|---|---|---|
-| Linux-x86_64 | layout_oracle | seq | TBD |
-| Linux-x86_64 | layout_oracle | par | TBD (the gate printed 4 475 392 on the gate run) |
-| Linux-x86_64 | layout_oracle | par, no cache | TBD |
-| Linux-x86_64 | layout_oracle | par, stripped | TBD |
-| Linux-x86_64 | style_oracle | seq | TBD |
-| Linux-x86_64 | style_oracle | par | TBD |
-| Linux-x86_64 | proto_style | seq | TBD |
-| Linux-x86_64 | proto_style | par | TBD |
-| Linux-x86_64 | proto_layout | seq | TBD |
-| Linux-x86_64 | proto_layout | par | TBD |
-| Darwin-arm64 | layout_oracle | seq | TBD |
-| Darwin-arm64 | layout_oracle | par | TBD |
-| Darwin-arm64 | layout_oracle | par, no cache | TBD |
-| Darwin-arm64 | layout_oracle | par, stripped | TBD |
-| Darwin-arm64 | style_oracle | seq | TBD |
-| Darwin-arm64 | style_oracle | par | TBD |
-| Darwin-arm64 | proto_style | seq | TBD |
-| Darwin-arm64 | proto_style | par | TBD |
-| Darwin-arm64 | proto_layout | seq | TBD |
-| Darwin-arm64 | proto_layout | par | TBD |
+| Linux-x86_64 | layout_oracle | seq | 2 975 160 |
+| Linux-x86_64 | layout_oracle | par | 4 475 416 |
+| Linux-x86_64 | layout_oracle | par, no cache | 3 124 592 |
+| Linux-x86_64 | layout_oracle | par, stripped | 3 998 256 |
+| Linux-x86_64 | style_oracle | seq | 2 181 688 |
+| Linux-x86_64 | style_oracle | par | 3 169 576 |
+| Linux-x86_64 | proto_style | seq | 797 352 |
+| Linux-x86_64 | proto_style | par | 891 688 |
+| Linux-x86_64 | proto_layout | seq | 840 904 |
+| Linux-x86_64 | proto_layout | par | 923 576 |
+| Darwin-arm64 | layout_oracle | seq | 1 731 328 |
+| Darwin-arm64 | layout_oracle | par | 2 338 968 |
+| Darwin-arm64 | layout_oracle | par, no cache | 2 820 712 |
+| Darwin-arm64 | layout_oracle | par, stripped | 2 302 880 |
+| Darwin-arm64 | style_oracle | seq | 1 138 592 |
+| Darwin-arm64 | style_oracle | par | 1 399 760 |
+| Darwin-arm64 | proto_style | seq | 578 064 |
+| Darwin-arm64 | proto_style | par | 615 648 |
+| Darwin-arm64 | proto_layout | seq | 628 768 |
+| Darwin-arm64 | proto_layout | par | 683 552 |
 
-What the numbers show, to fill in once they exist: whether `--par` or
-sequential is larger for each driver; whether `layout_oracle` is the largest
-of the full-pipeline drivers on each platform; how much the cache flags and
-stripping change `layout_oracle --par`; the margin to the limit on each
-platform.
+The gate's own `make binary-size-check` on the same revision printed
+4 475 456 bytes for `layout_oracle --par` on Linux, 40 bytes more than the
+measure job's build. The cause was not examined; no conclusion below
+depends on 40 bytes.
+
+What the numbers show, for these drivers at this revision:
+
+- `--par` is larger than sequential for every driver on both platforms; for
+  `layout_oracle` by 50 % on Linux (4 475 416 against 2 975 160) and 35 % on
+  macOS (2 338 968 against 1 731 328).
+- `layout_oracle --par` is the largest binary measured on each platform, so
+  the proposal is not rejected by the first criterion: no other driver or
+  build of the pipeline is larger.
+- The cache flags (`--cache --fragments function`) move the size in opposite
+  directions: on Linux the build with them is 43 % larger than without
+  (4 475 416 against 3 124 592), on macOS 17 % smaller (2 338 968 against
+  2 820 712). Why is not known; the gate measures the build as the Makefile
+  makes it, with the flags.
+- Stripping removes 477 160 bytes (10.7 %) on Linux and 36 088 bytes (1.5 %)
+  on macOS.
+- The Linux build is 1.91 times the macOS build (4 475 416 against
+  2 338 968). The difference, 2 136 448 bytes, is smaller than the margin
+  the Linux build leaves under the limit (6 010 344 bytes under 10 MiB,
+  5 524 584 under 10 MB), so the proposal is not rejected by the second
+  criterion either, and gating Linux, the larger of the two, is the stricter
+  choice.
+- The largest binary, `layout_oracle --par` on Linux, uses 42.7 % of 10 MiB
+  (44.8 % of 10 MB).
 
 This measures only the renderer drivers. It is no measurement of the shell,
 and the pipeline stages still to be written (paint, script, image decoding in

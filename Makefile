@@ -87,6 +87,7 @@ $(BUILD)/static_atoms $(BUILD)/dom_selftest: compiler FORCE
 # gates the Linux x86-64 build only. Which binary, which build flags, which
 # platform and whether to strip are open choices; the measurements that
 # inform them are in research/investigations/binary-size/.
+BINARY_SIZE_LIMIT := 10485760
 ENGINE_BINARY := $(BUILD)/layout_oracle_par
 
 $(ENGINE_BINARY): compiler FORCE
