@@ -512,8 +512,14 @@ by class and cause (each deferred in `docs/todo.md`):
   language names; twelve `abbr` links in `font-variant: small-caps`,
   which the style stage does not compute; and about twenty links whose
   text Chromium kerns with the punctuation after them, which the stage
-  does on a probe of the same markup but not on the page, cause not yet
-  found.
+  does on a probe of the same markup but not on the page. The page's
+  sheet gives every link `word-wrap: break-word`
+  (`.mw-parser-output a`), and text preparation joined two runs for
+  shaping only when their wrapping, white-space and font-family
+  declaration were also alike, where Blink's ShapeText compares only the
+  font, letter-spacing and word-spacing; Blink synthesizes small capitals
+  for a face without `smcp` by uppercasing the letters that change and
+  drawing them at the size times 0.7, rounded (`flow-cases` probes both).
 
 The rules that brought the pages there, each from a probe of Chromium,
 are in `runs/` with their cases in `tests/layout/*-cases.html`: the

@@ -257,8 +257,8 @@ fn required_stage(layout: &LayoutTable, system: LanguageSystem, substitution: Bo
   return 0_u8;
 }
 
-fn collect_stage(layout: &LayoutTable, system: LanguageSystem, substitution: Bool, stage: u8, lookups: &Box<Slots<PlannedLookup>>, flags: &Box<Array<u8>>) -> result: Result<unit, ShapeError> reads(layout), writes(lookups), writes(flags) {
-  doc "Appends to lookups the lookups of one stage in index order, each once with its features' combined mask and joiner flags: the required feature's when it applies in this stage, then those of every default feature of the stage the language system lists. flags is all zero on entry and on return.";
+fn collect_stage(layout: &LayoutTable, system: LanguageSystem, substitution: Bool, stage: u8, features: &[u32], lookups: &Box<Slots<PlannedLookup>>, flags: &Box<Array<u8>>) -> result: Result<unit, ShapeError> reads(layout), reads(features), writes(lookups), writes(flags) {
+  doc "Appends to lookups the lookups of one stage in index order, each once with its features' combined mask and joiner flags: the required feature's when it applies in this stage, then those of every default feature of the stage the language system lists, then, in the stage after rvrn's pause, where HarfBuzz adds a caller's features after its defaults, those of each tag of features the language system lists, global and with automatic joiners. flags is all zero on entry and on return.";
   let required = cvt::<u16, u64>(system.required_feature);
   let required_in = required_stage(layout: layout, system: system, substitution: substitution);
   if required_in == stage {
@@ -276,6 +276,20 @@ fn collect_stage(layout: &LayoutTable, system: LanguageSystem, substitution: Boo
       let feature = feature_in(layout: layout, system: system, tag: spec.tag);
       let bits = feature_bits(spec: spec);
       mark_lookups(layout: layout, feature: feature, bits: bits, flags: flags);
+    }
+  }
+  let user_stage = if substitution {
+    let second = stage == 1_u8;
+    give second;
+  } else {
+    give True();
+  }
+  if user_stage {
+    let extra = features^.len;
+    for (position in 0_u64..extra) {
+      let tag = features^[position];
+      let feature = feature_in(layout: layout, system: system, tag: tag);
+      mark_lookups(layout: layout, feature: feature, bits: mask_global, flags: flags);
     }
   }
   let count = flags^.inner.len;
@@ -326,15 +340,15 @@ fn push_planned(list: &Box<Slots<PlannedLookup>>, value: PlannedLookup) -> resul
   return Ok<unit, ShapeError>(value: unit);
 }
 
-fn plan_table(layout: &LayoutTable, system: LanguageSystem, substitution: Bool) -> result: Result<Box<Slots<PlannedLookup>>, ShapeError> reads(layout) {
-  doc "The lookups of one table in the order HarfBuzz applies them: for GSUB the stage of rvrn and then the stage of every other feature, for GPOS its one stage.";
+fn plan_table(layout: &LayoutTable, system: LanguageSystem, substitution: Bool, features: &[u32]) -> result: Result<Box<Slots<PlannedLookup>>, ShapeError> reads(layout), reads(features) {
+  doc "The lookups of one table in the order HarfBuzz applies them: for GSUB the stage of rvrn and then the stage of every other feature, the caller's features among them, for GPOS its one stage.";
   let lookup_total = layout^.lookups.inner.len;
   let count = imin(lookup_total, 65536_u64);
   let flags = box_array_filled::<u8>(count: count, value: 0_u8);
   let lookups = box_slots_new::<PlannedLookup>(capacity: 0_u64);
-  let first = propagate collect_stage(layout: layout, system: system, substitution: substitution, stage: 0_u8, lookups: &lookups, flags: &flags);
+  let first = propagate collect_stage(layout: layout, system: system, substitution: substitution, stage: 0_u8, features: features, lookups: &lookups, flags: &flags);
   if substitution {
-    let second = propagate collect_stage(layout: layout, system: system, substitution: substitution, stage: 1_u8, lookups: &lookups, flags: &flags);
+    let second = propagate collect_stage(layout: layout, system: system, substitution: substitution, stage: 1_u8, features: features, lookups: &lookups, flags: &flags);
   }
   return Ok<Box<Slots<PlannedLookup>>, ShapeError>(value: move lookups);
 }
@@ -349,8 +363,8 @@ fn found_in(substitution: &LayoutTable, gsub: LanguageSystem, positioning: &Layo
   return either;
 }
 
-fn make_plan(face: &Face, script: Script) -> result: Result<Plan, ShapeError> reads(face) {
-  doc "Builds the plan HarfBuzz's map compiles for a horizontal left-to-right run in script with no language and the default features.";
+fn make_plan(face: &Face, script: Script, features: &[u32]) -> result: Result<Plan, ShapeError> reads(face), reads(features) {
+  doc "Builds the plan HarfBuzz's map compiles for a horizontal left-to-right run in script with no language, the default features and the global features tagged in features.";
   let tag = script_tag(script: script);
   let gsub_script = select_script(layout: &face^.substitutions, tag: tag);
   let gpos_script = select_script(layout: &face^.positions, tag: tag);
@@ -358,8 +372,8 @@ fn make_plan(face: &Face, script: Script) -> result: Result<Plan, ShapeError> re
   let gpos = select_system(layout: &face^.positions, script: gpos_script);
   let substitution_kind = True();
   let positioning_kind = False();
-  let substitutions = propagate plan_table(layout: &face^.substitutions, system: gsub, substitution: substitution_kind);
-  let positions = propagate plan_table(layout: &face^.positions, system: gpos, substitution: positioning_kind);
+  let substitutions = propagate plan_table(layout: &face^.substitutions, system: gsub, substitution: substitution_kind, features: features);
+  let positions = propagate plan_table(layout: &face^.positions, system: gpos, substitution: positioning_kind, features: features);
   let numr_spec = default_features[4_u64];
   let frac_spec = default_features[3_u64];
   let dnom_spec = default_features[5_u64];
@@ -384,4 +398,23 @@ fn make_plan(face: &Face, script: Script) -> result: Result<Plan, ShapeError> re
   let positioning = face^.positions.present;
   let plan = Plan(substitutions: move substitutions, positions: move positions, numr_mask: numr_mask, frac_mask: frac_mask, dnom_mask: dnom_mask, positioning: positioning);
   return Ok<Plan, ShapeError>(value: move plan);
+}
+
+fn has_feature(face: &Face, script: Script, tag: u32) -> found: Bool reads(face) {
+  doc "Whether the face's GSUB lists a feature tagged tag in the default language system of the script record it selects for script (select_script), as Blink's OpenTypeCapsSupport asks HarfBuzz before it synthesizes small capitals; False for a face without GSUB.";
+  if face^.substitutions.present {
+  } else {
+    return False();
+  }
+  let wanted = script_tag(script: script);
+  let script_index = select_script(layout: &face^.substitutions, tag: wanted);
+  let count = face^.substitutions.scripts.inner.len;
+  if script_index < count {
+  } else {
+    return False();
+  }
+  let system = face^.substitutions.scripts.inner[script_index].default_system;
+  let feature = feature_in(layout: &face^.substitutions, system: system, tag: tag);
+  let listed = feature != no_index;
+  return listed;
 }
