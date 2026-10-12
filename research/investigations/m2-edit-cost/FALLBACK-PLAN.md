@@ -288,10 +288,19 @@ demonstrated mixed-inline or counter/quote seam; it cannot by itself establish
 that wider reconstruction is necessary. Missing float-proof contributors fail
 the trace instead of supplying an inferred consumer.
 
-Results pending CI: source-neutral reason-9 operations __/18; reason-7 source
-scopes __; mixed-inline/stateful checkpoint requirements __; exact guard
-groups __; existing/constructed/outside-subtree counts __. The selected
-increment order remains pending these observations.
+[Hosted run 38186480413](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38186480413)
+at `aaec00a` verified all 60 operations against fresh full layout with unchanged
+paths and ordinary output: 38 admitted, 22 refused. All 18 reason-9 edits and
+reason-7 IDs 29/30 are complete-block source-neutral and fail
+`splice_motion.wf:171 motion_above` at `reach > floor`; together their
+checkpoints reconstruct 16,356 blocks / 34,122 paragraphs / 13,322 contexts /
+218,124 routes, including 16,346 / 34,112 / 13,322 / 218,104 outside the edited
+subtree. IDs 35/36 fail the `splice_inputs` owner mismatch with an incomplete
+source seam and reconstruct 1,817 blocks / 3,791 paragraphs / 1,480 contexts /
+24,234 routes together. Increments 1 and 2 remain first: neutral source
+retention addresses 20 of the 22 refusals and avoids reconstructing nearly all
+of their unchanged source; the remaining mixed seam requires later checkpoint
+work. These source counts establish the selected order, not a performance gain.
 
 ### Increment 1 — Retain complete-block source on a geometry refusal
 
@@ -339,6 +348,18 @@ commit uses factored `commit_splice_sequence`/payload publication, followed by
 ordinary current-source geometry and completed validity/routes. A broad
 `writes(context)` convenience wrapper must not order independently writable
 destinations.
+
+**Current proof gate.** The natural retained order/target inverse cannot be
+stated through the frozen recursive sequence accessor at the pin: the
+[minimal witness](source-repair-proof/sequence-inverse.wf) is refused by
+RANGE-1 because its range term calls a function. See the
+[proof record](source-repair-proof/README.md) for the exact diagnostic and
+separate route-accessor admission probe. Private source preparation is factored
+for sharing, but retained-source dispatch and commit remain inactive until the
+required independence proof is available; no serial publication substitute or
+new storage layer is introduced. The retained-source fixture and F1/F9/F13
+mutation subcases below require that admission, so their evidence is not yet
+claimed.
 
 **Evidence.** Add a small retained-source fixture with an unchanged earlier
 paragraph/context, a complete inserted/deleted block beside an earlier float,
