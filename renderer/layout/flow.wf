@@ -3070,7 +3070,7 @@ fn chunk_most(most: i32, text: i32, floats: i32, around: i32) -> made: i32 pure 
 }
 
 fn intrinsic_flow(context: &Context, events: &[Flow], styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> (minimum: i32, maximum: i32) reads(events), reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
-  doc "The content's min-content and max-content widths of a flow context: the largest over its paragraphs and its in-flow and floated child contexts' contributions (their intrinsic sizes plus margins), each inside the margins, borders and paddings of the block boxes around it, a block box with a given width contributing that width instead of its content. Intrinsic contributions resolve margins locally against zero without overwriting retained used margins; cached child interiors may survive this query.";
+  doc "The content's min-content and max-content widths of a flow context: the largest over its paragraphs and its in-flow and floated child contexts' contributions (their intrinsic sizes plus margins), each inside the margins, borders and paddings of the block boxes around it, a block box with a given width contributing that width instead of its content. Intrinsic contributions resolve margins locally against zero without overwriting retained used margins; cached child interiors may survive this query. Each paragraph's two widths are computed first in one counted loop, each iteration reading only its own paragraph, the child contexts (whose intrinsic sizes the loop above has just made known) and the styles, and writing only its own cells of two arrays local to this query, because one paragraph's widths depend on no other paragraph; the loop also measures paragraphs the walk skips, inside blocks of a given width, and vacant retired slots, extra work off the walk's chain (board item sg-intrinsic-prepass-trim). The walk over the flow is one sequential pass: its nesting frames are a prefix scan and its chunk widths a segmented maximum, whose logarithmic-depth parallel forms are not used (board item sg-layout-scan-walks). The widths live only for this query and are not stored in Paragraph.min_content and max_content, which the boundary outputs publish, so a published output does not depend on whether or when a parent asked for intrinsic sizes.";
   let children = context^.children.inner.len;
   for (c in 0_u64..children) {
     let (least, most) = intrinsic_sizes(context: &context^.children.inner[c], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
@@ -3083,6 +3083,17 @@ fn intrinsic_flow(context: &Context, events: &[Flow], styles: &Styles, document:
   let fixed_depth = 0_u64;
   let chunk_text = 0_i32;
   let chunk_floats = 0_i32;
+  let paragraph_count = context^.paragraphs.inner.len;
+  let paragraph_least = box_array_filled::<i32>(count: paragraph_count, value: 0_i32);
+  let paragraph_most = box_array_filled::<i32>(count: paragraph_count, value: 0_i32);
+  for (q in 0_u64..paragraph_count) {
+    let yes = True();
+    let no = False();
+    let low = paragraph_intrinsic(paragraph: &context^.paragraphs.inner[q], children: &context^.children.inner[0_u64..children], styles: styles, fonts: fonts, picks: picks, minimum: yes);
+    let high = paragraph_intrinsic(paragraph: &context^.paragraphs.inner[q], children: &context^.children.inner[0_u64..children], styles: styles, fonts: fonts, picks: picks, minimum: no);
+    set paragraph_least.inner[q] = low;
+    set paragraph_most.inner[q] = high;
+  }
   let flow_count = reference_length(context: context, events: events);
   for (k in 0_u64..flow_count) {
     let flow_bound_2991 = reference_length(context: context, events: events);
@@ -3144,13 +3155,11 @@ fn intrinsic_flow(context: &Context, events: &[Flow], styles: &Styles, document:
       Text(paragraph: p) => {
         let at = cvt::<u32, u64>(p);
         let open = fixed_depth == 0_u64;
-        let present = at < context^.paragraphs.inner.len;
+        let present = at < paragraph_count;
         let usable = band(open, present);
         if usable {
-          let yes = True();
-          let no = False();
-          let low = paragraph_intrinsic(paragraph: &context^.paragraphs.inner[at], children: &context^.children.inner[0_u64..children], styles: styles, fonts: fonts, picks: picks, minimum: yes);
-          let high = paragraph_intrinsic(paragraph: &context^.paragraphs.inner[at], children: &context^.children.inner[0_u64..children], styles: styles, fonts: fonts, picks: picks, minimum: no);
+          let low = paragraph_least.inner[at];
+          let high = paragraph_most.inner[at];
           let low_total = low +sat around;
           let high_total = high +sat around;
           set least = imax(least, low_total);
