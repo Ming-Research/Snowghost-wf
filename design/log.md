@@ -4,6 +4,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `Nodes:` naming every node changed, `Owner-approved:` and `Summary:`;
 the design-tree part of the owner-wide agent instructions owns the form.
 
+## 2026-10-12 Measure the engine binary against a 10 000 000-byte limit
+
+Nodes: scope/binary-size
+
+Owner-approved: On 2026-10-12 the owner set a hard limit of 10 MB on the engine binary with a gate check, then chose option A on the status board card asking whether the limit is measured as proposed (10 000 000 bytes; the renderer alone while the first release has no shell; the Linux x86-64 build as linked, unstripped; layout_oracle built with --par as the stand-in until an engine binary exists), and commented in Chinese that room must be kept for the JavaScript engine.
+
+Summary: A new node under scope records how the 10 MB limit is measured. It takes the decimal reading, 10 000 000 bytes, the stricter of the two, since the largest build measured uses 44.8 % of it. It covers the renderer alone until a release ships a shell. It judges the Linux x86-64 build, as linked, because that build is 1.91 times the macOS build and stripping would hide 10.7 % of it. Until an engine binary exists it measures layout_oracle built with --par, the largest pipeline build measured. Rejected: 10 MiB, a shell estimate, a macOS or per-platform gate, the stripped size, and a sequential or smaller stand-in. The measurements are in research/investigations/binary-size/README.md. The room the JavaScript engine needs is to be budgeted on its own card when that engine is planned.
+
 ## 2026-10-11 Bound the structural restyle of next-sibling `+` chains by their length
 
 Nodes: pipeline/style
@@ -27,14 +35,6 @@ Nodes: pipeline/layout
 Owner-approved: On 2026-10-08 the owner chose Q139 A, that a structural splice may admit a percentage height whose basis the edit cannot change, recording each basis and falling back with a counted reason otherwise; on the status board the owner then chose the direct-reader inventory and compact records for that scope and cost, and on 2026-10-09 chose to accept the remaining root-font cost and track it separately, and approved, in Chinese, correcting the first layout decision so that a child context's inputs are its element and its resolved containing space, including height and definiteness, instead of its element and width.
 
 Summary: The splice keeps height provenance only for boxes that read a percentage height and admits such a reader only when its basis is current, definite, independent of content and outside the edit's growing ancestor chain; each route context counts its own direct readers, and nested contexts stay under unchanged-space translation and flex space-equality relayout. Apollo11's block edits no longer refuse for percentage heights, ecma262 and html5 keep every splice, and the fixtures, Chromium floors, page identity and the full mutation matrix pass. Compact records hold the large pages' memory growth to 1.5 to 1.9 percent; root-font edits stay within the twin's spread except ECMA262 and Apollo sequential, at most 0.3 percent above it, which docs/todo.md tracks ([measurements](../research/investigations/structure-edits/layout-design.md#approved-direct-inventory-and-compact-records)). The first layout decision's grounds now name the resolved containing space, because a child context's percentage heights depend on its containing block's height and definiteness as well as its width.
-
-## 2026-10-12 Measure the engine binary against a 10 000 000-byte limit
-
-Nodes: scope/binary-size
-
-Owner-approved: On 2026-10-12 the owner set a hard limit of 10 MB on the engine binary with a gate check, then chose option A on the status board card asking whether the limit is measured as proposed (10 000 000 bytes; the renderer alone while the first release has no shell; the Linux x86-64 build as linked, unstripped; layout_oracle built with --par as the stand-in until an engine binary exists), and commented in Chinese that room must be kept for the JavaScript engine.
-
-Summary: A new node under scope records how the 10 MB limit is measured. It takes the decimal reading, 10 000 000 bytes, the stricter of the two, since the largest build measured uses 44.8 % of it. It covers the renderer alone until a release ships a shell. It judges the Linux x86-64 build, as linked, because that build is 1.91 times the macOS build and stripping would hide 10.7 % of it. Until an engine binary exists it measures layout_oracle built with --par, the largest pipeline build measured. Rejected: 10 MiB, a shell estimate, a macOS or per-platform gate, the stripped size, and a sequential or smaller stand-in. The measurements are in research/investigations/binary-size/README.md. The room the JavaScript engine needs is to be budgeted on its own card when that engine is planned.
 
 ## 2026-10-06 Keep style slots stable across structural edits and bound the insertion restyle
 
