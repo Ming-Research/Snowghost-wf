@@ -306,8 +306,10 @@ profile() {
 		fi
 	done
 	# Control: a user-agent sheet with one more rule must change the dump of the
-	# profiled path, or the comparisons above could not have failed.
-	{ cat "$ua"; printf '\nbody { display: none; }\n'; } >"$out/ua-control.css"
+	# profiled path, or the comparisons above could not have failed. The rule is
+	# important: a plain user-agent declaration loses to the page's own sheets
+	# (ecma262's sets display on body), an important one beats every origin.
+	{ cat "$ua"; printf '\nbody { display: none !important; }\n'; } >"$out/ua-control.css"
 	sheets=$(sheets_of "$first")
 	file=$(page_file "$first")
 	build/style_oracle profdump 1 "$file" "$out/ua-control.css" $sheets >"$out/$first.control.tsv"
