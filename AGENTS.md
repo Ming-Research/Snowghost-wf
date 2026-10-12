@@ -87,7 +87,8 @@ Whitefoot gap filed.
 
 ## Documents
 
-`README.md` introduces and navigates; this file holds the goal and project
-rules; `docs/review-checklist.md` the review items; the status board's items
-the open defects and Whitefoot requirements; `research/investigations/`
+`README.md` introduces and navigates, and its Releases section holds the
+long-term direction and the release goals; this file holds the project's goal
+and rules; `docs/review-checklist.md` the review items; the status board's
+items the open defects and Whitefoot requirements; `research/investigations/`
 questions, experiments and results.
