@@ -403,10 +403,12 @@ def summarize(root, ledger_path, out):
         raw = read_raw(out / f"{page}.raw", 1)
         ranks = {name: rank for rank, name in enumerate(sorted(inclusive, key=lambda n: (-inclusive[n], n)), 1)}
         profiles[page] = (total, self_cost, inclusive, symbols, unmatched, raw, ranks)
-    zero, _, _ = parse_callgrind(out / "zero.callgrind")
-    if zero != 0:
-        raise Invalid(f"{out / 'zero.callgrind'}: zero control recorded {zero} Ir")
-    read_raw(out / "zero.raw", 0)
+    for page in PAGES:
+        control = out / f"{page}-zero.callgrind"
+        zero, _, _ = parse_callgrind(control)
+        if zero != 0:
+            raise Invalid(f"{control}: zero control recorded {zero} Ir")
+        read_raw(out / f"{page}-zero.raw", 0)
 
     by_function = defaultdict(list)
     for row in joined:
@@ -454,7 +456,7 @@ def summarize(root, ledger_path, out):
                "Unobserved functions receive no invented zero. Ranks cover observed source functions only; refused ranks cover functions holding refused loop verdicts. "
                "A compiler permission is not proof of runtime parallel execution; raw PAR split rows remain in the ledger artifact.", "",
                "Totals reconcile every exclusive event against each Callgrind totals footer. The profile's layout.lay_out inclusive Ir "
-               "also equals its total, and the zero-repetition control has zero Ir. Call counts are not read as costs or reported.", ""]
+               "also equals its total, and all three page-specific zero-repetition controls have zero Ir. Call counts are not read as costs or reported.", ""]
     for page, (total, own, inclusive, _, unmatched, raw, _) in profiles.items():
         summary += [f"## {page}", "", f"Ir: {total}; layout elements {raw[0]}, contexts {raw[1]}, paragraphs {raw[2]}, reps {raw[3]}. "
                     f"Observed source functions: {len(inclusive)}; unmatched exclusive Ir: {sum(cost or 0 for cost in unmatched.values())}.", "",
@@ -601,8 +603,8 @@ fn example() -> result: unit pure {
         for page in PAGES:
             (out / f"{page}.callgrind").write_text(good)
             (out / f"{page}.raw").write_text("layout elements 2 contexts 1 paragraphs 1 reps 1\n")
-        (out / "zero.callgrind").write_text(zero)
-        (out / "zero.raw").write_text("layout elements 2 contexts 0 paragraphs 0 reps 0\n")
+            (out / f"{page}-zero.callgrind").write_text(zero)
+            (out / f"{page}-zero.raw").write_text("layout elements 2 contexts 0 paragraphs 0 reps 0\n")
         summarize(root, ledger_path, out)
         with (out / "functions.csv").open() as stream:
             reported = {row["function"]: row for row in csv.DictReader(stream)}
@@ -610,6 +612,28 @@ fn example() -> result: unit pure {
         assert reported["layout.lay_out"]["ecma262_self_share"] == "0.357142857"
         assert reported["layout.unobserved"]["ecma262_inclusive_Ir"] == ""
         assert "fixture denial" in (out / "summary.md").read_text()
+        assert "all three page-specific zero-repetition controls have zero Ir" in (out / "summary.md").read_text()
+        for missing in (out / "html5-zero.callgrind", out / "apollo11-zero.raw"):
+            original = missing.read_text()
+            missing.unlink()
+            try:
+                summarize(root, ledger_path, out)
+            except FileNotFoundError as error:
+                assert Path(error.filename) == missing
+                checks += 1
+            else:
+                raise AssertionError("accepted a missing page-specific zero control")
+            missing.write_text(original)
+        nonzero = out / "apollo11-zero.callgrind"
+        nonzero.write_text(good)
+        try:
+            summarize(root, ledger_path, out)
+        except Invalid as error:
+            assert str(error) == f"{nonzero}: zero control recorded 14 Ir"
+            checks += 1
+        else:
+            raise AssertionError("accepted a nonzero page-specific control")
+        nonzero.write_text(zero)
     print(f"handmade dry-run passed; {checks} corrupt artifacts rejected")
 
 

@@ -57,13 +57,15 @@ blocks profiling and requires investigation.
 
 The temporary [`par-inventory.yml`](../../../.github/workflows/par-inventory.yml)
 workflow runs on GitHub-hosted Ubuntu 24.04. The [`profile.py`](profile.py)
-harness has independent `ledger` and `profile` job modes and refuses local
-execution except the handmade `--dry-run` controls. The jobs start in parallel:
-neither build or budget depends on the other. They create independent empty
+harness has independent `ledger` and `profile --page PAGE` job modes and refuses
+local execution except the handmade `--dry-run` controls. The ledger job and
+three profiling matrix jobs start independently. Each page has its own build,
+zero control, one-pass profile and budget; `fail-fast: false` lets every page
+attempt its work even if another fails. They create independent empty
 caches and record the exact commands, exits, timeout budgets, elapsed durations, compiler
 release manifest, compiler and driver hashes, source revision, submodules,
 tool versions in their separate output roots. The ledger job writes
-`build/layout-par-ledger/`; the profiling job writes `build/layout-par/` and
+`build/layout-par-ledger/`; each page writes `build/layout-par-pages/PAGE/` and
 also records input/font hashes and preserves the actual input and font bytes.
 Each job always uploads its own raw artifact, including partial failures and
 its driver when built. Compiler cache directories stay outside the archive.
@@ -96,19 +98,19 @@ composition, even when the selected entry never calls it. A generic template
 needs a concrete instantiation to appear in the permission ledger, so an unused
 generic counted loop can block coverage ([pinned signature discovery](https://github.com/Ming-Research/Whitefoot/blob/78223721f77db615c950b6df1bcc690629f9fe4b/compiler/src/semantic/check/generics.rs#L324-L367)).
 
-The sequential build command, from `renderer/`, is:
+The sequential build command for a page job, from `renderer/`, is:
 
 ```sh
 "$WFC" --cache "$GITHUB_WORKSPACE/build/layout-par-cache-seq" \
   --fragments function --graph modules.wfg --entry layout_oracle \
-  -o "$GITHUB_WORKSPACE/build/layout-par/layout-seq"
+  -o "$GITHUB_WORKSPACE/build/layout-par-pages/$PAGE/layout-seq"
 ```
 
 The ledger job's independently cached build adds `--par --par-ledger`, writes
 `build/layout-par-ledger/layout-par` and retains complete standard output as
 `build/layout-par-ledger/par-ledger.log`, with diagnostics separately. It runs
 the complete source-to-ledger coverage check before publishing its successful
-artifact. The profiling job can proceed without waiting for that compilation.
+artifact. Every profiling page can proceed without waiting for that compilation.
 
 Before any profile, `nm --defined-only` must find exactly the exported text
 symbol `wf_layout.lay_out` in the sequential binary. Symbol presence alone
@@ -124,14 +126,14 @@ zero control; no source or compiler change is made to invent one. Static
 callsite presence still does not prove dynamic execution; the positive pilot
 and its exact root accounting remain required.
 
-The pilot profiles ECMA262 once, with the same options later used for HTML5
-and Apollo11:
+Each page's pilot is its only single-pass profile and is retained directly.
+For example, the ECMA262 job runs:
 
 ```sh
 WF_WORKERS=1 valgrind --tool=callgrind --collect-atstart=no \
   --toggle-collect=wf_layout.lay_out \
-  --callgrind-out-file=build/layout-par/ecma262.callgrind \
-  build/layout-par/layout-seq layout 1 \
+  --callgrind-out-file=build/layout-par-pages/ecma262/ecma262.callgrind \
+  build/layout-par-pages/ecma262/layout-seq layout 1 \
   build/research/concurrency/ecma262.html renderer/style/ua.css \
   assets/css/ecmarkup.css=build/research/concurrency/ecma262-ecmarkup.css \
   assets/css/print.css=build/research/concurrency/ecma262-print.css
@@ -139,8 +141,9 @@ WF_WORKERS=1 valgrind --tool=callgrind --collect-atstart=no \
 
 Run from the repository root and use relative page and stylesheet paths:
 the driver's filesystem capability rejects absolute inputs and symbolic links.
-The same command with repetitions zero creates `zero.callgrind`; its exclusive
-total must be zero. The pilot must be positive, contain the exact entry and
+Each job first runs its own page with repetitions zero, producing
+`PAGE-zero.callgrind` and `PAGE-zero.raw`; its exclusive total and raw context
+and paragraph counts must be zero. The pilot must be positive, contain the exact entry and
 give that entry's normalized wrapper/body family an inclusive cost equal to
 the reconciled exclusive total, excluding internal family edges.
 Collection uses only this entry toggle; there are no before/after dumps and
@@ -153,26 +156,32 @@ setup is capped at 9 minutes. Its recorded command allowance and duration show
 any clipping by its own deadline. Neither the sequential build nor a profile
 consumes this ledger budget.
 
-The profiling job starts its own 40-minute deadline and retains a 45-minute
+Each profiling job starts its own 40-minute deadline and retains a 45-minute
 job cap. Its harness budget is the lesser of 25 minutes and the time left
-before its deadline, including input preparation, metadata, the sequential
-build, boundary checks and four profiler processes. Its sequential build is
-capped at 10 minutes, the zero control at 4 minutes and the pilot at 5 minutes.
-The pilot's measured process duration is reused to choose remaining profile caps:
-four times its duration, scaled upward by HTML plus loaded-sheet byte size,
-with a two-minute minimum. This conservative scheduling rule is not a
-performance model. If those caps do not fit the remaining budget, the job
-stops with retained evidence and a request for a separately bounded batch.
+before its deadline, including input fetching and verification, provenance, one
+sequential build, boundary checks, its own zero control and one single-pass
+profile. Its sequential build is capped at 10 minutes, the zero control at
+4 minutes and the single pass at 5 minutes. `scale-selection.json` records
+that measured pass and the remaining budget; the pass is reused as the actual
+result. There is no extrapolation to another page, repetition increase or
+sum-of-remaining-page-caps gate. The recorded process durations justify only
+administrative budgets, never renderer performance conclusions.
 Timeout, incomplete dumps and missing controls never count as completed pages.
 
-A third job needs both jobs to succeed and downloads their separate artifacts.
+A summary job needs the ledger and all three matrix jobs to succeed. It
+downloads each page artifact into its own directory without merging them.
 Before joining, it requires equal actual source and workflow revisions, run
 identity, Whitefoot pin, compiler executable hash, release manifest, renderer
-source hashes and methodology hashes. It verifies the downloaded drivers
-against their recorded hashes. It then summarizes the profiles against the
-downloaded ledger and uploads a summary artifact containing both evidence
-directories. A failed build or mismatched artifact cannot produce a completed
-inventory.
+source hashes and methodology hashes. Page identities must match their
+artifact names, and all three pages must record identical input and font
+hashes. It verifies each downloaded driver against its recorded hash, then
+requires all three sequential driver SHA-256 hashes to be exactly identical.
+There is no fallback or skipped page when hashes differ. Only after those
+checks does it copy each page's `PAGE.callgrind`, `PAGE.raw`,
+`PAGE-zero.callgrind` and `PAGE-zero.raw` into flat `build/layout-par/` for
+accounting. The summary artifact retains those outputs, all three complete
+page evidence directories and the complete ledger directory. A failed job,
+missing control or mismatched artifact cannot produce a completed inventory.
 
 The accounting CLI is:
 
@@ -180,7 +189,7 @@ The accounting CLI is:
 python3 -I research/investigations/layout-par/inventory.py --dry-run
 python3 -I research/investigations/layout-par/profile.py --dry-run
 python3 -I research/investigations/layout-par/profile.py ledger
-python3 -I research/investigations/layout-par/profile.py profile
+python3 -I research/investigations/layout-par/profile.py profile --page ecma262
 python3 -I research/investigations/layout-par/inventory.py inventory \
   --root . --ledger build/layout-par-ledger/par-ledger.log --out build/layout-par-ledger
 python3 -I research/investigations/layout-par/inventory.py summarize \
@@ -190,8 +199,10 @@ python3 -I research/investigations/layout-par/inventory.py summarize \
 The dry runs supply handmade parser and provenance rejection controls, without
 building or running the renderer. The two job modes run only in CI. The ledger
 mode invokes the `inventory` command after its build to validate counted-loop
-coverage. The dependent summary job's `summarize` command reads all three page
-dumps and raw protocols plus the zero control, then writes the source and ledger
+coverage. Profile mode requires `--page` (ecma262, html5 or apollo11); ledger
+mode accepts no page. The dependent summary job's `summarize` command reads
+all three page dumps and raw protocols plus all three page-specific zero
+controls, then writes the source and ledger
 inventory. Its Callgrind parser resolves compressed function identifiers and
 uses the `Ir` event column. Regular cost rows are exclusive; the cost row
 following a `calls=` marker is an inclusive edge and is excluded from the
@@ -230,6 +241,19 @@ pipeline/layout decisions, and reported no static findings within scope.
 Runtime CI, actual direct-call presence, compiler ledger coverage and real
 profile accounting remain unverified.
 
+For the page-matrix repair, the primary agent reran both allowed local
+handmade dry runs with Python `-I`. `profile.py --dry-run` exited 0 and
+rejected 12 corrupt callsite artifacts, 24 corrupt joins and 5 corrupt driver
+inventories. `inventory.py --dry-run` exited 0 and rejected 18 corrupt
+artifacts, including missing and nonzero page-specific zero controls. Neither
+command ran a compiler, build, renderer or test suite.
+
+A separate fresh `gpt-6.1-sol` agent at high effort reviewed all four changed
+files read-only against base `ecf972e`, the project checklist and applicable
+pipeline/layout decisions, and reported no static findings within scope.
+Actual matrix jobs, identical driver bytes, all three page profiles and the
+complete CSV inventory remain pending CI.
+
 ## Results
 
 On 2026-10-11 the owner reported that [the first inventory CI run](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38192419000)
@@ -238,6 +262,15 @@ build at its 600-second cap. The run logs could not be retrieved in this
 session, so these are owner-reported observations, not independently verified
 measurements. They motivate separate build jobs and a 40-minute ledger build
 cap; they establish no renderer performance result or instruction inventory.
+
+The owner subsequently reported that [the split-job inventory run](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38194443385)
+completed the ledger in about 10 minutes and passed the sequential build and
+direct-call check. Its ECMA262 pilot took 117.7 seconds, then the former
+remaining-page budget gate stopped because its 941-second caps exceeded the
+928 seconds available. These owner-reported observations have not been
+independently verified from run logs. They motivate one independent page job
+per profile rather than reducing work or weakening the accounting controls;
+they establish no renderer performance conclusion or complete inventory.
 
 Pending CI: no instruction costs, regenerated ledger counts or dependency
 classifications are claimed yet. Archive the complete Actions

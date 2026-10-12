@@ -82,15 +82,31 @@ def parse_direct_calls(text, entry=ENTRY, symbol_address=None):
     return callsites
 
 
-def validate_join(left, right, revision, run_id):
+def validate_join(left, right, revision, run_id, include_inputs=False, expected_page=None):
     """Reject artifacts that disagree about the source or pinned compiler."""
     keys = ('workflow_revision', 'source_revision', 'workflow_run_id', 'whitefoot_pin',
             'compiler_sha256', 'compiler_release_manifest', 'source_sha256', 'methodology_sha256')
+    if include_inputs:
+        keys += ('inputs', 'fonts')
     for key in keys:
         if key not in left or key not in right or left[key] != right[key]:
-            raise ValueError(('profile/ledger provenance differs or is missing', key))
+            raise ValueError(('artifact provenance differs or is missing', key))
     if left['workflow_revision'] != revision or left['source_revision'] != revision or left['workflow_run_id'] != run_id:
         raise ValueError('artifacts do not belong to this checked-out workflow run')
+    if expected_page is not None and left.get('page') != expected_page:
+        raise ValueError(('artifact page differs or is missing', expected_page, left.get('page')))
+
+
+def validate_page_drivers(hashes):
+    """Only one identical SHA-256 across all three page jobs may be joined."""
+    if set(hashes) != set(PAGES):
+        raise ValueError(('page driver inventory must contain exactly the three pages', sorted(hashes)))
+    if any(not isinstance(value, str) or re.fullmatch(r'[0-9a-f]{64}', value) is None
+           for value in hashes.values()):
+        raise ValueError('page driver hash missing or not a SHA-256 digest')
+    if len(set(hashes.values())) != 1:
+        raise ValueError(('sequential page drivers differ', hashes))
+    return hashes[PAGES[0]]
 
 
 def dry_run():
@@ -149,12 +165,49 @@ def dry_run():
             rejected += 1
         else:
             raise AssertionError('accepted artifacts from another workflow run')
-    print(f'handmade dry-run passed; {len(variants) + 1} corrupt callsite artifacts and {rejected} corrupt joins rejected')
+    page_provenance = {**provenance, 'page': 'ecma262',
+                       'inputs': {'page': 'input-hash'}, 'fonts': {'font': 'font-hash'}}
+    validate_join(page_provenance, dict(page_provenance), 'revision', 'run',
+                  include_inputs=True, expected_page='ecma262')
+    for key in ('inputs', 'fonts'):
+        for wrong in ({**page_provenance, key: {'other': 'hash'}},
+                      {name: value for name, value in page_provenance.items() if name != key}):
+            try:
+                validate_join(page_provenance, wrong, 'revision', 'run', include_inputs=True)
+            except ValueError:
+                rejected += 1
+            else:
+                raise AssertionError(('accepted differing or missing page inputs/fonts', key))
+    for wrong in ({**page_provenance, 'page': 'html5'},
+                  {name: value for name, value in page_provenance.items() if name != 'page'}):
+        try:
+            validate_join(wrong, provenance, 'revision', 'run', expected_page='ecma262')
+        except ValueError:
+            rejected += 1
+        else:
+            raise AssertionError('accepted a mislabeled or missing artifact page')
+    drivers = {page: 'a' * 64 for page in PAGES}
+    if validate_page_drivers(drivers) != 'a' * 64:
+        raise AssertionError('identical three-page drivers did not join')
+    wrong_drivers = [{**drivers, 'html5': 'b' * 64},
+                     {page: value for page, value in drivers.items() if page != 'html5'},
+                     {**drivers, 'html5': ''}, {**drivers, 'extra': 'a' * 64},
+                     {page: 'not-a-sha256' for page in PAGES}]
+    for wrong in wrong_drivers:
+        try:
+            validate_page_drivers(wrong)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(('accepted incomplete or differing page driver inventory', wrong))
+    print(f'handmade dry-run passed; {len(variants) + 1} corrupt callsite artifacts, '
+          f'{rejected} corrupt joins and {len(wrong_drivers)} corrupt page-driver inventories rejected')
 
 
 class Investigation:
-    def __init__(self, mode):
+    def __init__(self, mode, page=None):
         self.mode = mode
+        self.page = page
         self.started = time.monotonic()
         self.budget = min(BUDGET_SECONDS[mode], float(os.environ['LAYOUT_PAR_DEADLINE']) - time.time())
         if self.budget <= RESERVE_SECONDS:
@@ -196,7 +249,7 @@ class Investigation:
                         code = process.wait()
             except OSError as error:
                 problem = str(error)
-        record = dict(label=label, mode=self.mode, command=list(map(str, command)),
+        record = dict(label=label, mode=self.mode, page=self.page, command=list(map(str, command)),
                       cwd=str(cwd.relative_to(ROOT)) if cwd != ROOT else '.',
                       workers=1, allowance_seconds=allowance,
                       elapsed_seconds=time.monotonic() - started,
@@ -270,6 +323,7 @@ class Investigation:
                          if path.is_file() and (path.suffix in {'.wf', '.wfm'} or path.name == 'modules.wfg'))
         metadata = dict(
             mode=self.mode,
+            page=self.page,
             workflow_revision=os.environ['GITHUB_SHA'],
             source_revision=(OUT / 'revision.raw').read_text().strip(),
             workflow_run_id=os.environ['GITHUB_RUN_ID'],
@@ -369,53 +423,46 @@ class Investigation:
         return record
 
     def collect(self):
-        self.profile('ecma262', 0, 240, label='zero')
-        pilot = self.profile('ecma262', 1, 300)
-        # This elapsed time chooses a bounded process budget only. A single
-        # hosted observation gives neither timing spread nor speed evidence.
-        sizes = {page: sum((ROOT / path).stat().st_size for path in
-                           [str(DATA / (page + '.html')),
-                            *[item.rsplit('=', 1)[1] for item in sheets(page)]])
-                 for page in PAGES}
-        caps = {page: max(120, 4 * pilot['elapsed_seconds'] *
-                         max(1, sizes[page] / sizes['ecma262']))
-                for page in PAGES[1:]}
-        selection = dict(pilot=pilot, input_bytes=sizes, timeout_seconds=caps,
+        self.profile(self.page, 0, 240, label=self.page + '-zero')
+        pilot = self.profile(self.page, 1, 300)
+        # This one bounded pass is also this page's retained profile. There is
+        # no larger repetition batch or extrapolation to another page.
+        selection = dict(page=self.page, pilot=pilot, repetitions=1,
+                         profile_reused=True, timeout_seconds=300,
                          remaining_budget_seconds=self.remaining(),
-                         scale_rule='4x pilot elapsed, at least 120s, scaled by HTML+sheet bytes; never below pilot size',
+                         scale_rule='one bounded pass for this page; no extrapolation or larger batch',
                          evidence_scope='administrative wall-time budget, no performance conclusion')
         write_json(OUT / 'scale-selection.json', selection)
-        if sum(caps.values()) + RESERVE_SECONDS > self.remaining():
-            raise RuntimeError(('remaining one-pass profiles require a separately chosen bounded batch', selection))
-        for page in PAGES[1:]:
-            self.profile(page, 1, caps[page])
 
 
 def main():
     global OUT
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('mode', nargs='?', choices=('ledger', 'profile'))
+    parser.add_argument('--page', choices=PAGES)
     parser.add_argument('--dry-run', action='store_true')
     args = parser.parse_args()
     if args.dry_run:
-        if args.mode is not None:
-            parser.error('--dry-run accepts no job mode')
+        if args.mode is not None or args.page is not None:
+            parser.error('--dry-run accepts no job mode or page')
         dry_run()
         return
     if args.mode is None:
         parser.error('expected ledger or profile')
+    if (args.mode == 'profile') != (args.page is not None):
+        parser.error('profile requires --page; ledger accepts no --page')
     if os.environ.get('GITHUB_ACTIONS') != 'true':
         raise ValueError('this investigation runs only in CI')
-    OUT = ROOT / ('build/layout-par-ledger' if args.mode == 'ledger' else 'build/layout-par')
+    OUT = ROOT / ('build/layout-par-ledger' if args.mode == 'ledger' else 'build/layout-par-pages/' + args.page)
     OUT.mkdir(parents=True, exist_ok=True)
     if (OUT / 'processes.jsonl').exists():
         raise ValueError('output directory must not contain a prior invocation')
     started = time.monotonic()
     investigation = None
-    status = dict(status='incomplete', mode=args.mode,
+    status = dict(status='incomplete', mode=args.mode, page=args.page,
                   started_utc=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
     try:
-        investigation = Investigation(args.mode)
+        investigation = Investigation(args.mode, args.page)
         pin = (ROOT / 'whitefoot.pin').read_text().strip()
         match = re.fullmatch(r'release = (wf-(?:exp-)?[0-9a-f]{12})', pin)
         if not match:
