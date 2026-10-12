@@ -35,10 +35,36 @@ jobs:
           echo "DESIGN_REVIEW_BASE=$design_review_base" >> "$GITHUB_ENV"
           git log --oneline -1 "$design_review_base"
 
+      # The Makefile builds with whitefootc --cache build/whitefoot-cache
+      # --fragments function, and the cache's records are keyed by the
+      # compiler's SHA-256, so a record made by one run serves any later run
+      # with the same compiler and no other: a moved pin or a different
+      # compiler finds none of them, and a restored cache only skips work the
+      # compiler would otherwise repeat. Reusing it across runs is what the
+      # cache is designed for. build/whitefoot holds the downloaded compiler
+      # release, which the pin names and make checked against the release's
+      # SHA256SUMS when it was downloaded; a different pin never finds it.
+      # The key names the runner OS, the pin and this commit. restore-keys
+      # restores the newest cache of the same OS and pin, that is the newest
+      # earlier run, and every run saves its own, because a key is never
+      # overwritten. The save runs even when the check fails, so the push that
+      # fixes a failure starts warm. No check is skipped: make check runs in
+      # full on whatever was restored.
+      - name: Restore the compiler and its cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            build/whitefoot
+            build/whitefoot-cache
+          key: whitefoot-${{ runner.os }}-${{ hashFiles('whitefoot.pin') }}-${{ github.sha }}
+          restore-keys: |
+            whitefoot-${{ runner.os }}-${{ hashFiles('whitefoot.pin') }}-
+
       # whitefootc compiles programs with /usr/bin/clang and links a cached
       # build's fragments with LLD on Linux; both must be the LLVM major the
       # pinned release was built with, which make toolchain installs
-      # (whitefoot-kit/downstream.md).
+      # (whitefoot-kit/downstream.md). It reads the release manifest from the
+      # compiler directory the cache may have restored.
       - name: Install the host toolchain
         run: |
           make toolchain
@@ -46,3 +72,12 @@ jobs:
 
       - name: Check
         run: make check
+
+      - name: Save the compiler and its cache
+        if: ${{ !cancelled() }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            build/whitefoot
+            build/whitefoot-cache
+          key: whitefoot-${{ runner.os }}-${{ hashFiles('whitefoot.pin') }}-${{ github.sha }}

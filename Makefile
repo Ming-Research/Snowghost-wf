@@ -75,21 +75,25 @@ $(BUILD)/static_atoms $(BUILD)/dom_selftest: compiler FORCE
 # The engine binary must stay within 10 MB, a hard limit the owner set on
 # 2026-10-12; if a change cannot meet it the work goes back to the owner, and
 # nobody raises it here. BINARY_SIZE_LIMIT is that one constant, in bytes
-# (10 * 1024 * 1024); it is overridable on the command line only to show the
-# check failing, as in `make binary-size-check BINARY_SIZE_LIMIT=1048576`.
+# (10 * 1024 * 1024). It is set with := so that a variable in the environment
+# cannot loosen the gate; only an explicit command-line override changes it,
+# to show the check failing, as in
+# `make binary-size-check BINARY_SIZE_LIMIT=1048576`.
 #
-# No shipped engine binary exists yet, so the check measures the largest
-# full-pipeline driver: layout_oracle, which runs HTML parsing, style, text
-# and layout and applies edits incrementally, built with --par (the larger of its
-# two builds) and left unstripped as linked.
-BINARY_SIZE_LIMIT ?= 10485760
+# No shipped engine binary exists yet (board item sg-target-binary-size), so
+# until one does the check measures a stand-in: layout_oracle, the driver that
+# runs the whole pipeline (HTML parsing, style, text and layout, and edits
+# applied incrementally), built with --par and left unstripped as linked. CI
+# gates the Linux x86-64 build only. Which binary, which build flags, which
+# platform and whether to strip are open choices; the measurements that
+# inform them are in research/investigations/binary-size/.
 ENGINE_BINARY := $(BUILD)/layout_oracle_par
 
 $(ENGINE_BINARY): compiler FORCE
 	@mkdir -p $(BUILD)
 	@cd $(ROOT)/renderer && $(WFC) --par --graph modules.wfg --entry layout_oracle -o $@
 
-# Prints the engine binary's size and the limit on every run, and fails when
+# Prints the stand-in binary's size and the limit on every run, and fails when
 # the size exceeds the limit. wc -c reads the size the same way on Linux and
 # macOS, where stat's flags differ.
 binary-size-check: $(ENGINE_BINARY)
