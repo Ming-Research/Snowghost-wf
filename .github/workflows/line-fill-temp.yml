@@ -9,7 +9,12 @@
 # The apollo11-parity job (research/parity-text) compares apollo11's
 # full-page layout with Chromium's at the branch's head and at its base
 # commit, to show that small-caps abbr elements and kerning across element
-# boundaries moved the page's text widths to Chromium's.
+# boundaries moved the page's text widths to Chromium's. It fails when an abbr
+# in small-caps or a link followed by punctuation still differs from Chromium,
+# unless its row is a known miss of another defect (KNOWN_MISSES in
+# widths.py, each with its board item); when a known miss equals Chromium
+# (the list is stale); or when the Kennedy link, the row the issue was found
+# on, differs from Chromium.
 name: line-fill-temp
 
 on:
@@ -140,7 +145,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
-      BASE: e3a1560
+      # research/line-fill's head this branch is merged with, so the base
+      # differs from the head by this branch's work alone.
+      BASE: 62b86f0
     steps:
       - uses: actions/checkout@v4
         with:
@@ -314,24 +321,53 @@ jobs:
                   return 'STILL-WRONG'
               return 'BASE-EQUAL' if base_ok else 'FIXED'
 
+          # Rows of the class that differ from Chromium for a cause outside
+          # this branch's fix (their head equals their base): index, board
+          # item, reason. Each must stay STILL-WRONG; one that equals
+          # Chromium makes the list stale and fails the job.
+          KNOWN_MISSES = {
+              7743: ('sg-pen-rounded-advance', "the line pen adds exact advances, not each text piece's width rounded up to 1/64 px"),
+              7923: ('sg-pen-rounded-advance', "the line pen adds exact advances, not each text piece's width rounded up to 1/64 px"),
+              7954: ('sg-line-end-reshape', 'no reshape at the line end after the trailing space is dropped, the text having a background'),
+          }
+          # The link the defect was found on ("Kennedy,"): it must equal Chromium.
+          REQUIRED = {1224: 'Kennedy'}
+
           print('kind  index  caps        next  chromium(element|text)  base(element|text)  head(element|text)  verdict  text')
           counts = {}
-          wrong = False
+          verdicts = {}
+          failures = []
           ordered = sorted(rows, key=lambda r: (r['kind'], r['caps'] != 'small-caps', r['index']))
           for row in ordered:
               c, b, h = (widths(n, row) for n in ('chromium', 'base', 'head'))
               v = verdict(row)
+              verdicts[row['index']] = v
               group = row['kind'] + (' small-caps' if row['caps'] == 'small-caps' else '')
               counts.setdefault(group, {}).setdefault(v, 0)
               counts[group][v] += 1
-              if v == 'STILL-WRONG' and (row['kind'] == 'link' or row['caps'] == 'small-caps'):
-                  wrong = True
+              in_class = row['kind'] == 'link' or row['caps'] == 'small-caps'
+              if v == 'STILL-WRONG' and in_class and row['index'] not in KNOWN_MISSES:
+                  failures.append(f"{row['kind']} {row['index']} differs from Chromium and is no known miss")
               print(f"{row['kind']:5} {row['index']:6} {row['caps']:11} {row['following'] or '-':4}  {shown(c[0])}|{shown(c[1])}  {shown(b[0])}|{shown(b[1])}  {shown(h[0])}|{shown(h[1])}  {v}  {row['text']}")
           print()
           print('summary (FIXED: base differed from Chromium and the head equals it; BASE-EQUAL: the base already equalled it, so the row does not test the fix; STILL-WRONG: the head differs from Chromium by more than 1/64 px)')
           for group in sorted(counts):
               print(f'  {group}: ' + ', '.join(f'{k} {n}' for k, n in sorted(counts[group].items())))
-          sys.exit(1 if wrong else 0)
+          print()
+          print('known misses (another defect, each a board item)')
+          for index, (key, reason) in sorted(KNOWN_MISSES.items()):
+              v = verdicts.get(index, 'ABSENT')
+              print(f'  {index}: {v}  {key}: {reason}')
+              if v != 'STILL-WRONG':
+                  failures.append(f'known miss {index} ({key}) is {v}, not STILL-WRONG: the list is stale')
+          for index, name in sorted(REQUIRED.items()):
+              v = verdicts.get(index, 'ABSENT')
+              print(f'required: {index} ({name}): {v}')
+              if v not in ('FIXED', 'BASE-EQUAL'):
+                  failures.append(f'{index} ({name}) is {v}, not equal to Chromium')
+          for failure in failures:
+              print('FAIL:', failure)
+          sys.exit(1 if failures else 0)
           PYEOF
           python3 -B build/parity/widths.py | tee build/parity/widths.txt
       - name: Keep the dumps
