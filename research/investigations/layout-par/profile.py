@@ -1,9 +1,10 @@
-"""Temporary CI-only layout profiles, called by par-inventory.yml.
+"""Temporary independent CI ledger/profile jobs for par-inventory.yml.
 
 Keep the untouched production driver and pinned compiler. Remove this harness
 and the workflow once the evidence is archived. inventory.py owns accounting.
 """
 
+import argparse
 import hashlib
 import importlib.util
 import json
@@ -23,7 +24,7 @@ OUT = ROOT / 'build/layout-par'
 DATA = Path('build/research/concurrency')
 ENTRY = 'wf_layout.lay_out'
 PAGES = ('ecma262', 'html5', 'apollo11')
-BUDGET_SECONDS = 25 * 60
+BUDGET_SECONDS = {'profile': 25 * 60, 'ledger': 42 * 60}
 RESERVE_SECONDS = 60
 
 
@@ -47,12 +48,117 @@ def sheets(page):
     raise ValueError(('unknown page', page))
 
 
+def parse_direct_calls(text, entry=ENTRY, symbol_address=None):
+    """Require a real x86 direct call to the exported entry's exact address.
+
+    Input is objdump -d --no-show-raw-insn, not a symbol listing. Header,
+    comment, indirect-call, offset-target and non-call text cannot pass.
+    """
+    header = re.compile(r'^\s*([0-9a-fA-F]+) <([^<>]+)>:\s*$')
+    instruction = re.compile(r'^\s*([0-9a-fA-F]+):\s+(callq?)\s+([0-9a-fA-F]+) <([^<>]+)>\s*$')
+    definitions = [int(match[1], 16) for line in text.splitlines()
+                   if (match := header.fullmatch(line)) and match[2] == entry]
+    if len(definitions) != 1:
+        raise ValueError(('objdump must contain exactly one exported entry definition', entry, definitions))
+    address = definitions[0]
+    if symbol_address is not None and address != symbol_address:
+        raise ValueError(('objdump entry address differs from nm', entry, address, symbol_address))
+    caller = None
+    callsites = []
+    for line_number, line in enumerate(text.splitlines(), 1):
+        if match := header.fullmatch(line):
+            caller = match[2]
+            continue
+        match = instruction.fullmatch(line)
+        if not match or match[4] != entry or int(match[3], 16) != address:
+            continue
+        if caller is None or caller == entry or caller.startswith(entry + '.body'):
+            continue
+        callsites.append(dict(caller=caller, line=line_number,
+                              instruction_address=match[1], mnemonic=match[2],
+                              target_address=match[3], target=entry, raw=line))
+    if not callsites:
+        raise ValueError(('no direct call instruction to the exported layout entry', entry))
+    return callsites
+
+
+def validate_join(left, right, revision, run_id):
+    """Reject artifacts that disagree about the source or pinned compiler."""
+    keys = ('workflow_revision', 'source_revision', 'workflow_run_id', 'whitefoot_pin',
+            'compiler_sha256', 'compiler_release_manifest', 'source_sha256', 'methodology_sha256')
+    for key in keys:
+        if key not in left or key not in right or left[key] != right[key]:
+            raise ValueError(('profile/ledger provenance differs or is missing', key))
+    if left['workflow_revision'] != revision or left['source_revision'] != revision or left['workflow_run_id'] != run_id:
+        raise ValueError('artifacts do not belong to this checked-out workflow run')
+
+
+def dry_run():
+    # Handmade disassembly only: no subprocess, filesystem fixture or build.
+    good = ('0000000000400100 <wf_oracle.layout.drive.resume>:\n'
+            '  400110: call 401000 <wf_layout.lay_out>\n'
+            '  400115: callq 401000 <wf_layout.lay_out>\n'
+            '0000000000401000 <wf_layout.lay_out>:\n'
+            '  401010: ret\n')
+    observed = parse_direct_calls(good, symbol_address=0x401000)
+    if len(observed) != 2 or observed[0]['caller'] != 'wf_oracle.layout.drive.resume':
+        raise AssertionError('valid direct call instructions were not recognized')
+    variants = [
+        good.replace('  400110: call 401000 <wf_layout.lay_out>\n', '').replace('  400115: callq 401000 <wf_layout.lay_out>\n', ''),
+        good.replace('call ', 'jmp ').replace('callq ', 'jmp '),
+        good.replace('<wf_layout.lay_out>\n', '<wf_layout.other>\n'),
+        good.replace('<wf_layout.lay_out>\n', '<wf_layout.lay_out+0x1>\n'),
+        good.replace('call 401000', 'call *%rax # 401000').replace('callq 401000', 'callq *%rax # 401000'),
+        good.replace('  400110:', '# 400110:').replace('  400115:', '# 400115:'),
+        good.replace('call 401000', '.quad 401000').replace('callq 401000', '.quad 401000'),
+        good.replace('call 401000', 'call 402000').replace('callq 401000', 'callq 402000'),
+        good.replace('0000000000400100 <wf_oracle.layout.drive.resume>:\n', ''),
+        good.replace('<wf_oracle.layout.drive.resume>:', '<wf_layout.lay_out.body.llvm.1>:'),
+        good + '0000000000401000 <wf_layout.lay_out>:\n',
+    ]
+    for wrong in variants:
+        try:
+            parse_direct_calls(wrong, symbol_address=0x401000)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(('accepted invalid direct-call evidence', wrong))
+    try:
+        parse_direct_calls(good, symbol_address=0x402000)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('accepted nm/objdump address mismatch')
+    provenance = dict(workflow_revision='revision', source_revision='revision', workflow_run_id='run',
+                      whitefoot_pin='pin', compiler_sha256='compiler', compiler_release_manifest={'commit': 'compiler-source'},
+                      source_sha256={'source': 'hash'}, methodology_sha256={'parser': 'hash'})
+    validate_join(provenance, dict(provenance), 'revision', 'run')
+    rejected = 0
+    for key in provenance:
+        for wrong in ({**provenance, key: 'mismatch'}, {name: value for name, value in provenance.items() if name != key}):
+            try:
+                validate_join(provenance, wrong, 'revision', 'run')
+            except ValueError:
+                rejected += 1
+            else:
+                raise AssertionError(('accepted mismatched or missing join provenance', key))
+    for revision, run_id in (('other-revision', 'run'), ('revision', 'other-run')):
+        try:
+            validate_join(provenance, dict(provenance), revision, run_id)
+        except ValueError:
+            rejected += 1
+        else:
+            raise AssertionError('accepted artifacts from another workflow run')
+    print(f'handmade dry-run passed; {len(variants) + 1} corrupt callsite artifacts and {rejected} corrupt joins rejected')
+
+
 class Investigation:
-    def __init__(self):
+    def __init__(self, mode):
+        self.mode = mode
         self.started = time.monotonic()
-        self.budget = min(BUDGET_SECONDS, float(os.environ['LAYOUT_PAR_DEADLINE']) - time.time())
+        self.budget = min(BUDGET_SECONDS[mode], float(os.environ['LAYOUT_PAR_DEADLINE']) - time.time())
         if self.budget <= RESERVE_SECONDS:
-            raise ValueError('shared workflow deadline leaves no profiling budget')
+            raise ValueError(f'{mode} job deadline leaves no harness budget')
         spec = importlib.util.spec_from_file_location('layout_inventory',
                                                     Path(__file__).with_name('inventory.py'))
         self.accounting = importlib.util.module_from_spec(spec)
@@ -90,7 +196,7 @@ class Investigation:
                         code = process.wait()
             except OSError as error:
                 problem = str(error)
-        record = dict(label=label, command=list(map(str, command)),
+        record = dict(label=label, mode=self.mode, command=list(map(str, command)),
                       cwd=str(cwd.relative_to(ROOT)) if cwd != ROOT else '.',
                       workers=1, allowance_seconds=allowance,
                       elapsed_seconds=time.monotonic() - started,
@@ -138,31 +244,40 @@ class Investigation:
             raise ValueError(('E1 input pin inventory differs', selected))
 
     def provenance(self, compiler):
-        for label, command in (
+        commands = [
             ('revision', ['git', 'rev-parse', 'HEAD']),
             ('submodules', ['git', 'submodule', 'status']),
             ('worktree', ['git', 'status', '--porcelain']),
             ('clang-version', ['/usr/bin/clang', '--version']),
             ('linker-version', ['ld.lld', '--version']),
-            ('profiler-version', ['valgrind', '--version']),
-            ('font-packages', ['dpkg-query', '-W', 'fonts-*']),
             ('machine', ['lscpu']),
-        ):
+        ]
+        if self.mode == 'profile':
+            commands += [('profiler-version', ['valgrind', '--version']),
+                         ('font-packages', ['dpkg-query', '-W', 'fonts-*'])]
+        for label, command in commands:
             self.run(label, command, 10)
-        files = [ROOT / DATA / (page + '.html') for page in PAGES]
-        files += [ROOT / mapping.rsplit('=', 1)[1]
-                  for page in PAGES for mapping in sheets(page)]
-        files += [ROOT / 'renderer/style/ua.css']
-        fonts = sorted((ROOT / 'build/fonts').glob('*'))
-        if not fonts or any(not path.is_file() or path.is_symlink() for path in fonts):
-            raise ValueError('oracle fonts must be a nonempty set of copied files')
+        files, fonts = [], []
+        if self.mode == 'profile':
+            files = [ROOT / DATA / (page + '.html') for page in PAGES]
+            files += [ROOT / mapping.rsplit('=', 1)[1]
+                      for page in PAGES for mapping in sheets(page)]
+            files += [ROOT / 'renderer/style/ua.css']
+            fonts = sorted((ROOT / 'build/fonts').glob('*'))
+            if not fonts or any(not path.is_file() or path.is_symlink() for path in fonts):
+                raise ValueError('oracle fonts must be a nonempty set of copied files')
+        sources = sorted(path for path in (ROOT / 'renderer').rglob('*')
+                         if path.is_file() and (path.suffix in {'.wf', '.wfm'} or path.name == 'modules.wfg'))
         metadata = dict(
+            mode=self.mode,
             workflow_revision=os.environ['GITHUB_SHA'],
+            source_revision=(OUT / 'revision.raw').read_text().strip(),
             workflow_run_id=os.environ['GITHUB_RUN_ID'],
             system=platform.uname()._asdict(),
             compiler_release_manifest=json.loads(compiler.with_name('whitefoot-release.json').read_text()),
             whitefoot_pin=(ROOT / 'whitefoot.pin').read_text(),
             compiler_sha256=digest(compiler),
+            source_sha256={str(path.relative_to(ROOT)): digest(path) for path in sources},
             inputs={str(path.relative_to(ROOT)): digest(path) for path in files},
             fonts={str(path.relative_to(ROOT)): digest(path) for path in fonts},
             methodology_sha256={str(path.relative_to(ROOT)): digest(path) for path in (
@@ -181,36 +296,45 @@ class Investigation:
         # The fixture and pinned downloads remain recoverable independently of
         # Actions retention, but the actual run also keeps every input byte.
         for folder, sources in (('inputs', files), ('fonts', fonts)):
+            if not sources:
+                continue
             destination = OUT / folder
             destination.mkdir()
             for source in sources:
                 shutil.copyfile(source, destination / source.name)
 
-    def builds(self, compiler):
-        for name, flags in (('seq', []), ('par', ['--par', '--par-ledger'])):
-            cache = ROOT / 'build' / ('layout-par-cache-' + name)
-            if cache.exists():
-                raise ValueError(('fresh build cache required', str(cache)))
-            output = OUT / ('layout-' + name)
-            command = [str(compiler), '--cache', str(cache), '--fragments', 'function',
-                       *flags, '--graph', 'modules.wfg', '--entry', 'layout_oracle',
-                       '-o', str(output)]
-            self.run('build-' + name, command, 600, cwd=ROOT / 'renderer',
-                     stdout_name='par-ledger.log' if name == 'par' else 'build-seq.log')
-        self.run('symbols-seq', ['nm', '--defined-only', str(OUT / 'layout-seq')], 15)
-        names = [line.split()[-1] for line in (OUT / 'symbols-seq.raw').read_text().splitlines()
-                 if line.split()]
-        if names.count(ENTRY) != 1:
-            raise ValueError(('exact layout entry missing or ambiguous; do not change compiler or source',
-                              ENTRY, names.count(ENTRY)))
+    def build(self, compiler):
+        name = 'par' if self.mode == 'ledger' else 'seq'
+        flags = ['--par', '--par-ledger'] if self.mode == 'ledger' else []
+        cache = ROOT / 'build' / ('layout-par-cache-' + name)
+        if cache.exists():
+            raise ValueError(('fresh build cache required', str(cache)))
+        output = OUT / ('layout-' + name)
+        command = [str(compiler), '--cache', str(cache), '--fragments', 'function',
+                   *flags, '--graph', 'modules.wfg', '--entry', 'layout_oracle',
+                   '-o', str(output)]
+        self.run('build-' + name, command, 40 * 60 if self.mode == 'ledger' else 600,
+                 cwd=ROOT / 'renderer',
+                 stdout_name='par-ledger.log' if name == 'par' else 'build-seq.log')
         write_json(OUT / 'drivers.json', {
-            name: dict(sha256=digest(OUT / ('layout-' + name)),
-                       path=str((OUT / ('layout-' + name)).relative_to(ROOT)))
-            for name in ('seq', 'par')})
-        self.run('source-ledger-coverage', [sys.executable, '-I',
-                 'research/investigations/layout-par/inventory.py', 'inventory',
-                 '--root', '.', '--ledger', 'build/layout-par/par-ledger.log',
-                 '--out', 'build/layout-par'], 60)
+            name: dict(sha256=digest(output), path=str(output.relative_to(ROOT)))})
+        if self.mode == 'ledger':
+            self.run('source-ledger-coverage', [sys.executable, '-I',
+                     'research/investigations/layout-par/inventory.py', 'inventory',
+                     '--root', '.', '--ledger', str((OUT / 'par-ledger.log').relative_to(ROOT)),
+                     '--out', str(OUT.relative_to(ROOT))], 60)
+
+    def entry_check(self):
+        self.run('symbols-seq', ['nm', '--defined-only', str(OUT / 'layout-seq')], 15)
+        symbols = [line.split() for line in (OUT / 'symbols-seq.raw').read_text().splitlines()
+                   if line.split() and line.split()[-1] == ENTRY]
+        if len(symbols) != 1 or len(symbols[0]) != 3 or symbols[0][1] not in {'t', 'T'}:
+            raise ValueError(('exact layout entry missing or ambiguous; do not change compiler or source',
+                              ENTRY, symbols))
+        address = int(symbols[0][0], 16)
+        self.run('disassembly-seq', ['objdump', '-d', '--no-show-raw-insn', str(OUT / 'layout-seq')], 60)
+        callsites = parse_direct_calls((OUT / 'disassembly-seq.raw').read_text(), symbol_address=address)
+        write_json(OUT / 'direct-calls.json', dict(entry=ENTRY, symbol_address=hex(address), callsites=callsites))
 
     def profile(self, page, count, cap, label=None):
         label = label or page
@@ -268,33 +392,52 @@ class Investigation:
 
 
 def main():
+    global OUT
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('mode', nargs='?', choices=('ledger', 'profile'))
+    parser.add_argument('--dry-run', action='store_true')
+    args = parser.parse_args()
+    if args.dry_run:
+        if args.mode is not None:
+            parser.error('--dry-run accepts no job mode')
+        dry_run()
+        return
+    if args.mode is None:
+        parser.error('expected ledger or profile')
     if os.environ.get('GITHUB_ACTIONS') != 'true':
         raise ValueError('this investigation runs only in CI')
+    OUT = ROOT / ('build/layout-par-ledger' if args.mode == 'ledger' else 'build/layout-par')
     OUT.mkdir(parents=True, exist_ok=True)
     if (OUT / 'processes.jsonl').exists():
         raise ValueError('output directory must not contain a prior invocation')
     started = time.monotonic()
     investigation = None
-    status = dict(status='incomplete', started_utc=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
+    status = dict(status='incomplete', mode=args.mode,
+                  started_utc=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
     try:
-        investigation = Investigation()
+        investigation = Investigation(args.mode)
         pin = (ROOT / 'whitefoot.pin').read_text().strip()
         match = re.fullmatch(r'release = (wf-(?:exp-)?[0-9a-f]{12})', pin)
         if not match:
             raise ValueError('unexpected Whitefoot pin')
         compiler = ROOT / 'build/whitefoot' / match[1] / 'whitefootc'
-        investigation.inputs()
+        if args.mode == 'profile':
+            investigation.inputs()
         investigation.provenance(compiler)
-        investigation.builds(compiler)
-        investigation.collect()
-        status['status'] = 'profiles-complete-accounting-pending'
+        investigation.build(compiler)
+        if args.mode == 'profile':
+            investigation.entry_check()
+            investigation.collect()
+            status['status'] = 'profiles-complete-accounting-pending'
+        else:
+            status['status'] = 'ledger-complete-coverage-checked'
     except Exception as error:
         status['reason'] = repr(error)
         raise
     finally:
         status['elapsed_seconds'] = time.monotonic() - started
         status['remaining_budget_seconds'] = investigation.remaining() if investigation else None
-        write_json(OUT / 'profile-status.json', status)
+        write_json(OUT / ('ledger-status.json' if args.mode == 'ledger' else 'profile-status.json'), status)
 
 
 if __name__ == '__main__':

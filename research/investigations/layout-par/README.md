@@ -57,14 +57,18 @@ blocks profiling and requires investigation.
 
 The temporary [`par-inventory.yml`](../../../.github/workflows/par-inventory.yml)
 workflow runs on GitHub-hosted Ubuntu 24.04. The [`profile.py`](profile.py)
-harness refuses local execution. It creates independent empty caches and
-records the exact commands, exits, timeout budgets, elapsed durations, compiler
+harness has independent `ledger` and `profile` job modes and refuses local
+execution except the handmade `--dry-run` controls. The jobs start in parallel:
+neither build or budget depends on the other. They create independent empty
+caches and record the exact commands, exits, timeout budgets, elapsed durations, compiler
 release manifest, compiler and driver hashes, source revision, submodules,
-tool versions and input/font hashes in `build/layout-par/`.
-The artifact also preserves the actual input and font bytes and both drivers;
-compiler cache directories stay outside the evidence archive.
+tool versions in their separate output roots. The ledger job writes
+`build/layout-par-ledger/`; the profiling job writes `build/layout-par/` and
+also records input/font hashes and preserves the actual input and font bytes.
+Each job always uploads its own raw artifact, including partial failures and
+its driver when built. Compiler cache directories stay outside the archive.
 
-The historical 49 admitted / 340 refused count in board item `sg-bl-02-82`
+The historical 49 of 340 admitted count in board item `sg-bl-02-82`
 is background, not the current inventory or a performance result. This run
 must regenerate its counts from the complete fresh ledger and associate
 instruction costs before deciding which refusal matters.
@@ -100,10 +104,25 @@ The sequential build command, from `renderer/`, is:
   -o "$GITHUB_WORKSPACE/build/layout-par/layout-seq"
 ```
 
-The independently cached ledger build adds `--par --par-ledger`. Its complete
-standard output is retained as `par-ledger.log`, with diagnostics retained
-separately. `nm --defined-only` must find exactly `wf_layout.lay_out` in the
-sequential binary before collection starts.
+The ledger job's independently cached build adds `--par --par-ledger`, writes
+`build/layout-par-ledger/layout-par` and retains complete standard output as
+`build/layout-par-ledger/par-ledger.log`, with diagnostics separately. It runs
+the complete source-to-ledger coverage check before publishing its successful
+artifact. The profiling job can proceed without waiting for that compilation.
+
+Before any profile, `nm --defined-only` must find exactly the exported text
+symbol `wf_layout.lay_out` in the sequential binary. Symbol presence alone
+does not show that the driver still calls it after optimization, so
+`objdump -d --no-show-raw-insn` must also show a direct x86 `call` or `callq`
+instruction to `<wf_layout.lay_out>` at the same address. Function headers,
+comments, data, indirect calls, target offsets, other callees and tail jumps
+cannot satisfy this check. Calls from the entry itself or its body variants
+are excluded. The artifact retains full disassembly and structured callsite
+records with caller, disassembly line, instruction and target addresses and
+the raw instruction. If no such callsite exists, profiling stops before the
+zero control; no source or compiler change is made to invent one. Static
+callsite presence still does not prove dynamic execution; the positive pilot
+and its exact root accounting remain required.
 
 The pilot profiles ECMA262 once, with the same options later used for HTML5
 and Apollo11:
@@ -127,34 +146,52 @@ the reconciled exclusive total, excluding internal family edges.
 Collection uses only this entry toggle; there are no before/after dumps and
 no call-count measurements or conclusions.
 
-The workflow starts a shared 40-minute deadline in its first step. The harness
-uses a monotonic budget capped at 25 minutes and at the time left before that
-deadline, including input preparation, metadata, two builds and four profiler
-processes. Each build is capped at 10 minutes, the zero control at 4 minutes
-and the pilot at 5 minutes. The
-pilot's measured process duration is reused to choose remaining profile caps:
+The ledger job starts its own 52-minute deadline in its first step and has a
+55-minute job cap. Its harness budget is the lesser of 42 minutes and the time
+left before that deadline, with the ledger build alone capped at 40 minutes;
+setup is capped at 9 minutes. Its recorded command allowance and duration show
+any clipping by its own deadline. Neither the sequential build nor a profile
+consumes this ledger budget.
+
+The profiling job starts its own 40-minute deadline and retains a 45-minute
+job cap. Its harness budget is the lesser of 25 minutes and the time left
+before its deadline, including input preparation, metadata, the sequential
+build, boundary checks and four profiler processes. Its sequential build is
+capped at 10 minutes, the zero control at 4 minutes and the pilot at 5 minutes.
+The pilot's measured process duration is reused to choose remaining profile caps:
 four times its duration, scaled upward by HTML plus loaded-sheet byte size,
 with a two-minute minimum. This conservative scheduling rule is not a
 performance model. If those caps do not fit the remaining budget, the job
 stops with retained evidence and a request for a separately bounded batch.
-The job itself is capped at 45 minutes. Timeout, incomplete dumps and missing
-controls never count as completed pages.
+Timeout, incomplete dumps and missing controls never count as completed pages.
+
+A third job needs both jobs to succeed and downloads their separate artifacts.
+Before joining, it requires equal actual source and workflow revisions, run
+identity, Whitefoot pin, compiler executable hash, release manifest, renderer
+source hashes and methodology hashes. It verifies the downloaded drivers
+against their recorded hashes. It then summarizes the profiles against the
+downloaded ledger and uploads a summary artifact containing both evidence
+directories. A failed build or mismatched artifact cannot produce a completed
+inventory.
 
 The accounting CLI is:
 
 ```sh
 python3 -I research/investigations/layout-par/inventory.py --dry-run
+python3 -I research/investigations/layout-par/profile.py --dry-run
+python3 -I research/investigations/layout-par/profile.py ledger
+python3 -I research/investigations/layout-par/profile.py profile
 python3 -I research/investigations/layout-par/inventory.py inventory \
-  --root . --ledger build/layout-par/par-ledger.log --out build/layout-par
+  --root . --ledger build/layout-par-ledger/par-ledger.log --out build/layout-par-ledger
 python3 -I research/investigations/layout-par/inventory.py summarize \
-  --root . --ledger build/layout-par/par-ledger.log --out build/layout-par
+  --root . --ledger build/layout-par-ledger/par-ledger.log --out build/layout-par
 ```
 
-The first command supplies handmade parser rejection controls, without
-building or running the renderer. The harness runs the second command after
-both builds and before profiling to validate counted-loop coverage. The third
-reads all three page dumps and
-raw protocols plus the zero control, then writes the source and ledger
+The dry runs supply handmade parser and provenance rejection controls, without
+building or running the renderer. The two job modes run only in CI. The ledger
+mode invokes the `inventory` command after its build to validate counted-loop
+coverage. The dependent summary job's `summarize` command reads all three page
+dumps and raw protocols plus the zero control, then writes the source and ledger
 inventory. Its Callgrind parser resolves compressed function identifiers and
 uses the `Ir` event column. Regular cost rows are exclusive; the cost row
 following a `calls=` marker is an inclusive edge and is excluded from the
@@ -166,7 +203,8 @@ and [Callgrind manual](https://valgrind.org/docs/manual/cl-manual.html).
 
 ## Preparation checks
 
-The allowed local `python3 -I research/investigations/layout-par/inventory.py --dry-run`
+Initial preparation, before the budget repair: the allowed local
+`python3 -I research/investigations/layout-par/inventory.py --dry-run`
 used handmade source, ledger and profile fixtures; it ran no compiler, build,
 renderer or test suite. The final repeat after preparation edits passed with
 exit 0 and rejected 15 corrupt artifacts.
@@ -177,17 +215,39 @@ decisions. It found two defects: valid Callgrind rows with omitted trailing
 event costs were rejected, and an invented permission condition `12` was
 accepted. Both are fixed and covered by handmade fixtures, and the reviewer
 reported no unresolved static findings within scope. CI gates, actual compiler
-ledger coverage and real profile accounting remain unverified.
+ledger coverage and real profile accounting remain unverified. This initial
+review does not cover the later job split or direct-call validation.
+
+After the budget repair, the primary agent ran the allowed local
+`python3 -I research/investigations/layout-par/profile.py --dry-run` on handmade
+disassembly and provenance samples. It exited 0 and rejected 12 corrupt
+callsite artifacts and 18 corrupt joins, without running a compiler, build,
+renderer or test suite.
+
+A separate fresh `gpt-6.1-sol` agent at high effort reviewed the three changed
+files read-only against base `af9eb26`, the project checklist and applicable
+pipeline/layout decisions, and reported no static findings within scope.
+Runtime CI, actual direct-call presence, compiler ledger coverage and real
+profile accounting remain unverified.
 
 ## Results
+
+On 2026-10-11 the owner reported that [the first inventory CI run](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38192419000)
+completed the sequential build in about 6.4 minutes and timed out the ledger
+build at its 600-second cap. The run logs could not be retrieved in this
+session, so these are owner-reported observations, not independently verified
+measurements. They motivate separate build jobs and a 40-minute ledger build
+cap; they establish no renderer performance result or instruction inventory.
 
 Pending CI: no instruction costs, regenerated ledger counts or dependency
 classifications are claimed yet. Archive the complete Actions
 artifact, the run link, checked-out revision, reconciled page totals, unmapped
 functions and review scope here when they exist. Retain failed pilots and
 their process records so later runs can justify a changed batch. The
-`profile-status.json` file describes collection only; successful inventory
-generation and the workflow result establish whether accounting completed.
+`profile-status.json` file describes collection only; `ledger-status.json`
+describes compilation and coverage. Matched `join-provenance.json`, successful
+inventory generation and the dependent job's result establish whether
+accounting completed.
 
 The workflow and `profile.py` are temporary experiment machinery. Remove them
 after their raw evidence is archived and before this investigation is marked

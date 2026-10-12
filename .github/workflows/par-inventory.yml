@@ -15,12 +15,50 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  inventory:
+  ledger:
+    if: github.ref == 'refs/heads/research/layout-par-inventory'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - name: Ledger job deadline
+        run: echo "LAYOUT_PAR_DEADLINE=$(( $(date +%s) + 52 * 60 ))" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: Pinned ledger compiler toolchain
+        timeout-minutes: 9
+        run: |
+          set -euo pipefail
+          mkdir -p build/layout-par-ledger
+          trap 'setup_exit=$?; echo "$setup_exit" > build/layout-par-ledger/setup.exit' EXIT
+          {
+            make -s toolchain compiler
+          } > build/layout-par-ledger/setup.log 2>&1
+
+      - name: Source and instruction parser rejection controls
+        timeout-minutes: 1
+        run: python3 -I research/investigations/layout-par/inventory.py --dry-run
+
+      - name: Fresh parallel build and complete source-to-ledger coverage
+        timeout-minutes: 43
+        run: python3 -I research/investigations/layout-par/profile.py ledger
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: layout-par-ledger-${{ github.sha }}-${{ github.run_id }}
+          path: build/layout-par-ledger/
+          if-no-files-found: warn
+
+  profile:
     if: github.ref == 'refs/heads/research/layout-par-inventory'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - name: Shared investigation deadline
+      - name: Profiling job deadline
         run: echo "LAYOUT_PAR_DEADLINE=$(( $(date +%s) + 40 * 60 ))" >> "$GITHUB_ENV"
 
       - uses: actions/checkout@v4
@@ -28,7 +66,7 @@ jobs:
           submodules: true
           fetch-depth: 0
 
-      - name: Pinned compiler toolchain, profiler and oracle fonts
+      - name: Pinned sequential compiler toolchain, profiler and oracle fonts
         timeout-minutes: 9
         run: |
           set -euo pipefail
@@ -40,21 +78,82 @@ jobs:
             make -s toolchain compiler oracle-fonts
           } > build/layout-par/setup.log 2>&1
 
-      - name: Instruction parser rejection controls
+      - name: Instruction and direct-call parser rejection controls
         timeout-minutes: 1
-        run: python3 -I research/investigations/layout-par/inventory.py --dry-run
+        run: |
+          set -euo pipefail
+          python3 -I research/investigations/layout-par/inventory.py --dry-run
+          python3 -I research/investigations/layout-par/profile.py --dry-run
 
-      - name: Fresh builds, zero control and bounded single-pass profiles
+      - name: Fresh sequential build, direct-call check and bounded profiles
         timeout-minutes: 26
-        run: python3 -I research/investigations/layout-par/profile.py
-
-      - name: Reconciled instruction and compiler-permission inventory
-        timeout-minutes: 1
-        run: python3 -I research/investigations/layout-par/inventory.py summarize --root . --ledger build/layout-par/par-ledger.log --out build/layout-par
+        run: python3 -I research/investigations/layout-par/profile.py profile
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: layout-par-${{ github.sha }}-${{ github.run_id }}
+          name: layout-par-profile-${{ github.sha }}-${{ github.run_id }}
           path: build/layout-par/
+          if-no-files-found: warn
+
+  summarize:
+    if: github.ref == 'refs/heads/research/layout-par-inventory'
+    needs: [ledger, profile]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: layout-par-ledger-${{ github.sha }}-${{ github.run_id }}
+          path: build/layout-par-ledger
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: layout-par-profile-${{ github.sha }}-${{ github.run_id }}
+          path: build/layout-par
+
+      - name: Require the same source and pinned compiler before joining
+        timeout-minutes: 1
+        run: |
+          python3 -I - <<'PY'
+          import hashlib
+          import importlib.util
+          import json
+          import os
+          from pathlib import Path
+          profile = Path('build/layout-par')
+          ledger = Path('build/layout-par-ledger')
+          left = json.loads((profile / 'provenance.json').read_text())
+          right = json.loads((ledger / 'provenance.json').read_text())
+          spec = importlib.util.spec_from_file_location('profile_harness', 'research/investigations/layout-par/profile.py')
+          harness = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(harness)
+          harness.validate_join(left, right, os.environ['GITHUB_SHA'], os.environ['GITHUB_RUN_ID'])
+          for folder, name in ((profile, 'seq'), (ledger, 'par')):
+              driver = folder / ('layout-' + name)
+              recorded = json.loads((folder / 'drivers.json').read_text())[name]['sha256']
+              if hashlib.sha256(driver.read_bytes()).hexdigest() != recorded:
+                  raise ValueError(('downloaded driver hash differs', name))
+          (profile / 'join-provenance.json').write_text(json.dumps({
+              'status': 'matched', 'workflow_revision': left['workflow_revision'],
+              'compiler_sha256': left['compiler_sha256'], 'whitefoot_pin': left['whitefoot_pin']
+          }, indent=2) + '\n')
+          PY
+
+      - name: Reconciled instruction and compiler-permission inventory
+        timeout-minutes: 1
+        run: python3 -I research/investigations/layout-par/inventory.py summarize --root . --ledger build/layout-par-ledger/par-ledger.log --out build/layout-par
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: layout-par-summary-${{ github.sha }}-${{ github.run_id }}
+          path: |
+            build/layout-par/
+            build/layout-par-ledger/
           if-no-files-found: warn
