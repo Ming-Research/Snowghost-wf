@@ -9,7 +9,9 @@
 // prefers-color-scheme light, the page served at
 // http://snowghost.test/page/index.html, the mapped sheets served and every
 // other request refused. Playwright runs headless Chromium with hidden
-// scrollbars, so no scrollbar takes space.
+// scrollbars, so no scrollbar takes space. After the load every CSS animation
+// and transition is cancelled (cancelAnimations), so the dump is of the static
+// style that Snowghost computes; standard error ends with the number cancelled.
 //
 // File format, the contract a Snowghost driver writes to. UTF-8, LF line
 // ends, no header, three kinds of line:
@@ -94,6 +96,40 @@ function writeOut(text) {
   });
 }
 
+// ---- static style ----
+
+// Cancels every CSS animation and transition, so the dump reports the
+// static style: the computed values and boxes with no animation applied.
+// Snowghost computes the static style and runs no animations, so this is the
+// state Chromium has to report to be the oracle of it. Without the cancel the
+// dump reads whatever frame an animation has reached when each query runs:
+// a page-load animation such as `slide-up` (translateY from 100px to 0 over
+// 1.2 s) leaves each box it moves a fraction of a pixel off its static
+// position, and the fraction differs between two dumps of one page. A
+// cancelled animation applies no effect, so the element's own declarations
+// remain, with `animation-fill-mode` effects gone too.
+// Cancelling can itself start a transition (an animation's value to the
+// static one, when the property has a `transition`), so the cancel is
+// repeated until no animation is left; a page that still has one after
+// MAX_PASSES is reported on standard error and dumped as it is.
+// tests/css/style_oracle.mjs and tests/layout/layout_oracle.mjs carry the same
+// function, because the two dumps of a page must see one state.
+const MAX_PASSES = 8;
+
+async function cancelAnimations(page) {
+  return page.evaluate((maxPasses) => {
+    let cancelled = 0;
+    for (let pass = 0; pass < maxPasses; pass++) {
+      const running = document.getAnimations();
+      if (running.length === 0) return { cancelled, left: 0 };
+      for (const animation of running) animation.cancel();
+      cancelled += running.length;
+      void document.documentElement.getBoundingClientRect();
+    }
+    return { cancelled, left: document.getAnimations().length };
+  }, MAX_PASSES);
+}
+
 // ---- dump ----
 
 async function dump(pagePath, mappings) {
@@ -129,6 +165,8 @@ async function dump(pagePath, mappings) {
       return route.abort();
     });
     await page.goto(PAGE_URL, { waitUntil: 'load' });
+    const animations = await cancelAnimations(page);
+    if (animations.left > 0) process.stderr.write(`${animations.left} animations left after ${MAX_PASSES} cancel passes\n`);
 
     const counts = await page.evaluate(() => {
       globalThis.__layoutOracleElements = document.querySelectorAll('*');
@@ -182,7 +220,7 @@ async function dump(pagePath, mappings) {
     const height = await page.evaluate(() => document.documentElement.scrollHeight);
     await writeOut(`H\t${height}\n`);
     const seconds = Number(process.hrtime.bigint() - started) / 1e9;
-    process.stderr.write(`${basename(pagePath)}: ${counts.elements} elements, ${counts.texts} text nodes in ${seconds.toFixed(2)} s\n`);
+    process.stderr.write(`${basename(pagePath)}: ${counts.elements} elements, ${counts.texts} text nodes in ${seconds.toFixed(2)} s; cancelled ${animations.cancelled} animations\n`);
   } finally {
     await browser.close();
   }

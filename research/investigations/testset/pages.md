@@ -49,6 +49,20 @@ Existing pages stay in the set and are not counted: ecma262 spec, WHATWG HTML sp
 - **Video:** Dailymotion (1k) shows a cookie banner and renders only ~420 nodes; excluded. Twitch directory (https://www.twitch.tv/directory, 1k) loads logged out (1.6k nodes) but is live-stream churn, so high volatility; alternative. Netflix landing (1k) is a sign-up marketing page; alternative. YouTube watch pages are the only video app with a rich layout.
 - Out of scope but noted: the browser pane blocks reddit.com, so Reddit was checked only with curl.
 
+## Substitutions
+
+First snapshot run (hosted runner, 2026-10-12, `tests/testset/snapshot.mjs`): 16 of 21 pages snapshotted; five failed. The tool records a bot wall or error and does not work around it (no header, user agent or timing change), so under the owner's rule each failed page is replaced by the next ranked alternate of its category from this file. Where this file ranks none, the candidate comes from the same CrUX file's buckets (202608) and is marked "unchecked". Every replacement below has not yet been loaded by the tool; if one also fails, the next entry is the next swap (the list is also in `tests/testset/pages.txt` as comments).
+
+| replaced page | why | replacement | rank of the replacement | where the alternate comes from |
+|---|---|---|---|---|
+| canva-templates (https://www.canva.com/templates/, 1k) | main document status 403 | trello-home, https://trello.com/ | CrUX 5k | "Method notes": ranked document/work-management candidate, highest bucket of that list; unchecked, marketing page of a board tool, not an editor |
+| figma-community (https://www.figma.com/community, 5k) | main document status 403 | miro-home, https://miro.com/ | CrUX 50k | same list: codepen.io and miro.com tie at 50k; miro is the document-like one (codepen is a code editor); unchecked. Next in order: codepen.io (50k), excalidraw.com (100k, the only alternate checked to load, 327 DOM nodes) |
+| reddit-askreddit-top (https://www.reddit.com/r/AskReddit/top/?t=all, 1k) | main document status 403 | threads-zuck, https://www.threads.com/@zuck | CrUX 1k | "Social" alternate named in this file, checked in the browser pane on 2026-10-12: loads logged out, 1501 nodes, 372 flex/grid; has a login prompt and a fast-moving feed (high volatility) |
+| walmart-furniture (https://www.walmart.com/browse/home/furniture/4044_103150, 1k) | the page served was the bot challenge "Robot or human?" (40 elements) | bestbuy-laptops, https://www.bestbuy.com/site/computers-pc-laptops/laptop-computers/abcat0502000.c?id=abcat0502000 | CrUX 1k | "Shopping" alternates named in this file: Best Buy, eBay, AliExpress, all 1k and all unchecked in a browser; Best Buy is first in this file's order. Next: eBay (https://www.ebay.com/b/Laptops-Netbooks/175672/bn_1648276), then AliExpress. Best Buy and eBay also use bot protection and may fail the same way |
+| cloudflare-radar (https://radar.cloudflare.com/, 500k) | main document status 403 | githubstatus-home, https://www.githubstatus.com/ | CrUX 50k | this file ranks no admin-dashboard alternate, so taken from the CrUX buckets: public dashboards in the top 100k are trends.google.com (50k), githubstatus.com (50k) and ourworldindata.org (100k). Trends is skipped for now (the explore page needs a query and loads its charts by script, so it is the likeliest to be an empty shell or a rate-limit page); githubstatus.com is a public status dashboard (component list, uptime bars, incident list), a weaker match for "admin dashboard" than the page it replaces. UNCHECKED: needs a load check. Next: https://ourworldindata.org/grapher/life-expectancy (100k, charts with tabs, stable data) |
+
+The category counts stay as approved (mail 2, docs 5, social 3, shopping 4, video 3, admin 4).
+
 ## Method notes
 
 - Exact ranks are not available in CrUX; only the bucket (1k/5k/10k/50k/100k/500k/1M). Ties are within the same bucket and unordered.

@@ -13,7 +13,9 @@
 //
 //   OUTDIR/NAME/page.html            the snapshot
 //   OUTDIR/NAME/layout.chromium.tsv  `layout_oracle.mjs dump page.html` of it
-//   OUTDIR/NAME/dump.log             the oracle's standard error
+//   OUTDIR/NAME/layout.chromium.2.tsv  a second dump of the same file, kept so a
+//                                    difference between the two can be diffed
+//   OUTDIR/NAME/dump.log, dump.2.log  the oracle's standard error of each dump
 //   OUTDIR/NAME/live.png             the live page's first screen, for people
 //   OUTDIR/NAME/failure.png          the first screen of a page that failed
 //   OUTDIR/manifest.tsv              one row per page, see MANIFEST_COLUMNS
@@ -66,13 +68,21 @@
 // failed), html_sha256, html_bytes, dump_sha256, failure_reason, then
 // final_url, http_status, elements (of the snapshot), shadow_hosts,
 // dump_repeat (same or DIFFERENT: the oracle dumped the snapshot a second
-// time in the same run, which separates oracle noise from page change) and
-// notes. compare reads two manifests (the second run is made a day later for
-// the stability check) and prints, per page, whether the snapshot and the
-// dump are byte-identical and, when both dumps are beside their manifests,
-// how many of their lines differ. Exit status of compare: 0 when every page
-// that is ok in both has an identical dump and no page changed status, 1
-// otherwise, 2 on a usage error.
+// time in the same run, which separates oracle noise from page change; when it
+// differs the notes give the number of differing lines and the first one) and
+// notes.
+//
+// compare reads two manifests (the second run is made a day later for the
+// stability check) and prints, per page of either, a TSV row: status, whether
+// the snapshot (html) and the dump are byte-identical, a verdict (stable; oracle
+// noise, the same html with a different dump; page changed, a different html),
+// the dump_repeat of each side and details (byte and element counts of a
+// changed html; how many dump lines differ and where the first is, when both
+// dumps are beside their manifests). A page in one manifest only is reported
+// as such and is neither an error nor counted in the exit status; a page that
+// failed in both is reported with both reasons. Exit status of compare: 0 when
+// every page that is ok in both has the same html and dump and no page changed
+// status, 1 otherwise, 2 on a usage error.
 //
 // CHROMIUM and PLAYWRIGHT override the browser binary and the playwright
 // module's path, the same variables and defaults as the oracles, so the
@@ -81,7 +91,7 @@
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -474,19 +484,24 @@ async function snapshotPage(browser, entry, outDir, shadowMode) {
     row.notes = oneLine(notes.join('; '));
   }
 
-  // The oracle's dump, twice: the second separates the oracle's own noise.
+  // The oracle's dump, twice, both kept: the second separates the oracle's own
+  // noise from a change of the page, and a difference can be diffed.
   const dumpPath = join(dir, 'layout.chromium.tsv');
   const first = runDump(join(dir, 'page.html'), dumpPath, join(dir, 'dump.log'));
   if (!first.ok) {
     row.failure_reason = `layout dump failed (exit ${first.status}): ${oneLine(first.log).slice(0, 200)}`;
     return row;
   }
-  const again = join(dir, 'layout.chromium.repeat.tsv');
-  const second = runDump(join(dir, 'page.html'), again, null);
+  const againPath = join(dir, 'layout.chromium.2.tsv');
+  const second = runDump(join(dir, 'page.html'), againPath, join(dir, 'dump.2.log'));
   const firstHash = sha256(readFileSync(dumpPath));
   row.dump_sha256 = firstHash;
-  row.dump_repeat = second.ok && sha256(readFileSync(again)) === firstHash ? 'same' : 'DIFFERENT';
-  rmSync(again, { force: true });
+  const same = second.ok && sha256(readFileSync(againPath)) === firstHash;
+  row.dump_repeat = same ? 'same' : 'DIFFERENT';
+  if (!same) {
+    const found = second.ok ? differingLines(dumpPath, againPath) : null;
+    row.notes = oneLine(`${row.notes}; dump-repeat: ${found ? `${found.differing} of ${found.lines} lines differ, first at line ${found.first.line}: ${found.first.a} | ${found.first.b}` : `second dump failed (exit ${second.status})`}`);
+  }
   row.status = 'ok';
   return row;
 }
@@ -548,50 +563,61 @@ function readManifest(path) {
   return { rows, dir: dirname(resolve(path)) };
 }
 
+// How many lines of two dump files differ (a length difference counts its extra
+// lines), of how many lines each, and the first differing line, cut short.
 function differingLines(a, b) {
   if (!existsSync(a) || !existsSync(b)) return null;
   const left = readFileSync(a, 'utf8').split('\n');
   const right = readFileSync(b, 'utf8').split('\n');
   let differing = Math.abs(left.length - right.length);
-  for (let i = 0; i < Math.min(left.length, right.length); i++) if (left[i] !== right[i]) differing++;
-  return { differing, lines: `${left.length - 1}/${right.length - 1}` };
+  let first = null;
+  for (let i = 0; i < Math.max(left.length, right.length); i++) {
+    if (i < Math.min(left.length, right.length) && left[i] === right[i]) continue;
+    if (i < Math.min(left.length, right.length)) differing++;
+    first = first || { line: i + 1, a: (left[i] ?? '(none)').slice(0, 120), b: (right[i] ?? '(none)').slice(0, 120) };
+  }
+  return { differing, lines: `${left.length - 1}/${right.length - 1}`, first };
 }
 
 function compare(oldPath, newPath) {
   const before = readManifest(oldPath);
   const after = readManifest(newPath);
-  const names = [...new Set([...before.rows.keys(), ...after.rows.keys()])];
-  let stable = 0;
-  let unstable = 0;
-  let changed = 0;
-  process.stdout.write(['page', 'status', 'html', 'dump', 'dump lines differing (of old/new lines)'].join('\t') + '\n');
+  const names = [...before.rows.keys(), ...[...after.rows.keys()].filter((name) => !before.rows.has(name))];
+  const count = { stable: 0, noise: 0, page: 0, status: 0, onlyOld: 0, onlyNew: 0, failedBoth: 0 };
+  const line = (...fields) => process.stdout.write(fields.join('\t') + '\n');
+  // verdict: stable (html and dump identical); oracle noise (html identical, dump
+  // different: the dump of one input changed); page changed (html different).
+  line('page', 'status', 'html', 'dump', 'verdict', 'dump_repeat old/new', 'detail');
   for (const name of names) {
     const a = before.rows.get(name);
     const b = after.rows.get(name);
     if (!a || !b) {
-      process.stdout.write(`${name}\t${a ? a.status : 'absent'} -> ${b ? b.status : 'absent'}\t\t\t\n`);
-      changed++;
+      count[a ? 'onlyOld' : 'onlyNew']++;
+      line(name, a ? 'only in old' : 'only in new', '', '', '', '', (a || b).url);
       continue;
     }
-    const status = a.status === b.status ? a.status : `${a.status} -> ${b.status}`;
-    if (a.status !== b.status) changed++;
+    const repeat = `${a.dump_repeat || '-'}/${b.dump_repeat || '-'}`;
     if (a.status !== 'ok' || b.status !== 'ok') {
-      process.stdout.write(`${name}\t${status}\t\t\t${a.failure_reason || ''} | ${b.failure_reason || ''}\n`);
+      if (a.status === b.status) count.failedBoth++;
+      else count.status++;
+      line(name, a.status === b.status ? `${a.status} in both` : `${a.status} -> ${b.status}`, '', '', '', repeat, `${a.failure_reason || ''} | ${b.failure_reason || ''}`);
       continue;
     }
     const sameHtml = a.html_sha256 === b.html_sha256;
     const sameDump = a.dump_sha256 === b.dump_sha256;
-    if (sameDump) stable++;
-    else unstable++;
-    let detail = '';
+    const verdict = sameHtml && sameDump ? 'stable' : sameHtml ? 'oracle noise' : 'page changed';
+    count[verdict === 'stable' ? 'stable' : verdict === 'oracle noise' ? 'noise' : 'page']++;
+    const details = [];
+    if (!sameHtml) details.push(`html bytes ${a.html_bytes}/${b.html_bytes}, elements ${a.elements}/${b.elements}`);
     if (!sameDump) {
-      const lines = differingLines(join(before.dir, name, 'layout.chromium.tsv'), join(after.dir, name, 'layout.chromium.tsv'));
-      detail = lines ? `${lines.differing} (of ${lines.lines})` : 'dump files not beside the manifests';
+      const found = differingLines(join(before.dir, name, 'layout.chromium.tsv'), join(after.dir, name, 'layout.chromium.tsv'));
+      details.push(found ? `${found.differing} dump lines differ (of ${found.lines}), first at line ${found.first.line}` : 'dump files not beside the manifests');
     }
-    process.stdout.write(`${name}\t${status}\t${sameHtml ? 'identical' : 'different'}\t${sameDump ? 'identical' : 'DIFFERENT'}\t${detail}\n`);
+    line(name, 'ok', sameHtml ? 'identical' : 'different', sameDump ? 'identical' : 'DIFFERENT', verdict, repeat, details.join('; '));
   }
-  process.stdout.write(`${stable} pages with identical dumps, ${unstable} with different dumps, ${changed} that changed status or are in one manifest only\n`);
-  process.exit(unstable === 0 && changed === 0 ? 0 : 1);
+  process.stdout.write(`${count.stable} pages stable, ${count.noise} with the same html and a different dump (oracle noise), ${count.page} with changed html, ` +
+    `${count.status} that changed status, ${count.failedBoth} failed in both, ${count.onlyOld} only in the old manifest, ${count.onlyNew} only in the new\n`);
+  process.exit(count.noise === 0 && count.page === 0 && count.status === 0 ? 0 : 1);
 }
 
 // ---- main ----
