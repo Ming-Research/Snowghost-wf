@@ -1,6 +1,28 @@
+alias AreaMap = pkg::css::values::AreaMap;
+alias Atom = pkg::base::atom::Atom;
 alias AtomTable = pkg::base::atom::AtomTable;
+alias BackgroundGroup = pkg::css::values::BackgroundGroup;
+alias BorderGroup = pkg::css::values::BorderGroup;
+alias BoxGroup = pkg::css::values::BoxGroup;
 alias Clock = std::time::Clock;
+alias ContainerGroup = pkg::css::values::ContainerGroup;
+alias ContentGroup = pkg::css::values::ContentGroup;
+alias ContentItem = pkg::css::values::ContentItem;
+alias ContentList = pkg::css::values::ContentList;
+alias CounterChange = pkg::css::values::CounterChange;
+alias CounterList = pkg::css::values::CounterList;
 alias Document = pkg::dom::Document;
+alias FontGroup = pkg::css::values::FontGroup;
+alias ItemGroup = pkg::css::values::ItemGroup;
+alias NamedArea = pkg::css::values::NamedArea;
+alias QuoteList = pkg::css::values::QuoteList;
+alias QuotePair = pkg::css::values::QuotePair;
+alias SizeGroup = pkg::css::values::SizeGroup;
+alias SpacingGroup = pkg::css::values::SpacingGroup;
+alias TableGroup = pkg::css::values::TableGroup;
+alias TextGroup = pkg::css::values::TextGroup;
+alias Track = pkg::css::values::Track;
+alias TrackList = pkg::css::values::TrackList;
 alias Instant = std::time::Instant;
 alias NodeId = pkg::dom::NodeId;
 alias Positions = pkg::css::selectors::Positions;
@@ -223,4 +245,595 @@ fn match_elements_profiled(store: &RuleStore, document: &Document, atoms: &AtomT
   let made = Cascade(positions: move positions, winners: move winners, custom_keys: move bits, custom_count: words, element_count: count, nodes: move nodes, parents: move parents, kinds: move kinds);
   let profile = MatchProfile(cascade: move made, laps: move laps, counts: move counts);
   return Ok<MatchProfile, StyleError>(value: move profile);
+}
+
+const intern_lap_count: u64 = 24_u64;
+
+fn prepare_after(started: Instant, inherited: &Inherited, resets: &Resets, count: u64) -> (texts: Box<Array<TextGroup>>, tables: Box<Array<TableGroup>>, contents: Box<Array<ContentGroup>>) reads(inherited), reads(resets) {
+  doc "intern_styles's completion of each styled node's text, table and content groups with values of the other part, called with the reading that starts its interval as an argument; count is the number of styled nodes. Returns three empty arrays when a table it reads does not hold count values.";
+  let texts_listed = inherited^.texts.inner.len == count;
+  let tables_listed = inherited^.tables.inner.len == count;
+  let quotes_listed = inherited^.quotes.inner.len == count;
+  let positions_listed = inherited^.list_positions.inner.len == count;
+  let aligns_listed = resets^.vertical_aligns.inner.len == count;
+  let decorations_listed = resets^.decorations.inner.len == count;
+  let layouts_listed = resets^.table_layouts.inner.len == count;
+  let contents_listed = resets^.contents.inner.len == count;
+  let a = band(texts_listed, tables_listed);
+  let b = band(quotes_listed, positions_listed);
+  let c = band(aligns_listed, decorations_listed);
+  let d = band(layouts_listed, contents_listed);
+  let ab = band(a, b);
+  let cd = band(c, d);
+  let all = band(ab, cd);
+  let first_table = initial_table();
+  if all {
+  } else {
+    let no_text = initial_text(state: inherited);
+    let no_content = ContentGroup(content: 0_u32, counter_reset: 0_u32, counter_increment: 0_u32, counter_set: 0_u32, quotes: 0_u32, list_style_position: 0_u8);
+    let no_texts = box_array_filled::<TextGroup>(count: 0_u64, value: no_text);
+    let no_tables = box_array_filled::<TableGroup>(count: 0_u64, value: first_table);
+    let no_contents = box_array_filled::<ContentGroup>(count: 0_u64, value: no_content);
+    return move no_texts, move no_tables, move no_contents;
+  }
+  let first_text = if count > 0_u64 {
+    give inherited^.texts.inner[0_u64];
+  } else {
+    let made = initial_text(state: inherited);
+    give made;
+  }
+  let first_content = if count > 0_u64 {
+    give resets^.contents.inner[0_u64];
+  } else {
+    give ContentGroup(content: 0_u32, counter_reset: 0_u32, counter_increment: 0_u32, counter_set: 0_u32, quotes: 0_u32, list_style_position: 0_u8);
+  }
+  let texts = box_array_filled::<TextGroup>(count: count, value: first_text);
+  for (k in 0_u64..count) {
+    let text = inherited^.texts.inner[k];
+    let made = TextGroup(color: text.color, text_align: text.text_align, text_indent: text.text_indent, text_transform: text.text_transform, white_space: text.white_space, letter_spacing: text.letter_spacing, word_spacing: text.word_spacing, vertical_align: resets^.vertical_aligns.inner[k], decoration_line: resets^.decorations.inner[k], list_style_type: text.list_style_type, overflow_wrap: text.overflow_wrap, word_break: text.word_break);
+    set texts.inner[k] = made;
+  }
+  let tables_in = box_array_filled::<TableGroup>(count: count, value: first_table);
+  let contents_in = box_array_filled::<ContentGroup>(count: count, value: first_content);
+  for (k in 0_u64..count) {
+    let table = inherited^.tables.inner[k];
+    let made_table = TableGroup(border_collapse: table.border_collapse, spacing_horizontal: table.spacing_horizontal, spacing_vertical: table.spacing_vertical, table_layout: resets^.table_layouts.inner[k], caption_side: table.caption_side);
+    set tables_in.inner[k] = made_table;
+    let content = resets^.contents.inner[k];
+    let made_content = ContentGroup(content: content.content, counter_reset: content.counter_reset, counter_increment: content.counter_increment, counter_set: content.counter_set, quotes: inherited^.quotes.inner[k], list_style_position: inherited^.list_positions.inner[k]);
+    set contents_in.inner[k] = made_content;
+  }
+  return move texts, move tables_in, move contents_in;
+}
+
+fn stamp_prepared(clock: &Clock, texts: &Box<Array<TextGroup>>, tables: &Box<Array<TableGroup>>, contents: &Box<Array<ContentGroup>>) -> result: Instant reads(texts), reads(tables), reads(contents), writes(clock) {
+  doc "Reads the clock once the completed text, table and content groups exist.";
+  let held_texts = texts^.inner.len;
+  let held_tables = tables^.inner.len;
+  let held_contents = contents^.inner.len;
+  let made = now(clock: clock);
+  return made;
+}
+
+fn setup_after(started: Instant, traversal: &Traversal, element_count: u64, count: u64) -> (styles: Styles, computed: Box<Array<ComputedStyle>>) reads(traversal) {
+  doc "intern_styles's empty result and the array of each node's identifiers, called with the reading that starts its interval as an argument.";
+  let styles = empty_styles(traversal: traversal, element_count: element_count, expected: count);
+  let blank = ComputedStyle(box: 0_u32, size: 0_u32, spacing: 0_u32, border: 0_u32, font: 0_u32, text: 0_u32, background: 0_u32, custom: 0_u32, container: 0_u32, item: 0_u32, table: 0_u32, content: 0_u32);
+  let computed = box_array_filled::<ComputedStyle>(count: count, value: blank);
+  return move styles, move computed;
+}
+
+fn stamp_set_up(clock: &Clock, styles: &Styles) -> result: Instant reads(styles), writes(clock) {
+  doc "Reads the clock once the side stores have been swapped into the place the list groups' interning writes, the last step of the setup.";
+  let held = styles^.elements.inner.len;
+  let made = now(clock: clock);
+  return made;
+}
+
+fn stamp_ids(clock: &Clock, ids: &Box<Array<u32>>) -> result: Instant reads(ids), writes(clock) {
+  doc "Reads the clock once a table's interning call has written its identifiers.";
+  let held = ids^.inner.len;
+  let made = now(clock: clock);
+  return made;
+}
+
+fn stamp_count(clock: &Clock, done: u64) -> result: Instant writes(clock) {
+  doc "Reads the clock once canon_sets has answered.";
+  let made = now(clock: clock);
+  return made;
+}
+
+fn stamp_out(clock: &Clock, styles: &Styles, computed: &Box<Array<ComputedStyle>>) -> result: Instant reads(styles), reads(computed), writes(clock) {
+  doc "Reads the clock once each node's identifiers are assembled and the side stores swapped back into styles.";
+  let held = computed^.inner.len;
+  let held_styles = styles^.elements.inner.len;
+  let made = now(clock: clock);
+  return made;
+}
+
+fn stamp_interned(clock: &Clock, styles: &Styles) -> result: Instant reads(styles), writes(clock) {
+  doc "Reads the clock once the identifiers are placed and the families copied.";
+  let held = styles^.elements.inner.len;
+  let made = now(clock: clock);
+  return made;
+}
+
+fn stamp_hashes(clock: &Clock, hashes: &Box<Array<u64>>, done: Bool) -> result: Instant reads(hashes), writes(clock) {
+  doc "Reads the clock once one group's values are hashed.";
+  let held = hashes^.inner.len;
+  let made = now(clock: clock);
+  return made;
+}
+
+fn box_after(started: Instant, table: &Box<Slots<BoxGroup>>, index: &Box<Array<u32>>, values: &[BoxGroup], ids: &[u32]) -> result: unit reads(values), writes(table), writes(index), writes(ids) {
+  doc "intern_box_group, called with the reading that starts its interval as an argument.";
+  intern_box_group(table: table, index: index, values: values, ids: ids);
+  return unit;
+}
+
+fn size_after(started: Instant, table: &Box<Slots<SizeGroup>>, index: &Box<Array<u32>>, values: &[SizeGroup], ids: &[u32]) -> result: unit reads(values), writes(table), writes(index), writes(ids) {
+  doc "intern_size_group, called with the reading that starts its interval as an argument.";
+  intern_size_group(table: table, index: index, values: values, ids: ids);
+  return unit;
+}
+
+fn spacing_after(started: Instant, table: &Box<Slots<SpacingGroup>>, index: &Box<Array<u32>>, values: &[SpacingGroup], ids: &[u32]) -> result: unit reads(values), writes(table), writes(index), writes(ids) {
+  doc "intern_spacing_group, called with the reading that starts its interval as an argument.";
+  intern_spacing_group(table: table, index: index, values: values, ids: ids);
+  return unit;
+}
+
+fn border_after(started: Instant, table: &Box<Slots<BorderGroup>>, index: &Box<Array<u32>>, values: &[BorderGroup], ids: &[u32]) -> result: unit reads(values), writes(table), writes(index), writes(ids) {
+  doc "intern_border_group, called with the reading that starts its interval as an argument.";
+  intern_border_group(table: table, index: index, values: values, ids: ids);
+  return unit;
+}
+
+fn font_after(started: Instant, table: &Box<Slots<FontGroup>>, index: &Box<Array<u32>>, values: &[FontGroup], ids: &[u32]) -> result: unit reads(values), writes(table), writes(index), writes(ids) {
+  doc "intern_font_group, called with the reading that starts its interval as an argument.";
+  intern_font_group(table: table, index: index, values: values, ids: ids);
+  return unit;
+}
+
+fn text_after(started: Instant, table: &Box<Slots<TextGroup>>, index: &Box<Array<u32>>, values: &[TextGroup], ids: &[u32]) -> result: unit reads(values), writes(table), writes(index), writes(ids) {
+  doc "intern_text_group, called with the reading that starts its interval as an argument.";
+  intern_text_group(table: table, index: index, values: values, ids: ids);
+  return unit;
+}
+
+fn background_after(started: Instant, table: &Box<Slots<BackgroundGroup>>, index: &Box<Array<u32>>, values: &[BackgroundGroup], ids: &[u32]) -> result: unit reads(values), writes(table), writes(index), writes(ids) {
+  doc "intern_background_group, called with the reading that starts its interval as an argument.";
+  intern_background_group(table: table, index: index, values: values, ids: ids);
+  return unit;
+}
+
+fn custom_after(started: Instant, canon: &Box<Slots<u32>>, index: &Box<Array<u32>>, inherited: &Inherited) -> distinct: u64 reads(inherited), writes(canon), writes(index) {
+  doc "canon_sets, called with the reading that starts its interval as an argument.";
+  let made = canon_sets(canon: canon, index: index, inherited: inherited);
+  return made;
+}
+
+fn container_after(started: Instant, groups: &Box<Slots<ContainerGroup>>, out: &TrackOut, group_table: &WordTable, track_table: &WordTable, area_table: &WordTable, values: &[ContainerGroup], nodes: &[TrackNodes], inherited: &Inherited, ids: &[u32]) -> result: unit reads(values), reads(nodes), reads(inherited), writes(groups), writes(out), writes(group_table), writes(track_table), writes(area_table), writes(ids) {
+  doc "intern_container_group, called with the reading that starts its interval as an argument.";
+  intern_container_group(groups: groups, out: out, group_table: group_table, track_table: track_table, area_table: area_table, values: values, nodes: nodes, inherited: inherited, ids: ids);
+  return unit;
+}
+
+fn item_after(started: Instant, groups: &Box<Slots<ItemGroup>>, words: &WordTable, values: &[ItemGroup], ids: &[u32]) -> result: unit reads(values), writes(groups), writes(words), writes(ids) {
+  doc "intern_item_group, called with the reading that starts its interval as an argument.";
+  intern_item_group(groups: groups, words: words, values: values, ids: ids);
+  return unit;
+}
+
+fn table_after(started: Instant, groups: &Box<Slots<TableGroup>>, words: &WordTable, values: &[TableGroup], ids: &[u32]) -> result: unit reads(values), writes(groups), writes(words), writes(ids) {
+  doc "intern_table_group, called with the reading that starts its interval as an argument.";
+  intern_table_group(groups: groups, words: words, values: values, ids: ids);
+  return unit;
+}
+
+fn content_after(started: Instant, groups: &Box<Slots<ContentGroup>>, out: &ContentOut, group_table: &WordTable, content_table: &WordTable, counter_table: &WordTable, quote_table: &WordTable, values: &[ContentGroup], inherited: &Inherited, ids: &[u32]) -> result: unit reads(values), reads(inherited), writes(groups), writes(out), writes(group_table), writes(content_table), writes(counter_table), writes(quote_table), writes(ids) {
+  doc "intern_content_group, called with the reading that starts its interval as an argument.";
+  intern_content_group(groups: groups, out: out, group_table: group_table, content_table: content_table, counter_table: counter_table, quote_table: quote_table, values: values, inherited: inherited, ids: ids);
+  return unit;
+}
+
+fn assemble_after(started: Instant, canon: &Box<Slots<u32>>, sets: &[u32], box_ids: &[u32], size_ids: &[u32], spacing_ids: &[u32], border_ids: &[u32], font_ids: &[u32], text_ids: &[u32], background_ids: &[u32], container_ids: &[u32], item_ids: &[u32], table_ids: &[u32], content_ids: &[u32], out: &[ComputedStyle]) -> result: unit reads(canon), reads(sets), reads(box_ids), reads(size_ids), reads(spacing_ids), reads(border_ids), reads(font_ids), reads(text_ids), reads(background_ids), reads(container_ids), reads(item_ids), reads(table_ids), reads(content_ids), writes(out) {
+  doc "intern_values's assembly of node k's identifiers into out[k], its custom-property set mapped through canon, called with the reading that starts its interval as an argument; writes nothing when a list is not as long as out.";
+  let count = out^.len;
+  let l1 = sets^.len == count;
+  let l2 = box_ids^.len == count;
+  let l3 = size_ids^.len == count;
+  let l4 = spacing_ids^.len == count;
+  let l5 = border_ids^.len == count;
+  let l6 = font_ids^.len == count;
+  let l7 = text_ids^.len == count;
+  let l8 = background_ids^.len == count;
+  let l9 = container_ids^.len == count;
+  let l10 = item_ids^.len == count;
+  let l11 = table_ids^.len == count;
+  let l12 = content_ids^.len == count;
+  let a = band(l1, l2);
+  let b = band(l3, l4);
+  let c = band(l5, l6);
+  let d = band(l7, l8);
+  let e = band(l9, l10);
+  let f = band(l11, l12);
+  let ab = band(a, b);
+  let cd = band(c, d);
+  let ef = band(e, f);
+  let abcd = band(ab, cd);
+  let listed = band(abcd, ef);
+  if listed {
+  } else {
+    return unit;
+  }
+  for (k in 0_u64..count) {
+    let raw_set = cvt::<u32, u64>(sets^[k]);
+    let custom = if raw_set < canon^.inner.len {
+      give canon^.inner[raw_set];
+    } else {
+      give 0_u32;
+    }
+    set out^[k] = ComputedStyle(box: box_ids^[k], size: size_ids^[k], spacing: spacing_ids^[k], border: border_ids^[k], font: font_ids^[k], text: text_ids^[k], background: background_ids^[k], custom: custom, container: container_ids^[k], item: item_ids^[k], table: table_ids^[k], content: content_ids^[k]);
+  }
+  return unit;
+}
+
+fn hash_boxes_after(started: Instant, values: &[BoxGroup], hashes: &[u64]) -> result: Bool reads(values), writes(hashes) {
+  doc "Writes to hashes[k] the hash intern_box_group probes with for values[k], called with the reading that starts its interval as an argument; False, writing nothing, when the lengths differ.";
+  let count = values^.len;
+  let equal_count = hashes^.len == count;
+  if equal_count {
+  } else {
+    return False();
+  }
+  for (i in 0_u64..count) {
+    let value = values^[i];
+    let hash = hash_box_group(hash: 14695981039346656037_u64, value: value);
+    set hashes^[i] = hash;
+  }
+  return True();
+}
+
+fn hash_sizes_after(started: Instant, values: &[SizeGroup], hashes: &[u64]) -> result: Bool reads(values), writes(hashes) {
+  doc "Writes to hashes[k] the hash intern_size_group probes with for values[k], called with the reading that starts its interval as an argument; False, writing nothing, when the lengths differ.";
+  let count = values^.len;
+  let equal_count = hashes^.len == count;
+  if equal_count {
+  } else {
+    return False();
+  }
+  for (i in 0_u64..count) {
+    let value = values^[i];
+    let hash = hash_size_group(hash: 14695981039346656037_u64, value: value);
+    set hashes^[i] = hash;
+  }
+  return True();
+}
+
+fn hash_spacings_after(started: Instant, values: &[SpacingGroup], hashes: &[u64]) -> result: Bool reads(values), writes(hashes) {
+  doc "Writes to hashes[k] the hash intern_spacing_group probes with for values[k], called with the reading that starts its interval as an argument; False, writing nothing, when the lengths differ.";
+  let count = values^.len;
+  let equal_count = hashes^.len == count;
+  if equal_count {
+  } else {
+    return False();
+  }
+  for (i in 0_u64..count) {
+    let value = values^[i];
+    let hash = hash_spacing_group(hash: 14695981039346656037_u64, value: value);
+    set hashes^[i] = hash;
+  }
+  return True();
+}
+
+fn hash_borders_after(started: Instant, values: &[BorderGroup], hashes: &[u64]) -> result: Bool reads(values), writes(hashes) {
+  doc "Writes to hashes[k] the hash intern_border_group probes with for values[k], called with the reading that starts its interval as an argument; False, writing nothing, when the lengths differ.";
+  let count = values^.len;
+  let equal_count = hashes^.len == count;
+  if equal_count {
+  } else {
+    return False();
+  }
+  for (i in 0_u64..count) {
+    let value = values^[i];
+    let hash = hash_border_group(hash: 14695981039346656037_u64, value: value);
+    set hashes^[i] = hash;
+  }
+  return True();
+}
+
+fn hash_fonts_after(started: Instant, values: &[FontGroup], hashes: &[u64]) -> result: Bool reads(values), writes(hashes) {
+  doc "Writes to hashes[k] the hash intern_font_group probes with for values[k], called with the reading that starts its interval as an argument; False, writing nothing, when the lengths differ.";
+  let count = values^.len;
+  let equal_count = hashes^.len == count;
+  if equal_count {
+  } else {
+    return False();
+  }
+  for (i in 0_u64..count) {
+    let value = values^[i];
+    let hash = hash_font_group(hash: 14695981039346656037_u64, value: value);
+    set hashes^[i] = hash;
+  }
+  return True();
+}
+
+fn hash_texts_after(started: Instant, values: &[TextGroup], hashes: &[u64]) -> result: Bool reads(values), writes(hashes) {
+  doc "Writes to hashes[k] the hash intern_text_group probes with for values[k], called with the reading that starts its interval as an argument; False, writing nothing, when the lengths differ.";
+  let count = values^.len;
+  let equal_count = hashes^.len == count;
+  if equal_count {
+  } else {
+    return False();
+  }
+  for (i in 0_u64..count) {
+    let value = values^[i];
+    let hash = hash_text_group(hash: 14695981039346656037_u64, value: value);
+    set hashes^[i] = hash;
+  }
+  return True();
+}
+
+fn hash_backgrounds_after(started: Instant, values: &[BackgroundGroup], hashes: &[u64]) -> result: Bool reads(values), writes(hashes) {
+  doc "Writes to hashes[k] the hash intern_background_group probes with for values[k], called with the reading that starts its interval as an argument; False, writing nothing, when the lengths differ.";
+  let count = values^.len;
+  let equal_count = hashes^.len == count;
+  if equal_count {
+  } else {
+    return False();
+  }
+  for (i in 0_u64..count) {
+    let value = values^[i];
+    let hash = hash_background_group(hash: 14695981039346656037_u64, value: value);
+    set hashes^[i] = hash;
+  }
+  return True();
+}
+
+fn intern_styles_profiled(inherited: &Inherited, resets: &Resets, traversal: &Traversal, clock: &Clock, laps: &Box<Array<u64>>) -> result: Result<Styles, StyleError> reads(inherited), reads(resets), reads(traversal), writes(clock), writes(laps) {
+  doc "intern_styles with the clock read between its steps: it repeats intern_styles's and intern_values's steps in order, with the same checks, so that the styles it returns equal intern_styles's, and fills laps as the module interface states. Each timed call takes the reading before it as an argument and each reading reads what the call before it wrote, so no step begins before its first reading or ends after its second; between them, the twelve tables' calls run one after another.";
+  let sized = laps^.inner.len == intern_lap_count;
+  if sized {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return Err<Styles, StyleError>(error: failure);
+  }
+  let count = inherited^.fonts.inner.len;
+  let element_count = traversal^.elements.inner.len;
+  let fewer = element_count <= count;
+  let pseudo_count = count -sat element_count;
+  let pseudo_listed = inherited^.pseudo_parents.inner.len == pseudo_count;
+  let kinds_listed = inherited^.pseudo_kinds.inner.len == pseudo_count;
+  let tables_listed = inherited^.tables.inner.len == count;
+  let quotes_listed = inherited^.quotes.inner.len == count;
+  let list_positions_listed = inherited^.list_positions.inner.len == count;
+  let containers_listed = resets^.containers.inner.len == count;
+  let track_nodes_listed = resets^.track_nodes.inner.len == count;
+  let items_listed = resets^.items.inner.len == count;
+  let layouts_listed = resets^.table_layouts.inner.len == count;
+  let contents_listed = resets^.contents.inner.len == count;
+  let n1 = band(fewer, pseudo_listed);
+  let n2 = band(kinds_listed, tables_listed);
+  let n3 = band(quotes_listed, list_positions_listed);
+  let n4 = band(containers_listed, track_nodes_listed);
+  let n5 = band(items_listed, layouts_listed);
+  let n12 = band(n1, n2);
+  let n34 = band(n3, n4);
+  let n5c = band(n5, contents_listed);
+  let n1234 = band(n12, n34);
+  let second_listed = band(n1234, n5c);
+  if second_listed {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return Err<Styles, StyleError>(error: failure);
+  }
+  let small = count <= 1073741824_u64;
+  let fonts_listed = inherited^.fonts.inner.len == count;
+  let texts_listed = inherited^.texts.inner.len == count;
+  let sets_listed = inherited^.sets.inner.len == count;
+  let boxes_listed = resets^.boxes.inner.len == count;
+  let sizes_listed = resets^.sizes.inner.len == count;
+  let spacings_listed = resets^.spacings.inner.len == count;
+  let borders_listed = resets^.borders.inner.len == count;
+  let backgrounds_listed = resets^.backgrounds.inner.len == count;
+  let aligns_listed = resets^.vertical_aligns.inner.len == count;
+  let decorations_listed = resets^.decorations.inner.len == count;
+  let a = band(small, fonts_listed);
+  let b = band(texts_listed, sets_listed);
+  let c = band(boxes_listed, sizes_listed);
+  let d = band(spacings_listed, borders_listed);
+  let e = band(backgrounds_listed, aligns_listed);
+  let ab = band(a, b);
+  let cd = band(c, d);
+  let ef = band(e, decorations_listed);
+  let abcd = band(ab, cd);
+  let all = band(abcd, ef);
+  if all {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return Err<Styles, StyleError>(error: failure);
+  }
+  let hashes = box_array_filled::<u64>(count: count, value: 0_u64);
+  let begin = now(clock: clock);
+  let (texts, tables_in, contents_in) = prepare_after(started: begin, inherited: inherited, resets: resets, count: count);
+  let prepared = stamp_prepared(clock: clock, texts: &texts, tables: &tables_in, contents: &contents_in);
+  let (styles, computed) = setup_after(started: prepared, traversal: traversal, element_count: element_count, count: count);
+  let texts_made = texts.inner.len == count;
+  let tables_made = tables_in.inner.len == count;
+  let contents_made = contents_in.inner.len == count;
+  let computed_made = computed.inner.len == count;
+  let groups_made = band(texts_made, tables_made);
+  let rest_made = band(contents_made, computed_made);
+  let made = band(groups_made, rest_made);
+  if made {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return Err<Styles, StyleError>(error: failure);
+  }
+  let box_ids = box_array_filled::<u32>(count: count, value: 0_u32);
+  let size_ids = box_array_filled::<u32>(count: count, value: 0_u32);
+  let spacing_ids = box_array_filled::<u32>(count: count, value: 0_u32);
+  let border_ids = box_array_filled::<u32>(count: count, value: 0_u32);
+  let font_ids = box_array_filled::<u32>(count: count, value: 0_u32);
+  let text_ids = box_array_filled::<u32>(count: count, value: 0_u32);
+  let background_ids = box_array_filled::<u32>(count: count, value: 0_u32);
+  let container_ids = box_array_filled::<u32>(count: count, value: 0_u32);
+  let item_ids = box_array_filled::<u32>(count: count, value: 0_u32);
+  let table_ids = box_array_filled::<u32>(count: count, value: 0_u32);
+  let content_ids = box_array_filled::<u32>(count: count, value: 0_u32);
+  let tracks_held = box_slots_new::<Track>(capacity: 0_u64);
+  let track_lists_held = box_slots_new::<TrackList>(capacity: 0_u64);
+  let line_names_held = box_slots_new::<Atom>(capacity: 0_u64);
+  let area_maps_held = box_slots_new::<AreaMap>(capacity: 0_u64);
+  let named_areas_held = box_slots_new::<NamedArea>(capacity: 0_u64);
+  let track_out = TrackOut(tracks: move tracks_held, track_lists: move track_lists_held, line_names: move line_names_held, area_maps: move area_maps_held, named_areas: move named_areas_held);
+  let content_lists_held = box_slots_new::<ContentList>(capacity: 0_u64);
+  let content_items_held = box_slots_new::<ContentItem>(capacity: 0_u64);
+  let counter_lists_held = box_slots_new::<CounterList>(capacity: 0_u64);
+  let counter_changes_held = box_slots_new::<CounterChange>(capacity: 0_u64);
+  let quote_lists_held = box_slots_new::<QuoteList>(capacity: 0_u64);
+  let quote_pairs_held = box_slots_new::<QuotePair>(capacity: 0_u64);
+  let text_held = box_slots_new::<u8>(capacity: 0_u64);
+  let content_out = ContentOut(content_lists: move content_lists_held, content_items: move content_items_held, counter_lists: move counter_lists_held, counter_changes: move counter_changes_held, quote_lists: move quote_lists_held, quote_pairs: move quote_pairs_held, text: move text_held);
+  swap(first: &track_out.tracks, second: &styles.tracks);
+  swap(first: &track_out.track_lists, second: &styles.track_lists);
+  swap(first: &track_out.line_names, second: &styles.line_names);
+  swap(first: &track_out.area_maps, second: &styles.area_maps);
+  swap(first: &track_out.named_areas, second: &styles.named_areas);
+  swap(first: &content_out.content_lists, second: &styles.content_lists);
+  swap(first: &content_out.content_items, second: &styles.content_items);
+  swap(first: &content_out.counter_lists, second: &styles.counter_lists);
+  swap(first: &content_out.counter_changes, second: &styles.counter_changes);
+  swap(first: &content_out.quote_lists, second: &styles.quote_lists);
+  swap(first: &content_out.quote_pairs, second: &styles.quote_pairs);
+  swap(first: &content_out.text, second: &styles.generated_text);
+  let set_up = stamp_set_up(clock: clock, styles: &styles);
+  box_after(started: set_up, table: &styles.boxes, index: &styles.kept.box_index, values: &resets^.boxes.inner[0_u64..count], ids: &box_ids.inner[0_u64..count]);
+  let boxed = stamp_ids(clock: clock, ids: &box_ids);
+  size_after(started: boxed, table: &styles.sizes, index: &styles.kept.size_index, values: &resets^.sizes.inner[0_u64..count], ids: &size_ids.inner[0_u64..count]);
+  let sized_at = stamp_ids(clock: clock, ids: &size_ids);
+  spacing_after(started: sized_at, table: &styles.spacings, index: &styles.kept.spacing_index, values: &resets^.spacings.inner[0_u64..count], ids: &spacing_ids.inner[0_u64..count]);
+  let spaced = stamp_ids(clock: clock, ids: &spacing_ids);
+  border_after(started: spaced, table: &styles.borders, index: &styles.kept.border_index, values: &resets^.borders.inner[0_u64..count], ids: &border_ids.inner[0_u64..count]);
+  let bordered = stamp_ids(clock: clock, ids: &border_ids);
+  font_after(started: bordered, table: &styles.fonts, index: &styles.kept.font_index, values: &inherited^.fonts.inner[0_u64..count], ids: &font_ids.inner[0_u64..count]);
+  let fonted = stamp_ids(clock: clock, ids: &font_ids);
+  text_after(started: fonted, table: &styles.texts, index: &styles.kept.text_index, values: &texts.inner[0_u64..count], ids: &text_ids.inner[0_u64..count]);
+  let texted = stamp_ids(clock: clock, ids: &text_ids);
+  background_after(started: texted, table: &styles.backgrounds, index: &styles.kept.background_index, values: &resets^.backgrounds.inner[0_u64..count], ids: &background_ids.inner[0_u64..count]);
+  let backgrounded = stamp_ids(clock: clock, ids: &background_ids);
+  let added_sets = custom_after(started: backgrounded, canon: &styles.kept.custom_canon, index: &styles.kept.custom_index, inherited: inherited);
+  let customized = stamp_count(clock: clock, done: added_sets);
+  container_after(started: customized, groups: &styles.containers, out: &track_out, group_table: &styles.kept.container_words, track_table: &styles.kept.track_words, area_table: &styles.kept.area_words, values: &resets^.containers.inner[0_u64..count], nodes: &resets^.track_nodes.inner[0_u64..count], inherited: inherited, ids: &container_ids.inner[0_u64..count]);
+  let contained = stamp_ids(clock: clock, ids: &container_ids);
+  item_after(started: contained, groups: &styles.items, words: &styles.kept.item_words, values: &resets^.items.inner[0_u64..count], ids: &item_ids.inner[0_u64..count]);
+  let itemized = stamp_ids(clock: clock, ids: &item_ids);
+  table_after(started: itemized, groups: &styles.tables, words: &styles.kept.table_words, values: &tables_in.inner[0_u64..count], ids: &table_ids.inner[0_u64..count]);
+  let tabled = stamp_ids(clock: clock, ids: &table_ids);
+  content_after(started: tabled, groups: &styles.contents, out: &content_out, group_table: &styles.kept.content_words, content_table: &styles.kept.content_list_words, counter_table: &styles.kept.counter_words, quote_table: &styles.kept.quote_words, values: &contents_in.inner[0_u64..count], inherited: inherited, ids: &content_ids.inner[0_u64..count]);
+  let contented = stamp_ids(clock: clock, ids: &content_ids);
+  assemble_after(started: contented, canon: &styles.kept.custom_canon, sets: &inherited^.sets.inner[0_u64..count], box_ids: &box_ids.inner[0_u64..count], size_ids: &size_ids.inner[0_u64..count], spacing_ids: &spacing_ids.inner[0_u64..count], border_ids: &border_ids.inner[0_u64..count], font_ids: &font_ids.inner[0_u64..count], text_ids: &text_ids.inner[0_u64..count], background_ids: &background_ids.inner[0_u64..count], container_ids: &container_ids.inner[0_u64..count], item_ids: &item_ids.inner[0_u64..count], table_ids: &table_ids.inner[0_u64..count], content_ids: &content_ids.inner[0_u64..count], out: &computed.inner[0_u64..count]);
+  swap(first: &track_out.tracks, second: &styles.tracks);
+  swap(first: &track_out.track_lists, second: &styles.track_lists);
+  swap(first: &track_out.line_names, second: &styles.line_names);
+  swap(first: &track_out.area_maps, second: &styles.area_maps);
+  swap(first: &track_out.named_areas, second: &styles.named_areas);
+  swap(first: &content_out.content_lists, second: &styles.content_lists);
+  swap(first: &content_out.content_items, second: &styles.content_items);
+  swap(first: &content_out.counter_lists, second: &styles.counter_lists);
+  swap(first: &content_out.counter_changes, second: &styles.counter_changes);
+  swap(first: &content_out.quote_lists, second: &styles.quote_lists);
+  swap(first: &content_out.quote_pairs, second: &styles.quote_pairs);
+  swap(first: &content_out.text, second: &styles.generated_text);
+  set styles.custom_sets = styles.custom_sets +sat added_sets;
+  let assembled = stamp_out(clock: clock, styles: &styles, computed: &computed);
+  for (k in 0_u64..count) {
+    let made_style = computed.inner[k];
+    let element_slot = k < styles.elements.inner.len;
+    if element_slot {
+      set styles.elements.inner[k] = made_style;
+    } else {
+      let pseudo_at = k -sat element_count;
+      let listed = pseudo_at < inherited^.pseudo_parents.inner.len;
+      let kind_listed = pseudo_at < inherited^.pseudo_kinds.inner.len;
+      let both = band(listed, kind_listed);
+      if both {
+        let origin = inherited^.pseudo_parents.inner[pseudo_at];
+        let kind = inherited^.pseudo_kinds.inner[pseudo_at];
+        let generated_kind = if kind == pseudo_element_after {
+          give pseudo_after;
+        } else {
+          give pseudo_before;
+        }
+        let pseudo = PseudoStyle(element: origin, kind: generated_kind, style: made_style);
+        let placed_pseudo = propagate push::<PseudoStyle>(cell: &styles.pseudos, value: pseudo, ceiling: 4294967295_u64);
+      }
+    }
+  }
+  let copied = propagate copy_families(styles: &styles, inherited: inherited);
+  let placed = stamp_interned(clock: clock, styles: &styles);
+  let box_hashed_ok = hash_boxes_after(started: placed, values: &resets^.boxes.inner[0_u64..count], hashes: &hashes.inner[0_u64..count]);
+  let box_hashed = stamp_hashes(clock: clock, hashes: &hashes, done: box_hashed_ok);
+  let size_hashed_ok = hash_sizes_after(started: box_hashed, values: &resets^.sizes.inner[0_u64..count], hashes: &hashes.inner[0_u64..count]);
+  let size_hashed = stamp_hashes(clock: clock, hashes: &hashes, done: size_hashed_ok);
+  let spacing_hashed_ok = hash_spacings_after(started: size_hashed, values: &resets^.spacings.inner[0_u64..count], hashes: &hashes.inner[0_u64..count]);
+  let spacing_hashed = stamp_hashes(clock: clock, hashes: &hashes, done: spacing_hashed_ok);
+  let border_hashed_ok = hash_borders_after(started: spacing_hashed, values: &resets^.borders.inner[0_u64..count], hashes: &hashes.inner[0_u64..count]);
+  let border_hashed = stamp_hashes(clock: clock, hashes: &hashes, done: border_hashed_ok);
+  let font_hashed_ok = hash_fonts_after(started: border_hashed, values: &inherited^.fonts.inner[0_u64..count], hashes: &hashes.inner[0_u64..count]);
+  let font_hashed = stamp_hashes(clock: clock, hashes: &hashes, done: font_hashed_ok);
+  let text_hashed_ok = hash_texts_after(started: font_hashed, values: &texts.inner[0_u64..count], hashes: &hashes.inner[0_u64..count]);
+  let text_hashed = stamp_hashes(clock: clock, hashes: &hashes, done: text_hashed_ok);
+  let background_hashed_ok = hash_backgrounds_after(started: text_hashed, values: &resets^.backgrounds.inner[0_u64..count], hashes: &hashes.inner[0_u64..count]);
+  let background_hashed = stamp_hashes(clock: clock, hashes: &hashes, done: background_hashed_ok);
+  let prepare_ns = nanoseconds_from(earlier: begin, later: prepared);
+  let setup_ns = nanoseconds_from(earlier: prepared, later: set_up);
+  let box_ns = nanoseconds_from(earlier: set_up, later: boxed);
+  let size_ns = nanoseconds_from(earlier: boxed, later: sized_at);
+  let spacing_ns = nanoseconds_from(earlier: sized_at, later: spaced);
+  let border_ns = nanoseconds_from(earlier: spaced, later: bordered);
+  let font_ns = nanoseconds_from(earlier: bordered, later: fonted);
+  let text_ns = nanoseconds_from(earlier: fonted, later: texted);
+  let background_ns = nanoseconds_from(earlier: texted, later: backgrounded);
+  let custom_ns = nanoseconds_from(earlier: backgrounded, later: customized);
+  let container_ns = nanoseconds_from(earlier: customized, later: contained);
+  let item_ns = nanoseconds_from(earlier: contained, later: itemized);
+  let table_ns = nanoseconds_from(earlier: itemized, later: tabled);
+  let content_ns = nanoseconds_from(earlier: tabled, later: contented);
+  let ids_ns = nanoseconds_from(earlier: contented, later: assembled);
+  let place_ns = nanoseconds_from(earlier: assembled, later: placed);
+  let whole_ns = nanoseconds_from(earlier: begin, later: placed);
+  let box_hash_ns = nanoseconds_from(earlier: placed, later: box_hashed);
+  let size_hash_ns = nanoseconds_from(earlier: box_hashed, later: size_hashed);
+  let spacing_hash_ns = nanoseconds_from(earlier: size_hashed, later: spacing_hashed);
+  let border_hash_ns = nanoseconds_from(earlier: spacing_hashed, later: border_hashed);
+  let font_hash_ns = nanoseconds_from(earlier: border_hashed, later: font_hashed);
+  let text_hash_ns = nanoseconds_from(earlier: font_hashed, later: text_hashed);
+  let background_hash_ns = nanoseconds_from(earlier: text_hashed, later: background_hashed);
+  set_lap(laps: laps, slot: 0_u64, value: prepare_ns);
+  set_lap(laps: laps, slot: 1_u64, value: setup_ns);
+  set_lap(laps: laps, slot: 2_u64, value: box_ns);
+  set_lap(laps: laps, slot: 3_u64, value: size_ns);
+  set_lap(laps: laps, slot: 4_u64, value: spacing_ns);
+  set_lap(laps: laps, slot: 5_u64, value: border_ns);
+  set_lap(laps: laps, slot: 6_u64, value: font_ns);
+  set_lap(laps: laps, slot: 7_u64, value: text_ns);
+  set_lap(laps: laps, slot: 8_u64, value: background_ns);
+  set_lap(laps: laps, slot: 9_u64, value: custom_ns);
+  set_lap(laps: laps, slot: 10_u64, value: container_ns);
+  set_lap(laps: laps, slot: 11_u64, value: item_ns);
+  set_lap(laps: laps, slot: 12_u64, value: table_ns);
+  set_lap(laps: laps, slot: 13_u64, value: content_ns);
+  set_lap(laps: laps, slot: 14_u64, value: ids_ns);
+  set_lap(laps: laps, slot: 15_u64, value: place_ns);
+  set_lap(laps: laps, slot: 16_u64, value: whole_ns);
+  set_lap(laps: laps, slot: 17_u64, value: box_hash_ns);
+  set_lap(laps: laps, slot: 18_u64, value: size_hash_ns);
+  set_lap(laps: laps, slot: 19_u64, value: spacing_hash_ns);
+  set_lap(laps: laps, slot: 20_u64, value: border_hash_ns);
+  set_lap(laps: laps, slot: 21_u64, value: font_hash_ns);
+  set_lap(laps: laps, slot: 22_u64, value: text_hash_ns);
+  set_lap(laps: laps, slot: 23_u64, value: background_hash_ns);
+  return Ok<Styles, StyleError>(value: move styles);
 }

@@ -1155,13 +1155,13 @@ section was written before any code changed.
 
 **What stays sequential, and why.** Both the full build (`intern_styles`)
 and a restyle (`intern_nodes`) intern through `intern_values`, which makes
-eleven calls, one per table: the seven value groups (box, size, spacing,
+twelve calls, one per table: the seven value groups (box, size, spacing,
 border, font, text, background), the custom-property sets (`canon_sets`) and
 the container, item, table and content groups. The full ledger of run
 38306217375 (artifact `style-step-timing-38306217375`, `ledger.txt`, pin
 `wf-d837678c6905`) shows two things:
 
-- Every adjacent pair of the eleven calls is permitted to overlap
+- Every adjacent pair of the twelve calls is permitted to overlap
   (`PAR permitted ./style/intern.wf:1627 pair(intern_box_group,
   intern_size_group) eligible`, and so on through `pair(intern_table_group,
   intern_content_group)`). The per-table parallelism the vocabulary tree
@@ -1176,7 +1176,7 @@ the container, item, table and content groups. The full ledger of run
   the loop's runtime extent; each of these calls runs one loop over every
   styled node (179,471 elements on ecma262), so its runtime work is far
   above its static price. The seven therefore run one after another as
-  ordinary calls. The other four have no such line and are offered.
+  ordinary calls. The other five have no such line and are offered.
   Whitefoot's call-offer grain investigation records this as the rule's
   known limit (a non-recursive helper whose work is large only through its
   runtime extents loses its offer), not exercised by any program it
@@ -1208,7 +1208,7 @@ loop above.
 
 | candidate | chain |
 |---|---|
-| current, as compiled at the pin | S + sum over the seven value groups of N c_t, then the four others overlapped |
+| current, as compiled at the pin | S + sum over the seven value groups of N c_t, then the other five overlapped |
 | A, per-table tasks (Q48, the code as written) | S + max over all tables of N c_t |
 | B, A with each table's hashes computed first in a split loop | S + sum of N h_t / W + max of N p_t |
 | C, A with each table cut into P hash partitions, first-seen identifiers restored by a prefix count | S + max of N c_t / P + N / W + a prefix count of N |
@@ -1254,7 +1254,7 @@ pages.
 
 **Result.** Not implemented. The natural parallel form, A, is the code as
 written and is permitted; the compiler's call grain does not hand it out.
-Writing the eleven calls in another shape to cross the grain, or building
+Writing the twelve calls in another shape to cross the grain, or building
 with `--par-call-grain off` (which offers every small call too), would route
 around a Whitefoot gap, so the gap goes to Whitefoot with this witness (a
 fragment, not a standalone program):
@@ -1270,7 +1270,7 @@ intern_words(table: &second_table, index: &second_index, values: &second_values.
 ```
 
 The two calls write disjoint places, so [PAR-1] admits their overlap, as
-the ledger shows for the eleven calls of `intern_values`; the call grain
+the ledger shows for the twelve calls of `intern_values`; the call grain
 then omits the offer whenever the static work of the loop is below 150,000
 units, which does not depend on `count`, so the pair runs sequentially at
 every worker count. The fragment has not been compiled alone; the observed
@@ -1281,6 +1281,48 @@ than the sequential build within the noise floor. Whitefoot's planned
 on-demand phase keeps the static call grain (owner's ruling of 2026-10-10,
 with runtime feedback per call site to follow if a static estimate
 misjudges a call); this is such a misjudged call.
+
+### Per-table breakdown
+
+The predictions above need each table's cost, which the step timing does not
+record. `pkg::style::intern_styles_profiled` repeats `intern_styles` and
+`intern_values` step by step, with a reading of the clock between steps and
+each table's call between two readings, so the twelve calls run one after
+another. MODE profile runs it after the stage, on the same second and third
+parts, and prints its 24 steps: `intern.prepare` (completing the text, table
+and content groups), `intern.setup` (the empty result, identifier arrays and
+side stores), one step per table (`intern.box` through `intern.content`,
+`intern.custom` being the custom-property sets), `intern.ids` (assembling
+each node's identifiers), `intern.place` (placing them by element and
+pseudo-element, and the families), `intern.whole`, and then `hash.box`
+through `hash.background`: each of the seven hashed groups' values hashed
+alone in a loop whose iterations are independent, which is B's first step.
+The stage's own `intern` step is unchanged. MODE profdump now interns
+through this copy, so its byte-for-byte equality with MODE dump checks that
+the copy builds the stage's styles. `run.sh profile` adds a summary per page
+and mode: `intern.whole`, the seven value groups' sum, the other five's,
+the largest table, the rest (S), the seven hashes' sum and the stage's
+`intern`.
+
+**Rules, fixed before the run.**
+
+- The breakdown stands for the stage when `intern.whole` in `seq` is within
+  25 percent of `intern` in `seq` on each page (the bound question 3 used
+  for steps run alone); otherwise its shares are not used.
+- A's prediction is the one above: on the hosted runner the seven value
+  groups (`groups7_ms`, `seq`) must reach 67 ms on ecma262 and 47 ms on
+  html5 for A to bring interning to 15 percent.
+- B is worth doing when the seven groups' hashing (`hash7_ms`, `seq`) is at
+  least 20 percent of `intern.whole` (`seq`) on both ecma262 and html5:
+  hashing then leaves the sequential chain and cuts at least 10 percent of
+  interning on the hosted runner (half of it, at two physical cores), above
+  the 7 percent spread of the step timing, and 15 percent at a true 4x. Below
+  20 percent on either page, B is not done.
+- C is what A would need when the largest table is more than half of the
+  twelve tables' sum (`largest_ms` against `groups7_ms` plus `others5_ms`),
+  since per-table tasks then leave that table as the chain.
+
+**Results.** Not yet run.
 
 ## Owner rulings
 

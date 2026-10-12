@@ -19,7 +19,11 @@
 #                               runs MODE profile on every page, or on PAGE...,
 #                               sequentially and with --par at one and four
 #                               workers, and prints each step's time
-#                               (the step-timing investigation below)
+#                               (the step-timing investigation below), then
+#                               the fourth part again through the profiled
+#                               copy of interning, step by step and table by
+#                               table, with a summary per page and mode
+#                               (DESIGN.md, "Interning in parallel")
 #   run.sh overhead [PAGE...]   with BASE_DRIVERS naming a directory with the
 #                               style_oracle and style_oracle_par of an
 #                               earlier build, times MODE match with each build
@@ -219,7 +223,9 @@ profile_reps_of() {
 profile_table() {
 	awk '
 	BEGIN {
-		n = split("match match.rule_index match.positions match.pseudo_flags match.numbering match.allocation match.loop inherited reset intern total alone.positions alone.depth_check", names, " ")
+		n = split("match match.rule_index match.positions match.pseudo_flags match.numbering match.allocation match.loop inherited reset intern total alone.positions alone.depth_check intern.prepare intern.setup intern.box intern.size intern.spacing intern.border intern.font intern.text intern.background intern.custom intern.container intern.item intern.table intern.content intern.ids intern.place intern.whole hash.box hash.size hash.spacing hash.border hash.font hash.text hash.background", names, " ")
+		t = split("intern.box intern.size intern.spacing intern.border intern.font intern.text intern.background intern.custom intern.container intern.item intern.table intern.content", tables, " ")
+		h = split("hash.box hash.size hash.spacing hash.border hash.font hash.text hash.background", hashes, " ")
 		m = split("seq par1 par4", modes, " ")
 	}
 	$4 == "step" {
@@ -242,6 +248,24 @@ profile_table() {
 					share = (total > 0) ? 100 * least[key] / total : 0
 					printf "%s %s %s %.3f %.2f %.1f%%\n", page, mode, names[i], least[key] / 1e6, spread, share
 				}
+			}
+		}
+		print ""
+		print "page mode whole_ms groups7_ms others5_ms largest_table largest_ms rest_ms hash7_ms stage_intern_ms"
+		for (page in pages) {
+			for (j = 1; j <= m; j++) {
+				mode = modes[j]
+				whole = least[page, mode, "intern.whole"]
+				if (!(whole > 0)) continue
+				groups = 0; others = 0; big = ""; bigv = 0; hashed = 0
+				for (i = 1; i <= t; i++) {
+					v = least[page, mode, tables[i]]
+					if (i <= 7) groups += v; else others += v
+					if (v > bigv) { bigv = v; big = tables[i] }
+				}
+				for (i = 1; i <= h; i++) hashed += least[page, mode, hashes[i]]
+				rest = whole - groups - others
+				printf "%s %s %.3f %.3f %.3f %s %.3f %.3f %.3f %.3f\n", page, mode, whole / 1e6, groups / 1e6, others / 1e6, big, bigv / 1e6, rest / 1e6, hashed / 1e6, least[page, mode, "intern"] / 1e6
 			}
 		}
 		print ""
