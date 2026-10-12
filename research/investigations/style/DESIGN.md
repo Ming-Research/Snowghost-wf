@@ -1398,6 +1398,8 @@ predicted to bring interning within 15 percent on the hosted runner, and the
 rest stays with A. In `seq`, B does the same hashing plus a store and a load
 per value, so it should be within the noise of the base.
 
+*Tested by the results below; it is partly wrong there.*
+
 **The comparison and the falsifier.** `run.sh compare` times the base
 build (b96ca9b), the change and a copy of the base's binary (the twin), all
 built by the same compiler, in interleaved rounds whose order rotates, and
@@ -1415,7 +1417,55 @@ are offered, which would mix A into the measurement, is seen. The profiled
 dump must equal MODE `dump`'s and the base's byte for byte on the three
 pages (`run.sh profile`, the `profile` job).
 
-**Results.** Not yet run.
+**Results.** Hosted run 38316806349 at 945d0b1, job "interning before and
+after hashing leaves the chain", on a GitHub-hosted runner with two physical
+cores, not the 14900K. Five interleaved rounds; base b96ca9b, change
+945d0b1, twin a second copy of the base. Times are the stage's `intern` step,
+least of five, in milliseconds; "twin spread" is how far the twin lies from
+the base:
+
+| page | mode | base | change | twin | change vs base | twin spread | interning share of `total` |
+|---|---|---|---|---|---|---|---|
+| ecma262 | seq | 73.348 | 68.306 | 72.472 | -6.9% | 1.2% | |
+| ecma262 | par4 | 66.848 | 40.290 | 66.075 | -39.7% | 1.2% | 13.9% (base 21.1%) |
+| html5 | seq | 48.196 | 45.152 | 47.695 | -6.3% | 1.0% | |
+| html5 | par4 | 40.774 | 27.000 | 39.755 | -33.8% | 2.5% | 15.4% (base 21.4%) |
+| apollo11 | seq | 5.363 | 5.027 | 5.326 | -6.3% | 0.7% | |
+| apollo11 | par4 | 4.968 | 3.286 | 5.002 | -33.9% | 0.7% | 9.5% (base 14.2%) |
+
+The identity checks passed: MODE `dump`, `profdump` in `seq` and `profdump` in
+`par4` equal the base's byte for byte on all three pages, and the ledger
+permits the seven hashing loops. The call-grain lines of the seven
+`intern_*_group` calls are unchanged (the offers stay omitted), so A is not
+mixed into the measurement.
+
+Verdicts, by the falsifier fixed above:
+
+- *B is kept.* On ecma262 and html5, `par4` interning is below the base's
+  by 39.7 and 33.8 percent, far beyond the twin's spread (1.2 and 2.5
+  percent), and `seq` interning is not slower than the base's but 6.9 and
+  6.3 percent faster, beyond the spread as well. This run does not explain
+  the `seq` gain; the prediction expected no change.
+- *The 15 percent rule is met on ecma262 and not on html5.* Interning is
+  13.9 percent of ecma262's four-worker `total` (base 21.1 percent) and 15.4
+  percent of html5's (base 21.4 percent). On html5 it is short by under 1
+  ms of its 27.0 ms (derived from the shares, with the other parts unchanged).
+- *The prediction written before the run is partly wrong.* It said B alone
+  fails the 15 percent rule on both pages, with `par4` interning about 91 ms
+  on ecma262 and about 55 ms on html5. The rule fails on html5 as predicted
+  and holds on ecma262, and the measured `par4` interning is 40.3 and 27.0
+  ms. The two sets of milliseconds are not on one basis: the prediction
+  subtracted the hashing's saving from the 114.9 and 69.8 ms of "Step timing",
+  measured in another run, while this run's base takes 66.8 and 40.8 ms; the
+  base's shares of `total` (21.1 and 21.4 percent) agree with that earlier
+  run's (20.0 and 21.1 percent). Compared by saving, the prediction expected
+  about 24 and 15 ms off `par4` interning, and the run shows 26.6 and 13.8
+  ms off, from a smaller base.
+- *What remains.* Reaching 15 percent on html5 is A, which waits on
+  Whitefoot's call grain (board request sg-req-call-grain-runtime-extent).
+- *Not yet done.* The board item's completion condition measures on the
+  14900K; this run was the hosted runner, with two physical cores, where
+  four workers cannot scale 4x. The 14900K run is still to do.
 
 ## Owner rulings
 
