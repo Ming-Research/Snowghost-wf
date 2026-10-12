@@ -1,26 +1,113 @@
-# Snowghost's gate: every push runs `make check`, which downloads the
-# Whitefoot compiler release that whitefoot.pin names and runs every Snowghost
-# check. The exact revision that merges into main passes this first.
+# Snowghost's gate: every push runs every part of `make check`, which
+# downloads the Whitefoot compiler release that whitefoot.pin names and runs
+# every Snowghost check. The parts share no output, so each runs as its own
+# job, in parallel: the renderer's checks, the binary size check and the
+# design lint. The job `make check` passes only when all three pass; it is
+# the one result to read. The exact revision that merges into main passes
+# this first.
 name: check
 
 on:
   push:
   workflow_dispatch:
 
+# A newer push to the same ref cancels every job of the older run.
 concurrency:
   group: check-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  check:
-    name: make check
+  # The two parts that compile. The renderer's checks check every module and
+  # build two small drivers; the binary size check builds the full-pipeline
+  # driver layout_oracle with --par, the longest single build of the gate.
+  compile:
+    name: make ${{ matrix.target }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    strategy:
+      # A failing part leaves the other running, so it still reports and
+      # saves its cache.
+      fail-fast: false
+      matrix:
+        include:
+          - part: renderer
+            target: check-renderer
+          - part: binary-size
+            target: binary-size-check
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      # The Makefile builds with whitefootc --cache build/whitefoot-cache
+      # --fragments function. Every record in that cache is keyed by the
+      # SHA-256 of the compiler that wrote it, and is read back only when its
+      # stored key matches byte for byte, so a record serves only a later run
+      # of the same compiler: a moved pin finds none, and a restored cache
+      # only skips work that compiler would otherwise repeat. The compiler
+      # itself is not cached: make downloads the pinned release and checks it
+      # against the release's SHA256SUMS on every run, as before. The key
+      # names the part, the runner OS, the pin and this commit; restore-keys
+      # restores the newest cache of the same part, OS and pin. Each part
+      # keeps its own entries: both parts of one run save at about the same
+      # time and a key is never overwritten, so a key shared by the parts
+      # would keep only the records of the part that saved first. A push
+      # restores only caches saved by its own branch or by main, so a cache
+      # saved on another branch never reaches main. Every run saves one entry
+      # per part; the whole gate saved 13 MB without the binary size check
+      # and 27 MB with it on main, 38 MB on the M2 branch, at this pin.
+      # GitHub keeps 10 GB per repository, evicting the least recently used
+      # entries and any entry unused for 7 days. The save runs even when the
+      # check fails, so the push that fixes a failure starts warm; the
+      # compiler caches only accepted results, so a source that fails cold
+      # fails warm too. No check is skipped: each part runs in full on
+      # whatever was restored.
+      - name: Restore the compiler cache
+        uses: actions/cache/restore@v4
+        with:
+          path: build/whitefoot-cache
+          key: whitefoot-cache-${{ matrix.part }}-${{ runner.os }}-${{ hashFiles('whitefoot.pin') }}-${{ github.sha }}
+          restore-keys: |
+            whitefoot-cache-${{ matrix.part }}-${{ runner.os }}-${{ hashFiles('whitefoot.pin') }}-
+
+      # whitefootc compiles programs with /usr/bin/clang and links a cached
+      # build's fragments with LLD on Linux; both must be the LLVM major the
+      # pinned release was built with, which make toolchain installs
+      # (whitefoot-kit/downstream.md).
+      - name: Install the host toolchain
+        run: |
+          make toolchain
+          ld.lld --version
+
+      - name: Check
+        run: make ${{ matrix.target }}
+
+      - name: Save the compiler cache
+        if: ${{ !cancelled() }}
+        uses: actions/cache/save@v4
+        with:
+          path: build/whitefoot-cache
+          key: whitefoot-cache-${{ matrix.part }}-${{ runner.os }}-${{ hashFiles('whitefoot.pin') }}-${{ github.sha }}
+
+  design-lint:
+    name: make design-lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: true
           fetch-depth: 0
+
+      # Each job runs one part of make check, so a part added to make check
+      # without a job here would never run in CI. This step fails when make
+      # check's prerequisites differ from the parts this workflow's jobs run.
+      - name: Match the jobs to make check's parts
+        run: |
+          grep -qx 'check: compiler check-renderer binary-size-check design-lint' Makefile || {
+            echo "make check's prerequisites changed: run each part in a job of .github/workflows/check.yml and update this step" >&2
+            exit 1
+          }
 
       - name: Name main as a local ref
         run: git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
@@ -35,47 +122,22 @@ jobs:
           echo "DESIGN_REVIEW_BASE=$design_review_base" >> "$GITHUB_ENV"
           git log --oneline -1 "$design_review_base"
 
-      # The Makefile builds with whitefootc --cache build/whitefoot-cache
-      # --fragments function. Every record in that cache is keyed by the
-      # SHA-256 of the compiler that wrote it, and is read back only when its
-      # stored key matches byte for byte, so a record serves only a later run
-      # of the same compiler: a moved pin finds none, and a restored cache
-      # only skips work that compiler would otherwise repeat. The compiler
-      # itself is not cached: make downloads the pinned release and checks it
-      # against the release's SHA256SUMS on every run, as before. The key
-      # names the runner OS, the pin and this commit; restore-keys restores
-      # the newest cache of the same OS and pin. A push restores only caches
-      # saved by its own branch or by main, so a cache saved on another
-      # branch never reaches main. Every run saves its own entry, under 31 MB
-      # at this pin, because a key is never overwritten; GitHub keeps 10 GB
-      # per repository, evicting the least recently used entries and any
-      # entry unused for 7 days. The save runs even when the check fails, so
-      # the push that fixes a failure starts warm; the compiler caches only
-      # accepted results, so a source that fails cold fails warm too. No check
-      # is skipped: make check runs in full on whatever was restored.
-      - name: Restore the compiler cache
-        uses: actions/cache/restore@v4
-        with:
-          path: build/whitefoot-cache
-          key: whitefoot-cache-${{ runner.os }}-${{ hashFiles('whitefoot.pin') }}-${{ github.sha }}
-          restore-keys: |
-            whitefoot-cache-${{ runner.os }}-${{ hashFiles('whitefoot.pin') }}-
-
-      # whitefootc compiles programs with /usr/bin/clang and links a cached
-      # build's fragments with LLD on Linux; both must be the LLVM major the
-      # pinned release was built with, which make toolchain installs
-      # (whitefoot-kit/downstream.md).
-      - name: Install the host toolchain
-        run: |
-          make toolchain
-          ld.lld --version
-
       - name: Check
-        run: make check
+        run: make design-lint
 
-      - name: Save the compiler cache
-        if: ${{ !cancelled() }}
-        uses: actions/cache/save@v4
-        with:
-          path: build/whitefoot-cache
-          key: whitefoot-cache-${{ runner.os }}-${{ hashFiles('whitefoot.pin') }}-${{ github.sha }}
+  # The gate's one result: it passes only when every part passed, and fails
+  # when any part failed or was skipped. A matrix job's result is success
+  # only when every one of its parts succeeded.
+  check:
+    name: make check
+    needs: [compile, design-lint]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require every part to pass
+        env:
+          RESULTS: ${{ needs.compile.result }} ${{ needs.design-lint.result }}
+        run: |
+          echo "parts: $RESULTS"
+          for result in $RESULTS; do test "$result" = success || exit 1; done

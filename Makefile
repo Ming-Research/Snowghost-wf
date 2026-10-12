@@ -1,5 +1,6 @@
 # Snowghost's canonical checks. `make check` is the gate a revision passes
-# before it merges into main; CI runs the same targets.
+# before it merges into main; CI runs the same targets, each part of the gate
+# in its own job.
 
 PY ?= python3
 NODE ?= node
@@ -17,14 +18,23 @@ DESIGN_TREES := $(filter-out log,$(basename $(notdir $(wildcard $(ROOT)/design/*
 # event with design/skill/review-base.sh.
 DESIGN_REVIEW_BASE ?= origin/main
 
-.PHONY: check renderer design-lint design-ready \
+.PHONY: check check-renderer renderer design-lint design-ready \
 	static-atoms static-atoms-check dom-selftest binary-size-check \
 	oracle-data oracle-line-break oracle-css oracle-css-rules oracle-css-color oracle-css-selectors oracle-html-tokenizer oracle-html-tree \
 	oracle-png oracle-png-speed \
 	oracle-normalization oracle-idna oracle-url oracle-font-face oracle-font-shape oracle-text-properties \
 	oracle-style-dump oracle-style oracle-layout-dump oracle-layout oracle-fonts oracle-text
 
-check: compiler renderer static-atoms-check dom-selftest binary-size-check design-lint
+# The gate has three parts that share no output: the renderer's checks, the
+# binary size check and the design lint. CI runs each in its own job, in
+# parallel (.github/workflows/check.yml), and fails when this line names
+# other parts than its jobs run; a check added to the gate joins one of the
+# parts, or becomes a part with a job of its own.
+check: compiler check-renderer binary-size-check design-lint
+
+# The renderer's checks: every module against its interface, the static
+# atoms record against its name list and the document arena's self-test.
+check-renderer: compiler renderer static-atoms-check dom-selftest
 
 # The renderer builds with the Whitefoot compiler release whitefoot.pin
 # names, which Whitefoot-kit's whitefoot.mk downloads and checks; it defines

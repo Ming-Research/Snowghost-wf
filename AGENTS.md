@@ -66,7 +66,10 @@ speed decides only between candidates of equal dependencies.
   needs git, Python 3, curl, `/usr/bin/clang` and on Linux LLD of the LLVM
   major the release names (`make toolchain` installs it, `make toolchain-check`
   checks it), and the `design/skill` and `whitefoot-kit` submodules;
-  `make check WHITEFOOTC=<path>` uses another compiler.
+  `make check WHITEFOOTC=<path>` uses another compiler. CI runs its three
+  parts, `make check-renderer` (the renderer, the static atoms record and the
+  self-test), `make binary-size-check` and `make design-lint`, as parallel
+  jobs; the job `make check` passes only when all three pass.
 - The readiness check adds `make pin-ready`: `whitefoot.pin` names no
   experiment release.
 - Review checklist: [docs/review-checklist.md](docs/review-checklist.md).
