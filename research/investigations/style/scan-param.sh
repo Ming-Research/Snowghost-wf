@@ -52,9 +52,12 @@
 #                                  chain's shape with and without a forwarded
 #                                  table) as the renderer is built, runs it,
 #                                  and under callgrind prints each copy's calls
-#                                  and instructions per call; keeps its
-#                                  emitted IR's signatures and the copies'
-#                                  disassembly
+#                                  and instructions per call and main's
+#                                  instructions at each copy's call of step;
+#                                  keeps its emitted IR's signatures and the
+#                                  copies' and main's annotated disassembly;
+#                                  fails when test is never called (inlined),
+#                                  since the renderer's test stays a call
 #
 # Its outputs are under build/scan-param/{disasm,emit,callgrind,witness}.
 #
@@ -387,9 +390,10 @@ callgrind() {
 witness() {
 	out=$work/witness
 	mkdir -p "$out"
+	copies='(step|compound|test)_with(out)?'
 	"$compiler" --cache "$root/build/whitefoot-cache" --fragments function -o "$out/argument_words" "$here/witness-argument-words.wf"
 	"$compiler" --emit-llvm -o "$out/argument_words.ll" "$here/witness-argument-words.wf"
-	grep -E '^define .*@wf_(step|test)_with(out)?\(' "$out/argument_words.ll" >"$out/signatures.txt" || :
+	grep -E "^define .*@wf_$copies\\(" "$out/argument_words.ll" >"$out/signatures.txt" || :
 	cat "$out/signatures.txt"
 	status=0
 	"$out/argument_words" || status=$?
@@ -399,16 +403,31 @@ witness() {
 	fi
 	valgrind --tool=callgrind --dump-instr=yes --compress-strings=no --compress-pos=no \
 		--callgrind-out-file="$out/argument_words.out" "$out/argument_words" 2>"$out/callgrind.log"
-	python3 -I "$here/scan-cost.py" calls "$out/argument_words.out" '(step|test)_with(out)?([.].*)?$|^wf_main' >"$out/calls.txt"
+	python3 -I "$here/scan-cost.py" calls "$out/argument_words.out" "$copies([.].*)?\$|^wf_main\$" >"$out/calls.txt"
 	cat "$out/calls.txt"
-	nm --defined-only "$out/argument_words" | awk '{ print $NF }' | grep -E '(step|test)_with(out)?([.].*)?$' >"$out/symbols.txt" || :
+	{
+		echo wf_main
+		nm --defined-only "$out/argument_words" | awk '{ print $NF }' | grep -E "$copies([.].*)?\$" || :
+	} >"$out/symbols.txt"
 	: >"$out/argument_words.s"
 	while read -r symbol; do
 		objdump -d --no-show-raw-insn --disassemble="$symbol" "$out/argument_words" | sed -n '/^[0-9a-f]* <.*>:$/,$p' >>"$out/argument_words.s"
 	done <"$out/symbols.txt"
 	python3 -I "$here/scan-cost.py" annotate "$out/argument_words.out" "$out/argument_words.s" >"$out/annotate.txt"
 	summarize_disassembly "$out/argument_words.s"
+	# main's two loops, one per copy: the instructions run once per call of
+	# step_with or step_without (1,048,576 calls each) are the caller's side.
+	echo "== wf_main's instructions run 1,048,576 times (the caller's side of each copy's call of step)"
+	awk '/^== / { inmain = ($2 == "wf_main:") } inmain && $1 == "1,048,576" { print }' "$out/annotate.txt"
 	gzip -f "$out/argument_words.out" "$out/argument_words.ll"
+	# The renderer's instr_matches stays a call of match_complex; a witness
+	# whose test is inlined into step does not have the renderer's shape.
+	for name in wf_test_with wf_test_without; do
+		if ! awk -v name="$name" '$NF ~ ("^" name "([.].*)?$") && $1 != "0" { found = 1 } END { exit !found }' "$out/calls.txt"; then
+			echo "scan-param.sh: $name is never called: test was inlined, so the witness lacks the renderer's call of test from step" >&2
+			exit 1
+		fi
+	done
 }
 
 case ${1:-} in

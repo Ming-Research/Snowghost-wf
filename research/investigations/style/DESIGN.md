@@ -1405,20 +1405,40 @@ Whitefoot's own calls, or accepting the cost). Snowghost's one local item is
 the scanning entry's per-call empty array (3.7 percent of ΔIr), which goes
 away with whatever form the table takes and is not worth a change alone.
 
-**Witness.** `witness-argument-words.wf` in this directory reduces the chain
-to two mutually recursive read-only functions, `step` (a loop over a range
-of items, as `match_complex` and `compound_matches`) and `test` (one item,
-recursing into `step` for a nested range, as `instr_matches` does for
-`:not()`), that thread three borrowed records, an `Id` (one word), a
-`Context` (two `Option<Id>`) and, in the `with` copy only, an empty table
-of a local one-word array they forward and read in one rare arm. The two
-copies give `step` nine argument words against seven and `test` eight
-against six, as in the renderer. `scan-param.sh witness` builds it as the
-renderer is built (function fragments, ThinLTO), requires both copies to
-count the same matches, and prints each copy's calls and instructions per
-call under callgrind with their disassembly. It was written after this run
-and has not yet been built. The result that would show the gap: the `with`
-copy's `step` and `test` execute more instructions per call than the
+**What kinds the extra instructions are.** Sorting the annotated
+disassembly's differences above by what each instruction does, per
+`match_complex` call on the common path (about 14.7 instructions: 6 in
+`style_element`, 7.34 in `match_complex` and 1.22 on each of 1.08
+`instr_matches` calls; 1.77 `match_complex` calls per `selector_matches`
+call and the empty-array store give the 27.05): about 9 are
+stack-argument traffic, the arguments past
+the sixth word (`style_element`'s `sub`, pushes and `add` against
+noparam's one store, 4; `match_complex`'s two incoming loads and its two
+pushes and stack adjustment at the `instr_matches` call against noparam's
+register moves, 4; `instr_matches`' incoming load, 1); 2 set up the
+table's own two words at the `match_complex` call (`lea`, `xor`); and
+about 3 carry those two words across the `instr_matches` call
+(`match_complex` spills them on entry and reloads both before every call,
+since its six callee-saved registers already hold other inputs). This is
+read from the instructions, not measured by removing each part: a calling
+convention with more argument registers would by this reading remove the
+first kind and leave the other two, about 5 per call, and one record of
+borrowed references would remove all three.
+
+**Witness.** The first `witness-argument-words.wf` in this directory
+reduced the chain to two mutually recursive read-only functions, `step` (a
+loop over a range of items, as `match_complex` and `compound_matches`) and
+`test` (one item, recursing into `step` for a nested range, as
+`instr_matches` does for `:not()`), that thread three borrowed records, an
+`Id` (one word), a `Context` (two `Option<Id>`) and, in the `with` copy
+only, an empty table of a local one-word array they forward and read in one
+rare arm. The two copies give `step` nine argument words against seven and
+`test` eight against six, as in the renderer. `scan-param.sh witness` builds
+it as the renderer is built (function fragments, ThinLTO), requires both
+copies to count the same matches, and prints each copy's calls and
+instructions per call under callgrind with their disassembly. Its
+prediction, written before it was built and tested by the run below: the
+`with` copy's `step` and `test` execute more instructions per call than the
 `without` copy's, by about the renderer's 7 and 1, at the argument moves,
 stack arguments and reloads. Acceptance depends on the direction chosen:
 with a record of borrowed references, the witness rewritten to pass one
@@ -1427,6 +1447,86 @@ record (within 1 per call); with a different calling convention for
 Whitefoot's own calls, the `with` copy costs at most 2 more instructions
 per `step` call and 1 per `test` call than the `without` copy; and either way
 shape A on ecma262 then gives r_Ir of at least 0.98 under this experiment.
+
+**The first witness's result.** Run 38314756318 at 83bf352 (the same
+workflow, runner and pin) built it; both copies count the same matches.
+The prediction failed: `step_with` executes 52.62 instructions per call and
+`step_without` 55.32 (1,114,112 calls each), so the `with` copy is 2.7
+cheaper, and neither `test` copy has a callgrind row. The reason is the
+witness's shape, not the argument words:
+
+- *`test` is inlined into `step`.* `step_with`'s only call is to itself
+  (the inlined `:not()` arm, 65,536 calls) and the same holds for
+  `step_without`; `wf_test_with` and `wf_test_without` stay in the binary
+  with `step` inlined into them and are never called. So the call that
+  carries most of the renderer's cost, a nine-word function calling an
+  eight-word one on every loop iteration, never runs. `test` is small
+  enough for LLVM to inline; the renderer's `instr_matches` has 36 arms
+  (1,181 instructions) and two call sites (the subject and the ancestor walk of
+  `match_complex`) and stays a call.
+- *The callee's side can come out cheaper.* What remains per call is
+  `step`'s entry and one inlined test. `step_with` loads three stack
+  arguments, `step_without` one, but `step_with` keeps `words` and `keys`
+  in the registers they arrive in and reloads `id` and `context` from the
+  caller's argument area only after the rare recursive call, while
+  `step_without`, with `id` arriving in a register, spills `words` and
+  `keys` to its own frame (frame 0x28 against 0x18) and reloads both on
+  every test: 20 instructions per failing class test against 23 (the two
+  reloads and a jump), and 23 instructions of entry against 24. Arguments read but never written can be reloaded from
+  the slots the caller wrote, so on the callee's side words past the sixth
+  cost nothing fixed; the difference follows each function's register
+  allocation.
+- *The caller's side is where the cost is, and the first witness did not
+  report it.* `main`'s loop around the call (read from the profile's
+  per-instruction counts against `main`'s disassembly) runs 20 instructions
+  per call of `step_with` against 18 per call of `step_without`: the table's
+  two words and two more pushes, less two register moves. Net per
+  top-level call the `with` copy is about 0.7 instructions cheaper.
+
+**Hypothesis 2 after the first witness.** It still stands for the renderer:
+its grounds are the renderer's own annotated disassembly and exact counts,
+which the witness does not touch, and the witness failed because it lacked
+the renderer's call of `test` from `step`, not because its argument words
+cost nothing. What the evidence shows is where the renderer's extra
+instructions are and what kinds they are (above). What it is only
+consistent with: that these instructions cause the 61 to 68 percent of the
+time difference that their share would predict, and how much each remedy
+would remove (the reading above, not a measurement). The first witness adds
+one constraint: the cost is not a fixed price per argument word past the
+sixth, but the caller's re-passing of every word on every call in a loop
+and the callee's carrying of the words across its own calls.
+
+**The second witness.** `witness-argument-words.wf` now reduces the chain
+with the renderer's call graph: `main` (as `style_element`) loops over
+256 rules for each of 4096 elements and calls `step` (as `match_complex`,
+nine words against seven), which tests the subject compound and then walks
+ancestors for the earlier compounds through `compound` (as
+`compound_matches`), from two places, and `compound` calls `test` (as
+`instr_matches`, eight words against six) for each simple selector. `test`
+matches a six-variant enum passed as the renderer passes `Instr`: a tag,
+the element's two classes, its index, the context's first id, first child
+(the `with` copy reads the empty table first, as the positioned lookups
+do) and a negation that recurses into `step`. Most rules fail at the
+subject's first class test, as shape A's do. Its six arms are the
+renderer's common ones, which is also what keeps `test` a call; the
+script now fails when `test` is never called, since such a witness lacks
+the renderer's shape, and prints `main`'s instructions at each copy's call.
+Prediction, before it is built: both `test` copies are called, with equal
+call counts in the two copies; `step_with` executes at least 4 more
+instructions per call than `step_without` (renderer 7.34) and `main` at
+least 2 more per call of `step_with` than of `step_without` (renderer 6;
+the first witness's `main` gave 2),
+the extra instructions in the annotated disassembly being stack-argument
+pushes and loads and reloads of the table's words. `test`'s difference is
+reported without a threshold (renderer 1.22), since the first witness
+showed a callee's side moving by 3 with its register allocation. A
+difference of `step` between 2 and 4 reproduces part, and the annotated
+difference names the kinds missing. If `test` is called and `step`'s
+difference is under 2, the renderer's cost depends
+on more than the arity and the call graph, most likely `match_complex`'s
+other state live across the call (its backtracking stack and walk
+variables), and that is the next reduction. The acceptance by direction
+above then applies to this witness.
 
 **Not settled.** What the 32 to 39 percent of the time difference that
 instructions do not explain is: the rerun with the simulators, and the

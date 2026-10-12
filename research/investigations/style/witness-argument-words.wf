@@ -10,74 +10,103 @@ struct Context {
   second: Option<Id>;
 }
 
-struct Item {
-  kind: u64;
+struct Interval {
   start: u64;
   end: u64;
 }
 
-struct Items {
-  list: Box<Array<Item>>;
+enum Simple {
+  Tag(name: u64);
+  Class(name: u64);
+  Ident(index: u64);
+  Scope();
+  FirstChild();
+  Not(first: u64, last: u64);
+}
+
+struct Rules {
+  simples: Box<Array<Simple>>;
+  compounds: Box<Array<Interval>>;
 }
 
 struct Words {
   list: Box<Array<u64>>;
 }
 
-fn test_with(items: &Items, words: &Words, keys: &Words, table: &[u64], at: u64, id: Id, context: Context) -> result: Bool reads(items), reads(words), reads(keys), reads(table) {
-  doc "One simple test of the chain: kind 9 runs a nested range through step_with and negates it, kind 7 reads the table's length, kind 8 compares the context's first id, and every other kind compares a word with the id's key.";
-  let count = items^.list.inner.len;
-  if at < count {
-  } else {
-    return False();
-  }
-  let item = items^.list.inner[at];
-  if item.kind == 9_u64 {
-    let inner = step_with(items: items, words: words, keys: keys, table: table, start: item.start, end: item.end, id: id, context: context);
-    let negated = bnot(inner);
-    return negated;
-  }
-  if item.kind == 7_u64 {
-    let length = table^.len;
-    let some = length > 0_u64;
-    return some;
-  }
-  if item.kind == 8_u64 {
-    match context.first {
-      Some(value: first) => {
-        let same_id = first.index == id.index;
-        return same_id;
-      }
-      None() => {
+fn test_with(rules: &Rules, classes: &Words, tags: &Words, table: &[u64], simple: Simple, id: Id, context: Context) -> result: Bool reads(rules), reads(classes), reads(tags), reads(table) {
+  doc "One simple selector against element id, as instr_matches tests one: a tag, one of the element's two classes, its index, the context's first id, first child (from table when it covers the element, else from the tree's shape, as the positioned lookups fall back to scanning), or the negation of a nested complex selector through step_with.";
+  match simple {
+    Tag(name: tag_name) => {
+      let at = id.index;
+      if at < tags^.list.inner.len {
+      } else {
         return False();
       }
+      let tag = tags^.list.inner[at];
+      let same = tag == tag_name;
+      return same;
+    }
+    Class(name: class_name) => {
+      let first_class = id.index +wrap id.index;
+      for (k in 0_u64..2_u64) {
+        let at = first_class +wrap k;
+        if at < classes^.list.inner.len {
+          let word = classes^.list.inner[at];
+          if word == class_name {
+            return True();
+          }
+        }
+      }
+      return False();
+    }
+    Ident(index: wanted) => {
+      let same = id.index == wanted;
+      return same;
+    }
+    Scope() => {
+      match context.first {
+        Some(value: scope_id) => {
+          let same = scope_id.index == id.index;
+          return same;
+        }
+        None() => {
+          return False();
+        }
+      }
+    }
+    FirstChild() => {
+      let at = id.index;
+      if at < table^.len {
+        let position = table^[at];
+        let counted_first = position == 0_u64;
+        return counted_first;
+      }
+      if at == 0_u64 {
+        return False();
+      }
+      let low = iand(at, 1_u64);
+      let is_first = low == 1_u64;
+      return is_first;
+    }
+    Not(first: inner_first, last: inner_last) => {
+      let inner = step_with(rules: rules, classes: classes, tags: tags, table: table, first: inner_first, last: inner_last, id: id, context: context);
+      let negated = bnot(inner);
+      return negated;
     }
   }
-  let word_at = item.start;
-  let key_at = id.index;
-  if word_at < words^.list.inner.len {
-  } else {
-    return False();
-  }
-  if key_at < keys^.list.inner.len {
-  } else {
-    return False();
-  }
-  let word = words^.list.inner[word_at];
-  let key = keys^.list.inner[key_at];
-  let same = word == key;
-  return same;
 }
 
-fn step_with(items: &Items, words: &Words, keys: &Words, table: &[u64], start: u64, end: u64, id: Id, context: Context) -> result: Bool reads(items), reads(words), reads(keys), reads(table) {
-  doc "True when every item of [start, end) passes test_with, tested in order and stopping at the first failure, as compound_matches tests a compound.";
-  let has_any = start < end;
-  if has_any {
-  } else {
-    return True();
-  }
+fn compound_with(rules: &Rules, classes: &Words, tags: &Words, table: &[u64], compound: Interval, id: Id, context: Context) -> result: Bool reads(rules), reads(classes), reads(tags), reads(table) {
+  doc "True when id passes every simple selector of compound, tested in order and stopping at the first failure, as compound_matches tests a compound.";
+  let start = compound.start;
+  let end = compound.end;
   for (at in start..end) {
-    let ok = test_with(items: items, words: words, keys: keys, table: table, at: at, id: id, context: context);
+    if at < rules^.simples.inner.len {
+    } else {
+      return False();
+    }
+    let simple = rules^.simples.inner[at];
+    let ok = test_with(rules: rules, classes: classes, tags: tags, table: table, simple: simple, id: id, context: context);
     if ok {
     } else {
       return False();
@@ -86,59 +115,178 @@ fn step_with(items: &Items, words: &Words, keys: &Words, table: &[u64], start: u
   return True();
 }
 
-fn test_without(items: &Items, words: &Words, keys: &Words, at: u64, id: Id, context: Context) -> result: Bool reads(items), reads(words), reads(keys) {
-  doc "test_with without the table: kind 7 answers False, as test_with does on an empty table.";
-  let count = items^.list.inner.len;
-  if at < count {
-  } else {
-    return False();
-  }
-  let item = items^.list.inner[at];
-  if item.kind == 9_u64 {
-    let inner = step_without(items: items, words: words, keys: keys, start: item.start, end: item.end, id: id, context: context);
-    let negated = bnot(inner);
-    return negated;
-  }
-  if item.kind == 7_u64 {
-    return False();
-  }
-  if item.kind == 8_u64 {
-    match context.first {
-      Some(value: first) => {
-        let same_id = first.index == id.index;
-        return same_id;
-      }
-      None() => {
-        return False();
-      }
-    }
-  }
-  let word_at = item.start;
-  let key_at = id.index;
-  if word_at < words^.list.inner.len {
-  } else {
-    return False();
-  }
-  if key_at < keys^.list.inner.len {
-  } else {
-    return False();
-  }
-  let word = words^.list.inner[word_at];
-  let key = keys^.list.inner[key_at];
-  let same = word == key;
-  return same;
-}
-
-fn step_without(items: &Items, words: &Words, keys: &Words, start: u64, end: u64, id: Id, context: Context) -> result: Bool reads(items), reads(words), reads(keys) {
-  doc "step_with without the table.";
-  let has_any = start < end;
+fn step_with(rules: &Rules, classes: &Words, tags: &Words, table: &[u64], first: u64, last: u64, id: Id, context: Context) -> result: Bool reads(rules), reads(classes), reads(tags), reads(table) {
+  doc "True when the complex selector of compounds [first, last), joined by descendant combinators, matches id, as match_complex walks one: the last compound against id, then each earlier one against the nearest ancestor of the element the later one matched (element i's parent is (i - 1) / 2). With descendant combinators only, the nearest matching ancestor is never worse than a farther one, so the walk needs no backtracking.";
+  let has_any = first < last;
   if has_any {
   } else {
-    return True();
+    return False();
   }
+  let subject_at = last -wrap 1_u64;
+  if subject_at < rules^.compounds.inner.len {
+  } else {
+    return False();
+  }
+  let subject = rules^.compounds.inner[subject_at];
+  let subject_ok = compound_with(rules: rules, classes: classes, tags: tags, table: table, compound: subject, id: id, context: context);
+  if subject_ok {
+  } else {
+    return False();
+  }
+  let current = id.index;
+  let earlier = subject_at -wrap first;
+  for (back in 0_u64..earlier) {
+    let back_one = back +wrap 1_u64;
+    let compound_at = subject_at -wrap back_one;
+    if compound_at < rules^.compounds.inner.len {
+    } else {
+      return False();
+    }
+    let compound = rules^.compounds.inner[compound_at];
+    let found = False();
+    for (depth in 0_u64..64_u64) {
+      if current == 0_u64 {
+        return False();
+      }
+      let above = current -wrap 1_u64;
+      let parent = ishr(above, 1_u32);
+      set current = parent;
+      let ancestor = Id(index: parent);
+      let ok = compound_with(rules: rules, classes: classes, tags: tags, table: table, compound: compound, id: ancestor, context: context);
+      if ok {
+        set found = True();
+        break;
+      }
+    }
+    if found {
+    } else {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn test_without(rules: &Rules, classes: &Words, tags: &Words, simple: Simple, id: Id, context: Context) -> result: Bool reads(rules), reads(classes), reads(tags) {
+  doc "test_with without the table: first child always comes from the tree's shape, as test_with's does on an empty table.";
+  match simple {
+    Tag(name: tag_name) => {
+      let at = id.index;
+      if at < tags^.list.inner.len {
+      } else {
+        return False();
+      }
+      let tag = tags^.list.inner[at];
+      let same = tag == tag_name;
+      return same;
+    }
+    Class(name: class_name) => {
+      let first_class = id.index +wrap id.index;
+      for (k in 0_u64..2_u64) {
+        let at = first_class +wrap k;
+        if at < classes^.list.inner.len {
+          let word = classes^.list.inner[at];
+          if word == class_name {
+            return True();
+          }
+        }
+      }
+      return False();
+    }
+    Ident(index: wanted) => {
+      let same = id.index == wanted;
+      return same;
+    }
+    Scope() => {
+      match context.first {
+        Some(value: scope_id) => {
+          let same = scope_id.index == id.index;
+          return same;
+        }
+        None() => {
+          return False();
+        }
+      }
+    }
+    FirstChild() => {
+      let at = id.index;
+      if at == 0_u64 {
+        return False();
+      }
+      let low = iand(at, 1_u64);
+      let is_first = low == 1_u64;
+      return is_first;
+    }
+    Not(first: inner_first, last: inner_last) => {
+      let inner = step_without(rules: rules, classes: classes, tags: tags, first: inner_first, last: inner_last, id: id, context: context);
+      let negated = bnot(inner);
+      return negated;
+    }
+  }
+}
+
+fn compound_without(rules: &Rules, classes: &Words, tags: &Words, compound: Interval, id: Id, context: Context) -> result: Bool reads(rules), reads(classes), reads(tags) {
+  doc "compound_with without the table.";
+  let start = compound.start;
+  let end = compound.end;
   for (at in start..end) {
-    let ok = test_without(items: items, words: words, keys: keys, at: at, id: id, context: context);
+    if at < rules^.simples.inner.len {
+    } else {
+      return False();
+    }
+    let simple = rules^.simples.inner[at];
+    let ok = test_without(rules: rules, classes: classes, tags: tags, simple: simple, id: id, context: context);
     if ok {
+    } else {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn step_without(rules: &Rules, classes: &Words, tags: &Words, first: u64, last: u64, id: Id, context: Context) -> result: Bool reads(rules), reads(classes), reads(tags) {
+  doc "step_with without the table.";
+  let has_any = first < last;
+  if has_any {
+  } else {
+    return False();
+  }
+  let subject_at = last -wrap 1_u64;
+  if subject_at < rules^.compounds.inner.len {
+  } else {
+    return False();
+  }
+  let subject = rules^.compounds.inner[subject_at];
+  let subject_ok = compound_without(rules: rules, classes: classes, tags: tags, compound: subject, id: id, context: context);
+  if subject_ok {
+  } else {
+    return False();
+  }
+  let current = id.index;
+  let earlier = subject_at -wrap first;
+  for (back in 0_u64..earlier) {
+    let back_one = back +wrap 1_u64;
+    let compound_at = subject_at -wrap back_one;
+    if compound_at < rules^.compounds.inner.len {
+    } else {
+      return False();
+    }
+    let compound = rules^.compounds.inner[compound_at];
+    let found = False();
+    for (depth in 0_u64..64_u64) {
+      if current == 0_u64 {
+        return False();
+      }
+      let above = current -wrap 1_u64;
+      let parent = ishr(above, 1_u32);
+      set current = parent;
+      let ancestor = Id(index: parent);
+      let ok = compound_without(rules: rules, classes: classes, tags: tags, compound: compound, id: ancestor, context: context);
+      if ok {
+        set found = True();
+        break;
+      }
+    }
+    if found {
     } else {
       return False();
     }
@@ -147,81 +295,140 @@ fn step_without(items: &Items, words: &Words, keys: &Words, start: u64, end: u64
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "Witness of the scan-cost experiment (research/investigations/style/DESIGN.md, Where the scanning entry's extra time goes): the matcher chain's shape reduced to two mutually recursive read-only functions that thread three borrowed inputs, a small id and a small context, and in the with copy a borrowed table they only forward. Builds 256 two-item rules and 512 words, runs every rule against 4096 ids through each copy, and exits 0 when both copies count the same matches; under callgrind, the per-call instructions of step_with over step_without and of test_with over test_without are what one forwarded range reference costs on every call.";
-  let blank = Item(kind: 0_u64, start: 0_u64, end: 0_u64);
-  let item_list = box_array_filled::<Item>(count: 512_u64, value: blank);
+  doc "Witness of the scan-cost experiment (research/investigations/style/DESIGN.md, Where the scanning entry's extra time goes): the matcher chain's shape reduced to selectors over a tree of 4096 elements (element i's parent is (i - 1) / 2), each with two classes and a tag. 256 rules of one or two compounds, most failing at their subject's first class test as shape A's rules mostly do. step (match_complex) walks a rule's compounds through compound (compound_matches) from two places, the subject and the ancestor walk; compound calls test (instr_matches), whose six arms include a negation that recurses into step. The two copies thread the same borrowed rules, classes, tags, id and context, and the with copy also an empty table that only the first-child arm reads. Runs every rule against every element through each copy and exits 0 when both copies count the same matches; under callgrind, the per-call instructions of step_with over step_without, of test_with over test_without, and of main's two loops at their calls of step are what one forwarded range reference costs on every call.";
+  let blank_simple = Simple::Scope();
+  let simple_list = box_array_filled::<Simple>(count: 1024_u64, value: blank_simple);
+  let blank_interval = Interval(start: 0_u64, end: 0_u64);
+  let compound_list = box_array_filled::<Interval>(count: 768_u64, value: blank_interval);
+  let rule_list = box_array_filled::<Interval>(count: 256_u64, value: blank_interval);
   for (rule in 0_u64..256_u64) {
-    let first_at = rule +wrap rule;
-    let second_at = first_at +wrap 1_u64;
+    let simple_twice = rule +wrap rule;
+    let simple_base = simple_twice +wrap simple_twice;
+    let simple_1 = simple_base +wrap 1_u64;
+    let simple_2 = simple_base +wrap 2_u64;
+    let simple_3 = simple_base +wrap 3_u64;
+    let simple_4 = simple_base +wrap 4_u64;
+    let compound_twice = rule +wrap rule;
+    let compound_base = compound_twice +wrap rule;
+    let compound_1 = compound_base +wrap 1_u64;
+    let compound_2 = compound_base +wrap 2_u64;
+    let compound_3 = compound_base +wrap 3_u64;
     let shape = iand(rule, 15_u64);
-    let after = second_at +wrap 1_u64;
-    let nested = shape == 5_u64;
-    let reads_table = shape == 7_u64;
-    let compares = Item(kind: 0_u64, start: rule, end: 0_u64);
-    let first = if nested {
-      give Item(kind: 9_u64, start: second_at, end: after);
-    } else {
-      let plain = if reads_table {
-        give Item(kind: 7_u64, start: 0_u64, end: 0_u64);
-      } else {
-        give compares;
-      }
-      give plain;
+    let class_a = iand(rule, 63_u64);
+    let low_b = iand(rule, 31_u64);
+    let class_b = low_b +wrap 100_u64;
+    let tag_name = iand(rule, 7_u64);
+    let first_simple = Simple::Class(name: class_a);
+    let second_simple = Simple::Scope();
+    let third_simple = Simple::Scope();
+    let first_compound = Interval(start: simple_base, end: simple_1);
+    let second_compound = Interval(start: simple_1, end: simple_2);
+    let third_compound = Interval(start: simple_3, end: simple_3);
+    let compound_end = compound_1;
+    if shape == 10_u64 {
+      set first_simple = Simple::Class(name: class_b);
+      set second_simple = Simple::Tag(name: tag_name);
+      set compound_end = compound_2;
     }
-    let second = Item(kind: 8_u64, start: 0_u64, end: 0_u64);
-    if first_at < item_list.inner.len {
-      set item_list.inner[first_at] = first;
+    if shape == 11_u64 {
+      let wanted = rule +wrap rule;
+      set first_simple = Simple::Ident(index: wanted);
     }
-    if second_at < item_list.inner.len {
-      set item_list.inner[second_at] = second;
+    if shape == 12_u64 {
+      set second_simple = Simple::FirstChild();
+      set first_compound = Interval(start: simple_base, end: simple_2);
+    }
+    if shape == 13_u64 {
+      set first_simple = Simple::Scope();
+    }
+    if shape == 14_u64 {
+      set first_simple = Simple::Tag(name: tag_name);
+      set second_simple = Simple::Not(first: compound_2, last: compound_3);
+      set first_compound = Interval(start: simple_base, end: simple_2);
+      set third_simple = Simple::Class(name: class_b);
+      set third_compound = Interval(start: simple_3, end: simple_4);
+    }
+    if shape == 15_u64 {
+      set second_simple = Simple::Class(name: class_b);
+      set compound_end = compound_2;
+    }
+    if simple_base < simple_list.inner.len {
+      set simple_list.inner[simple_base] = first_simple;
+    }
+    if simple_1 < simple_list.inner.len {
+      set simple_list.inner[simple_1] = second_simple;
+    }
+    if simple_3 < simple_list.inner.len {
+      set simple_list.inner[simple_3] = third_simple;
+    }
+    if compound_base < compound_list.inner.len {
+      set compound_list.inner[compound_base] = first_compound;
+    }
+    if compound_1 < compound_list.inner.len {
+      set compound_list.inner[compound_1] = second_compound;
+    }
+    if compound_2 < compound_list.inner.len {
+      set compound_list.inner[compound_2] = third_compound;
+    }
+    let rule_range = Interval(start: compound_base, end: compound_end);
+    if rule < rule_list.inner.len {
+      set rule_list.inner[rule] = rule_range;
     }
   }
-  let items = Items(list: move item_list);
-  let word_list = box_array_filled::<u64>(count: 512_u64, value: 0_u64);
-  for (at in 0_u64..512_u64) {
-    if at < word_list.inner.len {
-      set word_list.inner[at] = at;
+  let rules = Rules(simples: move simple_list, compounds: move compound_list);
+  let class_list = box_array_filled::<u64>(count: 8192_u64, value: 0_u64);
+  let tag_list = box_array_filled::<u64>(count: 4096_u64, value: 0_u64);
+  for (element in 0_u64..4096_u64) {
+    let first_class = element +wrap element;
+    let second_class = first_class +wrap 1_u64;
+    let class_a = iand(element, 63_u64);
+    let low_b = iand(element, 31_u64);
+    let class_b = low_b +wrap 100_u64;
+    let tag = iand(element, 7_u64);
+    if first_class < class_list.inner.len {
+      set class_list.inner[first_class] = class_a;
+    }
+    if second_class < class_list.inner.len {
+      set class_list.inner[second_class] = class_b;
+    }
+    if element < tag_list.inner.len {
+      set tag_list.inner[element] = tag;
     }
   }
-  let words = Words(list: move word_list);
-  let key_list = box_array_filled::<u64>(count: 4096_u64, value: 0_u64);
-  for (at in 0_u64..4096_u64) {
-    let key = iand(at, 511_u64);
-    if at < key_list.inner.len {
-      set key_list.inner[at] = key;
-    }
-  }
-  let keys = Words(list: move key_list);
+  let classes = Words(list: move class_list);
+  let tags = Words(list: move tag_list);
   let none = array_filled::<u64, 1>(value: 0_u64);
   let with_count = 0_u64;
-  for (index in 0_u64..4096_u64) {
-    let id = Id(index: index);
+  for (element in 0_u64..4096_u64) {
+    let id = Id(index: element);
     let first_id = Some<Id>(value: id);
     let no_id = None<Id>();
     let context = Context(first: first_id, second: no_id);
     for (rule in 0_u64..256_u64) {
-      let start = rule +wrap rule;
-      let end = start +wrap 2_u64;
-      let matched = step_with(items: &items, words: &words, keys: &keys, table: &none[0_u64..0_u64], start: start, end: end, id: id, context: context);
-      if matched {
-        let advanced = with_count +wrap 1_u64;
-        set with_count = advanced;
+      if rule < rule_list.inner.len {
+        let range = rule_list.inner[rule];
+        let matched = step_with(rules: &rules, classes: &classes, tags: &tags, table: &none[0_u64..0_u64], first: range.start, last: range.end, id: id, context: context);
+        if matched {
+          let advanced = with_count +wrap 1_u64;
+          set with_count = advanced;
+        }
       }
     }
   }
   let without_count = 0_u64;
-  for (index in 0_u64..4096_u64) {
-    let id = Id(index: index);
+  for (element in 0_u64..4096_u64) {
+    let id = Id(index: element);
     let first_id = Some<Id>(value: id);
     let no_id = None<Id>();
     let context = Context(first: first_id, second: no_id);
     for (rule in 0_u64..256_u64) {
-      let start = rule +wrap rule;
-      let end = start +wrap 2_u64;
-      let matched = step_without(items: &items, words: &words, keys: &keys, start: start, end: end, id: id, context: context);
-      if matched {
-        let advanced = without_count +wrap 1_u64;
-        set without_count = advanced;
+      if rule < rule_list.inner.len {
+        let range = rule_list.inner[rule];
+        let matched = step_without(rules: &rules, classes: &classes, tags: &tags, first: range.start, last: range.end, id: id, context: context);
+        if matched {
+          let advanced = without_count +wrap 1_u64;
+          set without_count = advanced;
+        }
       }
     }
   }
