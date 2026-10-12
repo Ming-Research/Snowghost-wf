@@ -1,0 +1,101 @@
+const no_index: u32 = 4294967295_u32;
+
+const slot_ceiling: u64 = 1073741824_u64;
+
+enum Flow {
+  Open(block: u32);
+}
+
+struct Block {
+  entries: Box<Paged<Flow>>;
+  entry_slot: u32;
+  parent: u32;
+  normal_y: i32;
+}
+
+struct Context {
+  order: Box<Paged<Flow>>;
+  blocks: Box<Slots<Block>>;
+  invariant(c): forall root_bounds(k in 0_u64..c^.order.inner.len): c^.order.inner[k].Open.block < c^.blocks.inner.len;
+  invariant(c): forall root_inverse(k in 0_u64..c^.order.inner.len): c^.blocks.inner[c^.order.inner[k].Open.block].entry_slot == k, c^.blocks.inner[c^.order.inner[k].Open.block].parent == no_index;
+}
+
+fn publish_leaf(destination: &Context, fresh: Context, delta: i32) -> result: unit writes(destination.order), writes(destination.blocks) contract {
+  requires fresh.order.inner.len == 1_u64;
+  requires fresh.blocks.inner.len == 1_u64;
+  requires forall orphan(k in 0_u64..fresh.blocks.inner.len): fresh.blocks.inner[k].parent == no_index;
+  requires forall prepared_leaf(k in 0_u64..fresh.blocks.inner.len): fresh.blocks.inner[k].entries.inner.len == 0_u64;
+  requires destination^.order.inner.len < slot_ceiling;
+  requires destination^.blocks.inner.len < slot_ceiling;
+  ensures destination^.order.inner.len == entry(destination)^.order.inner.len + 1_u64;
+  ensures destination^.blocks.inner.len == entry(destination)^.blocks.inner.len + 1_u64;
+} {
+  doc "Variant of publish-consume that requires every source Block to be a root directly, so the destination parent fact depends only on take_back returning the stored last element and not on deriving the sole Block from the order-indexed inverse. The smallest prepared splice owns one root leaf Block, including its actual owner-local Paged entries. Consume its Context before rebasing that root into a general destination prefix; the obsolete private root order is released. This isolates the publication boundary, not nested subtree relocation. Capacity is obtained from the required append lengths, and no existing stable slot moves.";
+  let order_base = destination^.order.inner.len;
+  let block_base = destination^.blocks.inner.len;
+  let order_capacity = order_base + 1_u64;
+  let block_capacity = block_base + 1_u64;
+  if destination^.order.inner.cap < order_capacity {
+    grow_paged(cell: &destination^.order, capacity: order_capacity);
+  }
+  if destination^.blocks.inner.cap < block_capacity {
+    grow(cell: &destination^.blocks, capacity: block_capacity);
+  }
+  let Context(order: private_order, blocks: private_blocks) = move fresh;
+  let taken = take_back(window: &private_blocks.inner);
+  let entry_slot = cvt::<u64, u32>(order_base);
+  let target_slot = cvt::<u64, u32>(block_base);
+  set taken.entry_slot = entry_slot;
+  set taken.normal_y = taken.normal_y +sat delta;
+  place_back(window: &destination^.blocks.inner, value: move taken);
+  let item = Flow::Open(block: target_slot);
+  place_back(window: &destination^.order.inner, value: item);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "The retained prefix and the prepared root both use private slot zero. Publication grows both destination pools, keeps the retained root, and rebases the transferred Block to destination slot one. The owned Paged capacity distinguishes transfer from constructing a replacement payload.";
+  let order = box_paged_new::<Flow>(capacity: 1_u64);
+  let blocks = box_slots_new::<Block>(capacity: 1_u64);
+  let retained_entries = box_paged_new::<Flow>(capacity: 0_u64);
+  let retained = Block(entries: move retained_entries, entry_slot: 0_u32, parent: no_index, normal_y: 10_i32);
+  place_back(window: &blocks.inner, value: move retained);
+  let retained_item = Flow::Open(block: 0_u32);
+  place_back(window: &order.inner, value: retained_item);
+  let destination = Context(order: move order, blocks: move blocks);
+  let fresh_order = box_paged_new::<Flow>(capacity: 1_u64);
+  let fresh_blocks = box_slots_new::<Block>(capacity: 1_u64);
+  let leaf_entries = box_paged_new::<Flow>(capacity: 3_u64);
+  let leaf = Block(entries: move leaf_entries, entry_slot: 0_u32, parent: no_index, normal_y: 20_i32);
+  place_back(window: &fresh_blocks.inner, value: move leaf);
+  let leaf_item = Flow::Open(block: 0_u32);
+  place_back(window: &fresh_order.inner, value: leaf_item);
+  let fresh = Context(order: move fresh_order, blocks: move fresh_blocks);
+  publish_leaf(destination: &destination, fresh: move fresh, delta: 7_i32);
+  if destination.order.inner.len != 2_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if destination.blocks.inner.len != 2_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if destination.blocks.inner[0_u64].normal_y != 10_i32 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  if destination.blocks.inner[1_u64].normal_y != 27_i32 {
+    return std::process::exit_status(code: 4_u8);
+  }
+  if destination.blocks.inner[1_u64].entry_slot != 1_u32 {
+    return std::process::exit_status(code: 5_u8);
+  }
+  if destination.blocks.inner[1_u64].entries.inner.cap != 3_u64 {
+    return std::process::exit_status(code: 6_u8);
+  }
+  match destination.order.inner[1_u64] {
+    Open(block: b) => {
+      if b != 1_u32 {
+        return std::process::exit_status(code: 7_u8);
+      }
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}

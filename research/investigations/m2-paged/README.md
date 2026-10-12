@@ -977,3 +977,35 @@ data dependencies.
 Neither alternative is adopted; the owner must choose before renderer
 publication interfaces change. Clearing the soon-dropped source solely to
 satisfy a borrowed exit is excluded by the task's redundant-write rule.
+
+#### Range fixes in release wf-5b8bccb2d9be
+
+Whitefoot#366, released as `wf-5b8bccb2d9be` (Whitefoot main `5b8bccb2d`,
+specification v0.131), admits a bare Bool field or binding as a range guard
+and makes `take_back` return the window's last element before the call, so
+facts proved for that element while stored carry over. The table above
+records the earlier experiment compiler; these are the front-end results
+(`whitefootc --check`) of every witness here at the new pin, with
+`wf-78223721f77d` as the old control.
+
+- `live-inverse-bare.wf` is accepted; the old control still refuses the bare
+  guard (GRAM-5). Reaching the declaration exposed a witness mistake, fixed
+  here: `preserve` read nothing, so its exact effect row is `pure`, not
+  `reads(c)` (EFF-2).
+- `publish-consume-orphan.wf` is new: `publish-consume` plus the range
+  requirement that every source Block has `parent == no_index`. It is
+  accepted, and the old control refuses it, so the destination exit now
+  receives the returned element's stored fact.
+- `publish-consume.wf` is still refused for the same parent fact. Its source
+  states that fact only through the order-indexed inverse; reaching the sole
+  Block needs the deduction that `order[0].block < blocks.len == 1` names
+  slot zero. That is a one-element case analysis, not the returned-element
+  transport #366 fixed, and a real prepared splice with several Blocks would
+  need a fact stated per Block regardless.
+- `live-inverse-equality.wf` (a call in a range term) and both helper-frame
+  witnesses (entry-image reads in range clauses) are refused as before; the
+  frame pair waits on Whitefoot's helper-frame work.
+- `append-primitive.wf`, `grow-inverse.wf` and `natural-paged.wf` are
+  accepted; `append-helper-boundary.wf`, `reserve-helper-boundary.wf`,
+  `grow-inverse-corrupt.wf` and `publish-borrowed-invalid.wf` reach their
+  inverse refusals as before.
