@@ -1,0 +1,90 @@
+# TEMPORARY: snapshots the web-app test set (research/investigations/testset) and
+# Chromium's layout dump of each page, and uploads them as an artifact. This
+# workflow is removed before the branch research/testset is ready; it exists to
+# make the first snapshot set and to run the stability check, which is a second
+# run of this same workflow a day later with `previous_run` naming the first
+# run's id (the run compares the new manifest against that run's artifact).
+name: testset-snapshot
+
+on:
+  push:
+    branches: [research/testset]
+  workflow_dispatch:
+    inputs:
+      pages: {type: string, required: false, description: "comma-separated page names; empty means every page"}
+      previous_run: {type: string, required: false, description: "id of an earlier run to compare dumps against"}
+      shadow: {type: string, required: false, description: "flatten (default) or declarative"}
+
+concurrency:
+  group: testset-snapshot-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The font packages the 14900K timing runs use
+      # (.github/workflows/time-14900k.yml), so Chromium lays text out with the
+      # faces the oracles' other runs use.
+      - name: Fonts
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq fonts-dejavu-core fonts-dejavu-mono fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          fc-cache -f
+
+      # Playwright 1.56.0 is the version whose Chromium (revision 1194) the
+      # oracles' default paths name.
+      - name: Playwright and Chromium
+        run: |
+          set -euo pipefail
+          pw=$RUNNER_TEMP/pw
+          mkdir -p "$pw"
+          (cd "$pw" && npm init -y > /dev/null && npm install --silent playwright@1.56.0 && npx playwright install --with-deps chromium)
+          chrome=$(ls -d "$HOME"/.cache/ms-playwright/chromium-1194/chrome-linux*/chrome)
+          echo "PLAYWRIGHT=$pw/node_modules/playwright" >> "$GITHUB_ENV"
+          echo "CHROMIUM=$chrome" >> "$GITHUB_ENV"
+          "$chrome" --version
+
+      - name: Snapshot
+        env:
+          PAGES: ${{ inputs.pages }}
+          SHADOW: ${{ inputs.shadow }}
+        run: |
+          set -euo pipefail
+          args=""
+          if [ -n "$PAGES" ]; then args="$args --only $PAGES"; fi
+          if [ -n "$SHADOW" ]; then args="$args --shadow $SHADOW"; fi
+          # shellcheck disable=SC2086
+          node tests/testset/snapshot.mjs snapshot tests/testset/pages.txt build/testset $args
+          echo "--- manifest"
+          cut -f1,4,6,8,10,11,12,13 build/testset/manifest.tsv
+
+      - name: Upload the snapshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: testset-snapshot
+          path: build/testset
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Compare with the previous run
+        if: inputs.previous_run != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS: ${{ inputs.previous_run }}
+        run: |
+          set -euo pipefail
+          gh run download "$PREVIOUS" --name testset-snapshot --dir build/testset-previous
+          node tests/testset/snapshot.mjs compare build/testset-previous/manifest.tsv build/testset/manifest.tsv
