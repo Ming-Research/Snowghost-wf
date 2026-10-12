@@ -9,12 +9,12 @@ whose compiler proves memory safety, the absence of data races and silent
 overflow, and the independence it uses to run code in parallel; a shell
 written in Rust hosts it on each operating system.
 
-The aim is a light platform for web-built applications, with a rendering
-pipeline that is parallel and incremental from end to end: a change to one
-element reruns only the stages and the parts of the page it affects, and
-every part of every stage that does not depend on another runs in parallel.
-The renderer keeps only each algorithm's true dependencies and leaves the
-grain of parallel work to the Whitefoot compiler.
+The aim is a rendering pipeline that is parallel and incremental from end to
+end: a change to one element reruns only the stages and the parts of the page
+it affects, and every part of every stage that does not depend on another
+runs in parallel. The long-term direction and the release goals are under
+[Releases](#releases). The renderer keeps only each algorithm's true
+dependencies and leaves the grain of parallel work to the Whitefoot compiler.
 
 ## Why
 
@@ -29,6 +29,64 @@ Snowghost is also Whitefoot's large real program. It shows what Whitefoot's
 proofs give a renderer, and it exposes what the language still lacks. The
 first question it answers is whether a pipeline built this way beats the
 engines in use today, measured on the same pages and the same edits.
+
+## Releases
+
+This section holds the project's long-term direction and its release goals;
+[`AGENTS.md`](AGENTS.md) keeps the goal and the rules the work follows.
+
+The long-term direction is a small, fast engine that can replace the system
+WebView on Windows, Linux, macOS and mobile, and renders today's mainstream
+web applications faster than Chromium.
+
+The first release is a typesetting engine: style and layout only. It is
+complete when all four goals hold:
+
+- On the test set, first style and layout and three kinds of interaction
+  update (toggling a class, inserting into a list, and editing text) are
+  faster than Chromium, sequentially and at four workers. The measure is the
+  median time on the 14900K, the owner's benchmark machine. The test
+  set is 21 web-application pages, chosen by traffic rank from the Chrome UX
+  Report (CrUX) top-origin list, plus three document pages: the ECMAScript
+  specification, the HTML specification and Wikipedia's Apollo 11 article.
+  The list of 21 is still being finalised (status board item sg-testset).
+- On the same pages, each block box's position and size is within 1 px of
+  Chromium's, and every inline box has the same number of fragments. This
+  threshold is deliberately looser than the design's exact match to the
+  layout unit ([`design/vocabulary.md`](design/vocabulary.md)).
+- M2 is closed: inserting or removing a block updates only the part of the
+  layout it affects, block edits are no slower than Chromium, and other edits
+  and full builds are no slower than before M2 (its
+  [criterion](research/investigations/structure-edits/DESIGN.md#criterion)).
+- The renderer binary is at most 10 MB, and the gate checks it. Until a shell
+  exists the renderer binary stands for the engine. How it is measured
+  (platform, stripping, MB or MiB) is an open owner decision on status board
+  item sg-target-binary-size.
+
+Candidate goals for later releases, each reopened when its release is
+planned:
+
+- **Paint:** the three document pages produce a display list and property
+  trees, identical sequentially, at four workers and incrementally.
+- **Desktop shell:** the Rust shell shows the document pages in a window and
+  responds to input, and a still frame matches a full repaint pixel for pixel.
+- **Mobile:** the document pages display and respond to input on one iOS and
+  one Android device.
+- **JavaScript:** an interpreter without a JIT passes an approved share of
+  test262 at approved speed.
+- **Memory and cold start:** approved targets against WebView are met on the
+  test set.
+- **Style and layout coverage:** the pages of focused cases for each style
+  property and layout mode match Chromium in every property and box.
+- **Text and font coverage:** line breaking, fallback fonts, WOFF2 and
+  letter-spacing match Chromium on their case sets.
+- **Library hardening:** the excluded tree-construction cases, NFKC and NFKD,
+  URL origin and search parameters pass, and untrusted input is processed in
+  time linear in its size.
+- **Whole pipeline:** HTML to layout is faster than Chromium on the test set.
+- **Tidy-up:** duplicated code is merged and the code uses the current
+  Whitefoot source patterns, with identical output on the three document
+  pages.
 
 ## Status
 
@@ -49,8 +107,8 @@ does not yet paint.
   - every incremental result is checked byte for byte against a full build.
 - **Measured against Chromium:**
   - **Pages and edits:** the ECMAScript specification, the HTML
-    specification and a Wikipedia article, with word, sentence, colour,
-    font-size, root font-size and block edits.
+    specification and Wikipedia's Apollo 11 article, with word, sentence,
+    colour, font-size, root font-size and block edits.
   - **Results:** at the end of the incremental style stage, Snowghost costs
     less than Chromium 141 per edit on 15 of 18 page and edit pairs,
     sequentially. It trails on one font-size edit and on the three block
@@ -133,8 +191,9 @@ for their test suites and, for the Chromium oracles, Node.js and Playwright.
 
 Most of the code is written by coding agents and reviewed by the project's
 owner.
-- [`AGENTS.md`](AGENTS.md) holds the goal, the priorities and the
-  project's own rules.
+- [`AGENTS.md`](AGENTS.md) holds the project's goal, its priorities and its
+  own rules; the long-term direction and the release goals are under
+  [Releases](#releases).
 - Every design decision lands in the design tree and is approved by the
   owner before it reaches `main`.
 - An investigation under `research/investigations/` writes its question and
