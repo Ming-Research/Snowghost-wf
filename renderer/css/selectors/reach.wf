@@ -298,6 +298,54 @@ fn compound_reach(list: &SelectorList, alt: AltEntry, position: u64) -> reach: u
   return reach_around;
 }
 
+fn compound_is_next(list: &SelectorList, position: u64) -> next: Bool reads(list) {
+  doc "Whether position holds a NextSibling compound; False for a malformed list.";
+  match compound_entry(list: list, position: position) {
+    Some(value: compound) => {
+      match compound.combinator {
+        NextSibling() => {
+          return True();
+        }
+        Start() => {
+          return False();
+        }
+        Descendant() => {
+          return False();
+        }
+        Child() => {
+          return False();
+        }
+        SubsequentSibling() => {
+          return False();
+        }
+      }
+    }
+    None() => {
+      return False();
+    }
+  }
+}
+
+fn compound_plus_hops(list: &SelectorList, alt: AltEntry, position: u64) -> hops: u32 reads(list) {
+  doc "The number of combinators after position when every one is NextSibling, or 0 for an empty, mixed or malformed suffix. Each compound reads its own suffix independently; validation is an associative Bool reduction, and the count is the endpoint difference, with no shared counter or prefix pass.";
+  let end = cvt::<u32, u64>(alt.compound_end);
+  let next = position +sat 1_u64;
+  if next < end {
+  } else {
+    return 0_u32;
+  }
+  let only_plus = True();
+  for (j in next..end) {
+    let joined = compound_is_next(list: list, position: j);
+    set only_plus = band(only_plus, joined);
+  }
+  if only_plus {
+    let count = end - next;
+    return cvt.wrap::<u64, u32>(count);
+  }
+  return 0_u32;
+}
+
 fn context_mask(list: &SelectorList, atoms: &AtomTable, alt: AltEntry, position: u64) -> mask: FeatureFilter reads(list), reads(atoms) {
   doc "The ancestor features of the compounds left of the compound at position that a descendant or child combinator joins to their right neighbour: each matches an ancestor of an element that is the compound's element, a sibling of it or a sibling of one of its ancestors, so, when the compound's element is a child of a parent, the parent or one of its ancestors. Empty for a malformed list.";
   let mask = empty_filter();
@@ -407,13 +455,14 @@ fn feature_reaches(list: &SelectorList, atoms: &AtomTable, out: &Box<Slots<Featu
       let last = cvt::<u32, u64>(alt.compound_end);
       for (position in first..last) {
         let reach = compound_reach(list: list, alt: alt, position: position);
+        let plus_hops = compound_plus_hops(list: list, alt: alt, position: position);
         let context = context_mask(list: list, atoms: atoms, alt: alt, position: position);
         match compound_entry(list: list, position: position) {
           Some(value: compound) => {
             let joined = sibling_side(compound: compound);
             if joined != 0_u8 {
               let single_word = False();
-              let sibling = FeatureReach(feature: feature_children, every: single_word, hash: 0_u64, reach: reach, side: joined, context: context, subject: key, generated: generated);
+              let sibling = FeatureReach(feature: feature_children, every: single_word, hash: 0_u64, reach: reach, side: joined, plus_hops: plus_hops, context: context, subject: key, generated: generated);
               let placed = push_reach(out: out, value: sibling);
               set complete = band(complete, placed);
             }
@@ -426,7 +475,7 @@ fn feature_reaches(list: &SelectorList, atoms: &AtomTable, out: &Box<Slots<Featu
                 let instr_in = at < list^.instrs.inner.len;
                 if instr_in {
                   let role = role_of(instr: list^.instrs.inner[at]);
-                  let pushed = add_role(out: out, ranges: &ranges, atoms: atoms, role: role, reach: reach, context: context, key: key, generated: generated);
+                  let pushed = add_role(out: out, ranges: &ranges, atoms: atoms, role: role, reach: reach, plus_hops: plus_hops, context: context, key: key, generated: generated);
                   set complete = band(complete, pushed);
                 }
               }
@@ -444,26 +493,26 @@ fn feature_reaches(list: &SelectorList, atoms: &AtomTable, out: &Box<Slots<Featu
   return complete;
 }
 
-fn add_role(out: &Box<Slots<FeatureReach>>, ranges: &Box<Slots<u64>>, atoms: &AtomTable, role: InstrRole, reach: u8, context: FeatureFilter, key: SubjectKey, generated: Bool) -> pushed: Bool reads(atoms), writes(out), writes(ranges) {
+fn add_role(out: &Box<Slots<FeatureReach>>, ranges: &Box<Slots<u64>>, atoms: &AtomTable, role: InstrRole, reach: u8, plus_hops: u32, context: FeatureFilter, key: SubjectKey, generated: Bool) -> pushed: Bool reads(atoms), writes(out), writes(ranges) {
   doc "Appends what one simple selector contributes: a class's reach, an every-class reach for the class attribute, a reach_all entry and a children reach for an of-clause, whose alternatives are also queued with reach_around because the elements the clause tests are the subject's siblings (so a structural feature in the clause, such as :empty, reaches the subject through them), a children reach for a position pseudo-class, a parent reach for :empty, or its argument's alternatives to ranges for nested_reaches; context is the ancestor features the reach's parent must admit (FeatureReach.context).";
   if role.kind == role_class {
     let hash = atom_hash(atoms: atoms, atom: role.atom);
     let single = False();
-    let made = FeatureReach(feature: feature_class, every: single, hash: hash, reach: reach, side: 0_u8, context: context, subject: key, generated: generated);
+    let made = FeatureReach(feature: feature_class, every: single, hash: hash, reach: reach, side: 0_u8, plus_hops: plus_hops, context: context, subject: key, generated: generated);
     let pushed = push_reach(out: out, value: made);
     return pushed;
   }
   let all_words = True();
   let single_word = False();
   if role.kind == role_class_attribute {
-    let made = FeatureReach(feature: feature_class, every: all_words, hash: 0_u64, reach: reach, side: 0_u8, context: context, subject: key, generated: generated);
+    let made = FeatureReach(feature: feature_class, every: all_words, hash: 0_u64, reach: reach, side: 0_u8, plus_hops: plus_hops, context: context, subject: key, generated: generated);
     let pushed = push_reach(out: out, value: made);
     return pushed;
   }
   if role.kind == role_counted {
-    let made = FeatureReach(feature: feature_class, every: all_words, hash: 0_u64, reach: reach_all, side: 0_u8, context: context, subject: key, generated: generated);
+    let made = FeatureReach(feature: feature_class, every: all_words, hash: 0_u64, reach: reach_all, side: 0_u8, plus_hops: 0_u32, context: context, subject: key, generated: generated);
     let pushed = push_reach(out: out, value: made);
-    let position = FeatureReach(feature: feature_children, every: single_word, hash: 0_u64, reach: reach, side: role.side, context: context, subject: key, generated: generated);
+    let position = FeatureReach(feature: feature_children, every: single_word, hash: 0_u64, reach: reach, side: role.side, plus_hops: plus_hops, context: context, subject: key, generated: generated);
     let placed = push_reach(out: out, value: position);
     let queued = push_range(ranges: ranges, start: role.start, end: role.end, reach: reach_around);
     let both = band(pushed, placed);
@@ -471,12 +520,12 @@ fn add_role(out: &Box<Slots<FeatureReach>>, ranges: &Box<Slots<u64>>, atoms: &At
     return all;
   }
   if role.kind == role_position {
-    let made = FeatureReach(feature: feature_children, every: single_word, hash: 0_u64, reach: reach, side: role.side, context: context, subject: key, generated: generated);
+    let made = FeatureReach(feature: feature_children, every: single_word, hash: 0_u64, reach: reach, side: role.side, plus_hops: plus_hops, context: context, subject: key, generated: generated);
     let pushed = push_reach(out: out, value: made);
     return pushed;
   }
   if role.kind == role_empty {
-    let made = FeatureReach(feature: feature_parent, every: single_word, hash: 0_u64, reach: reach, side: 0_u8, context: context, subject: key, generated: generated);
+    let made = FeatureReach(feature: feature_parent, every: single_word, hash: 0_u64, reach: reach, side: 0_u8, plus_hops: plus_hops, context: context, subject: key, generated: generated);
     let pushed = push_reach(out: out, value: made);
     return pushed;
   }
@@ -555,13 +604,18 @@ fn nested_reaches(list: &SelectorList, atoms: &AtomTable, out: &Box<Slots<Featur
       for (position in first..last) {
         let inner = compound_reach(list: list, alt: alt, position: position);
         let reach = compose(inner: inner, outer: outer);
+        let plus_hops = if outer == reach_self {
+          give compound_plus_hops(list: list, alt: alt, position: position);
+        } else {
+          give 0_u32;
+        }
         let context = empty_filter();
         match compound_entry(list: list, position: position) {
           Some(value: compound) => {
             let joined = sibling_side(compound: compound);
             if joined != 0_u8 {
               let single_word = False();
-              let sibling = FeatureReach(feature: feature_children, every: single_word, hash: 0_u64, reach: reach, side: joined, context: context, subject: key, generated: generated);
+              let sibling = FeatureReach(feature: feature_children, every: single_word, hash: 0_u64, reach: reach, side: joined, plus_hops: plus_hops, context: context, subject: key, generated: generated);
               let placed = push_reach(out: out, value: sibling);
               set complete = band(complete, placed);
             }
@@ -574,7 +628,7 @@ fn nested_reaches(list: &SelectorList, atoms: &AtomTable, out: &Box<Slots<Featur
                 let instr_in = at < list^.instrs.inner.len;
                 if instr_in {
                   let role = role_of(instr: list^.instrs.inner[at]);
-                  let pushed = add_role(out: out, ranges: ranges, atoms: atoms, role: role, reach: reach, context: context, key: key, generated: generated);
+                  let pushed = add_role(out: out, ranges: ranges, atoms: atoms, role: role, reach: reach, plus_hops: plus_hops, context: context, key: key, generated: generated);
                   set complete = band(complete, pushed);
                 }
               }

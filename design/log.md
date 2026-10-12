@@ -2,7 +2,15 @@
 
 Newest first. One entry per approved change of the tree: a dated title,
 `Nodes:` naming every node changed, `Owner-approved:` and `Summary:`;
-`skill/SKILL.md` owns the form.
+the design-tree part of the owner-wide agent instructions owns the form.
+
+## 2026-10-11 Bound the structural restyle of next-sibling `+` chains by their length
+
+Nodes: pipeline/style
+
+Owner-approved: On the status board on 2026-10-11 the owner chose A on the card asking whether to approve Snowghost-wf#65's change to design/pipeline/style.md at head 782f5ef, narrowing the structural restyle of `+` chains by their hop count.
+
+Summary: The structural reverse index now records, for a compound followed only by `+` combinators, how many follow, and an insertion or removal walks that many further element siblings after the next one instead of every later sibling, because a chain of n `+` relates elements at most n siblings apart; reaches from position pseudo-classes such as `:nth-child` stay unbounded. On html5's 60 edits the largest rematch set fell from 548 elements to 2, with identical results across 75 fixtures in both modes and a one-too-few mutation detected ([bounded `+` reach](../research/investigations/structure-edits/DESIGN.md#bounded-next-sibling-suffixes-sg-bl-02-02)).
 
 ## 2026-10-09 Prove grid columns invariant, reduce item-owned proposals and publish first baselines
 

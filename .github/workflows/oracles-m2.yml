@@ -6,10 +6,180 @@ name: oracles-m2
 
 on:
   push:
-    branches: [research/m2-sync-main, research/structure-edits, research/m2-layout, research/m2-edit-cost, research/m2-frag-a, research/m2-frag-b, research/m2-q139, research/m2-apollo11-fix, research/m2-fallback-cost]
+    branches: [research/m2-sync-main, research/structure-edits, research/m2-layout, research/m2-edit-cost, research/m2-frag-a, research/m2-frag-b, research/m2-q139, research/m2-apollo11-fix, research/m2-fallback-cost, research/style-plus-reach]
   workflow_dispatch:
 
 jobs:
+  plus-reach:
+    if: github.ref == 'refs/heads/research/style-plus-reach'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Toolchain, fonts and source provenance
+        run: |
+          set -euo pipefail
+          sudo sh -c 'printf "%s\n" https://archive.ubuntu.com/ubuntu > /etc/apt/apt-mirrors.txt'
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=30 update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          make -s toolchain compiler oracle-fonts
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          mkdir -p build/m1 build/plus-reach/cache
+          # Fixed fork point, rather than a moving research/m2-layout head.
+          baseline=030e4dd4081c9c15699363bdfa0e57c53a7f761d
+          git merge-base --is-ancestor "$baseline" HEAD
+          git rev-parse HEAD > build/plus-reach/head.revision
+          git rev-parse "$baseline" > build/plus-reach/before.revision
+          git diff "$baseline" HEAD -- renderer > build/plus-reach/production.diff
+          cp whitefoot.pin build/plus-reach/whitefoot.pin
+          sha256sum "$wfc" > build/plus-reach/compiler.sha256
+          echo "WFC=$wfc" >> "$GITHUB_ENV"
+          echo "PLUS_BASELINE=$baseline" >> "$GITHUB_ENV"
+      - name: Sequential and parallel style, and node-listing driver
+        run: |
+          set -euo pipefail
+          cache="$GITHUB_WORKSPACE/build/plus-reach/cache"
+          (cd renderer && "$WFC" --cache "$cache" --fragments function --graph modules.wfg --entry style_oracle -o ../build/m1/style_seq)
+          (cd renderer && "$WFC" --cache "$cache" --fragments function --par --graph modules.wfg --entry style_oracle -o ../build/m1/style_par)
+          (cd renderer && "$WFC" --cache "$cache" --fragments function --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_seq)
+      - name: One final-hop removal before the focused batch
+        run: python3 research/investigations/structure-edits/scripts/plus-reach.py build/layout_oracle_seq build/m1/style_seq build/plus-reach/pilot --pilot
+      - name: Focused reach precision and retained computed-style identity
+        run: |
+          set -euo pipefail
+          s=research/investigations/structure-edits/scripts/plus-reach.py
+          python3 "$s" build/layout_oracle_seq build/m1/style_seq build/plus-reach/seq
+          WF_WORKERS=4 python3 "$s" build/layout_oracle_seq build/m1/style_par build/plus-reach/par
+          # Counts, match changes and identity must agree across execution modes;
+          # style oracle's visited count is work, not part of this equality.
+          python3 - <<'PYEOF'
+          import json
+          from pathlib import Path
+          seq = json.loads(Path('build/plus-reach/seq/summary.json').read_text())
+          par = json.loads(Path('build/plus-reach/par/summary.json').read_text())
+          assert seq['results'] == par['results'], 'focused sequential/parallel results differ'
+          print(f"{seq['cases']} focused cases: sequential/parallel results identical")
+          PYEOF
+      - name: Existing structural reaches and style-state checks
+        run: |
+          set -euo pipefail
+          for mode in seq par; do
+            for page_kind in 'structure case full' 'sides case' 'ofclause case'; do
+              WF_WORKERS=4 STYLE="build/m1/style_$mode" sh research/investigations/incremental-style/run.sh reach $page_kind
+              WF_WORKERS=4 STYLE="build/m1/style_$mode" sh research/investigations/incremental-style/run.sh structure $page_kind
+            done
+            cp -R build/m1/reach "build/plus-reach/existing-reach-$mode"
+            cp -R build/m1/structure "build/plus-reach/existing-structure-$mode"
+          done
+      - name: Same compiler on the fork-point control and a one-hop-too-few mutation
+        run: |
+          set -euo pipefail
+          cache="$GITHUB_WORKSPACE/build/plus-reach/cache"
+          git worktree add -q --detach build/plus-before "$PLUS_BASELINE"
+          (cd build/plus-before/renderer && "$WFC" --cache "$cache" --fragments function --graph modules.wfg --entry style_oracle -o "$GITHUB_WORKSPACE/build/m1/style_plus_before")
+          git worktree add -q --detach build/plus-mutant HEAD
+          python3 - <<'PYEOF'
+          from pathlib import Path
+          path = Path('build/plus-mutant/renderer/style/restyle.wf')
+          original = 'let within = distance <= key.plus_hops;'
+          mutant = 'let within = distance < key.plus_hops;'
+          text = path.read_text()
+          assert text.count(original) == 1, 'mutation anchor must occur exactly once'
+          path.write_text(text.replace(original, mutant))
+          PYEOF
+          git -C build/plus-mutant diff > build/plus-reach/mutation.diff
+          (cd build/plus-mutant/renderer && "$WFC" --cache "$cache" --fragments function --graph modules.wfg --entry style_oracle -o "$GITHUB_WORKSPACE/build/m1/style_plus_mutant")
+          python3 research/investigations/structure-edits/scripts/plus-reach.py build/layout_oracle_seq build/m1/style_plus_mutant build/plus-reach/mutant --mutant
+      - name: The fork-point control must fail the new precision requirement
+        run: |
+          set -euo pipefail
+          s=research/investigations/structure-edits/scripts/plus-reach.py
+          python3 "$s" build/layout_oracle_seq build/m1/style_plus_before build/plus-reach/before --before
+          if python3 "$s" build/layout_oracle_seq build/m1/style_plus_before build/plus-reach/before-precision --pilot > build/plus-reach/before-precision.log 2> build/plus-reach/before-precision.err; then
+            echo 'fork-point control unexpectedly passed bounded + precision' >&2
+            exit 1
+          else
+            test "$?" -eq 1
+          fi
+          # Distinguish the intended precision failure from a broken invocation.
+          grep 'reach set 65 expected 1, missing 0, differ 0, exit statuses 0/0' build/plus-reach/before-precision.err
+      - name: Capture the pinned html5 page and its block/class scripts once
+        run: |
+          set -euo pipefail
+          # fetch may fail on revision-unstable Apollo bytes after html5 was
+          # fetched; the exact html5 hash below is the required input here.
+          sh research/investigations/concurrency/run.sh fetch || true
+          echo 'f0466f5a8c8099935a9394607abcd4bbbb3b41384a14b3f906eea80a521fe06e  build/research/concurrency/html5.html' | sha256sum -c -
+          sh research/investigations/incremental-layout/run.sh prepare html5
+          sh research/investigations/incremental-style/run.sh scripts html5
+          cp build/research/concurrency/html5.html build/plus-reach/html5.html
+          cp build/x5/html5.nodes build/plus-reach/html5.nodes
+          cp build/x5/scripts/html5-block.edits build/plus-reach/html5-block.edits
+          cp build/m1/scripts/html5-classes.edits build/plus-reach/html5-classes.edits
+          sha256sum build/plus-reach/html5.html build/plus-reach/html5-block.edits build/plus-reach/html5-classes.edits > build/plus-reach/inputs.sha256
+      - name: html5 block reach before and after, and incremental class consistency
+        run: |
+          set -euo pipefail
+          for mode in before seq par; do
+            style=build/m1/style_plus_before
+            if [ "$mode" != before ]; then style="build/m1/style_$mode"; fi
+            WF_WORKERS=4 STYLE="$style" sh research/investigations/incremental-style/run.sh reach html5 block
+            cp build/m1/reach/html5-block.txt "build/plus-reach/html5-block.$mode.reach.raw"
+          done
+          for mode in seq par; do
+            WF_WORKERS=4 STYLE="build/m1/style_$mode" sh research/investigations/incremental-style/run.sh structure html5 block
+            cp build/m1/structure/html5-block.txt "build/plus-reach/html5-block.$mode.structure.raw"
+            WF_WORKERS=4 STYLE="build/m1/style_$mode" sh research/investigations/incremental-style/run.sh incremental html5 classes
+            cp build/m1/incremental/html5-classes.txt "build/plus-reach/html5-classes.$mode.incremental.raw"
+          done
+          python3 - <<'PYEOF'
+          import json
+          import re
+          from pathlib import Path
+          root = Path('build/plus-reach')
+          rows = {}
+          for mode in ('before', 'seq', 'par'):
+              raw = (root / f'html5-block.{mode}.reach.raw').read_text()
+              parsed = re.findall(r'^reach (\d+) set (\d+) changed (\d+) missing (\d+)$', raw, re.M)
+              assert parsed and len(parsed) == len(raw.splitlines()), f'{mode}: incomplete/full reach output'
+              rows[mode] = [tuple(map(int, row)) for row in parsed]
+              assert all(row[3] == 0 for row in rows[mode]), f'{mode}: missing elements'
+          assert rows['seq'] == rows['par'], 'html5 sequential/parallel reach differs'
+          assert len(rows['before']) == len(rows['seq']), 'before/after edit count differs'
+          assert [row[2] for row in rows['before']] == [row[2] for row in rows['seq']], 'match changes differ'
+          maxima = {mode: max(row[1] for row in data) for mode, data in rows.items()}
+          assert maxima['seq'] < maxima['before'], f'no reduction: {maxima}'
+          result = dict(historical_max=548, captured_maxima=maxima, edits=len(rows['seq']),
+                        note='same pinned HTML, generated scripts and compiler; element set counts, no performance claim')
+          (root / 'html5-set-size.json').write_text(json.dumps(result, indent=2) + '\n')
+          print(json.dumps(result))
+          PYEOF
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: plus-reach-evidence
+          path: |
+            build/plus-reach/*.revision
+            build/plus-reach/*.diff
+            build/plus-reach/*.sha256
+            build/plus-reach/*.pin
+            build/plus-reach/*.json
+            build/plus-reach/*.raw
+            build/plus-reach/*.edits
+            build/plus-reach/*.html
+            build/plus-reach/*.nodes
+            build/plus-reach/*.log
+            build/plus-reach/*.err
+            build/plus-reach/pilot/
+            build/plus-reach/seq/
+            build/plus-reach/par/
+            build/plus-reach/before/
+            build/plus-reach/before-precision/
+            build/plus-reach/mutant/
+            build/plus-reach/existing-*/
   step5:
     if: contains(github.event.head_commit.message, '[oracles]') || contains(github.event.head_commit.message, '[step5]')
     runs-on: ubuntu-24.04
@@ -133,7 +303,7 @@ jobs:
             build/x5/*.nodes
   oracles:
     # On the layout branch, only for a head commit that asks for it.
-    if: (github.ref != 'refs/heads/research/m2-layout' && github.ref != 'refs/heads/research/m2-edit-cost' && github.ref != 'refs/heads/research/m2-frag-a' && github.ref != 'refs/heads/research/m2-frag-b' && github.ref != 'refs/heads/research/m2-apollo11-fix' && github.ref != 'refs/heads/research/m2-fallback-cost') || contains(github.event.head_commit.message, '[oracles]')
+    if: (github.ref != 'refs/heads/research/m2-layout' && github.ref != 'refs/heads/research/m2-edit-cost' && github.ref != 'refs/heads/research/m2-frag-a' && github.ref != 'refs/heads/research/m2-frag-b' && github.ref != 'refs/heads/research/m2-apollo11-fix' && github.ref != 'refs/heads/research/m2-fallback-cost' && github.ref != 'refs/heads/research/style-plus-reach') || contains(github.event.head_commit.message, '[oracles]')
     runs-on: ubuntu-24.04
     timeout-minutes: 340
     steps:

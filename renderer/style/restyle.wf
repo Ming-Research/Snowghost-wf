@@ -355,6 +355,28 @@ fn has_class_word(document: &Document, span: TextSpan, hash: u64) -> found: Bool
   return False();
 }
 
+fn carries_key(document: &Document, keys: ElementKeys, key: SubjectKey) -> found: Bool reads(document) {
+  doc "Whether an element with keys carries key.";
+  match key {
+    Anything() => {
+      return True();
+    }
+    Nothing() => {
+      return False();
+    }
+    Id(hash: value) => {
+      let same = value == keys.id;
+      return band(keys.has_id, same);
+    }
+    Class(hash: value) => {
+      return has_class_word(document: document, span: keys.classes, hash: value);
+    }
+    Type(hash: value) => {
+      return value == keys.local;
+    }
+  }
+}
+
 fn carries(document: &Document, keys: ElementKeys, any: Bool, wanted: &Box<Slots<SubjectKey>>) -> found: Bool reads(document), reads(wanted) {
   doc "Whether an element with keys carries one of the wanted subject keys, or any is set.";
   if any {
@@ -362,31 +384,9 @@ fn carries(document: &Document, keys: ElementKeys, any: Bool, wanted: &Box<Slots
   }
   let count = wanted^.inner.len;
   for (k in 0_u64..count) {
-    let key = wanted^.inner[k];
-    match key {
-      Anything() => {
-        return True();
-      }
-      Nothing() => {
-      }
-      Id(hash: value) => {
-        let same = value == keys.id;
-        let holds = band(keys.has_id, same);
-        if holds {
-          return True();
-        }
-      }
-      Class(hash: value) => {
-        let holds = has_class_word(document: document, span: keys.classes, hash: value);
-        if holds {
-          return True();
-        }
-      }
-      Type(hash: value) => {
-        if value == keys.local {
-          return True();
-        }
-      }
+    let holds = carries_key(document: document, keys: keys, key: wanted^.inner[k]);
+    if holds {
+      return True();
     }
   }
   return False();
@@ -499,12 +499,22 @@ fn stable_class_restyle(document: &Document, atoms: &AtomTable, traversal: &Trav
   doc "Applies the same bounded class reaches after stable slots cease to be preorder. Reuses the structural reach walker for the edited subtree and later sibling subtrees, then resolves only selected NodeIds to stable slots. DOM links order enumeration; the existing depth frontier orders inherited computation.";
   let Reached(full: unbounded, pseudos: pseudos, self_reached: own, down_any: down_any, down: down_keys, across_any: across_any, across: across_keys, beyond_any: beyond_any, beyond: beyond_keys) = move reached;
   let empty_keys = box_slots_new::<SubjectKey>(capacity: 0_u64);
-  let self_keys = SideKeys(any: own, keys: move empty_keys);
-  let descendants = SideKeys(any: down_any, keys: move down_keys);
-  let across = SideKeys(any: across_any, keys: move across_keys);
-  let beyond = SideKeys(any: beyond_any, keys: move beyond_keys);
+  let self_bounded = box_slots_new::<SideKey>(capacity: 0_u64);
+  let down_bounded = box_slots_new::<SideKey>(capacity: 0_u64);
+  let across_bounded = box_slots_new::<SideKey>(capacity: 0_u64);
+  let beyond_bounded = box_slots_new::<SideKey>(capacity: 0_u64);
+  let down_keyed = down_keys.inner.len > 0_u64;
+  let down_wide = bor(down_any, down_keyed);
+  let across_keyed_before = across_keys.inner.len > 0_u64;
+  let across_wide = bor(across_any, across_keyed_before);
+  let beyond_keyed_before = beyond_keys.inner.len > 0_u64;
+  let beyond_wide = bor(beyond_any, beyond_keyed_before);
+  let self_keys = SideKeys(any: own, wide: own, plus_hops: 0_u32, keys: move empty_keys, bounded: move self_bounded);
+  let descendants = SideKeys(any: down_any, wide: down_wide, plus_hops: 0_u32, keys: move down_keys, bounded: move down_bounded);
+  let across = SideKeys(any: across_any, wide: across_wide, plus_hops: 0_u32, keys: move across_keys, bounded: move across_bounded);
+  let beyond = SideKeys(any: beyond_any, wide: beyond_wide, plus_hops: 0_u32, keys: move beyond_keys, bounded: move beyond_bounded);
   let nodes = box_slots_new::<NodeId>(capacity: 0_u64);
-  let visited = propagate visit_child(document: document, atoms: atoms, child: node, near: &self_keys, deep: &descendants, nodes: &nodes);
+  let visited = propagate visit_child(document: document, atoms: atoms, child: node, near: &self_keys, deep: &descendants, distance: 0_u32, nodes: &nodes);
   let across_keyed = across.keys.inner.len > 0_u64;
   let beyond_keyed = beyond.keys.inner.len > 0_u64;
   let across_some = bor(across.any, across_keyed);
@@ -531,7 +541,7 @@ fn stable_class_restyle(document: &Document, atoms: &AtomTable, traversal: &Trav
       }
       let element = is_element_node(document: document, node: sibling);
       if element {
-        let visited_sibling = propagate visit_child(document: document, atoms: atoms, child: sibling, near: &across, deep: &beyond, nodes: &nodes);
+        let visited_sibling = propagate visit_child(document: document, atoms: atoms, child: sibling, near: &across, deep: &beyond, distance: 0_u32, nodes: &nodes);
       }
       let following = match node_links(document: document, node: sibling) {
         Some(value: links) => {
@@ -770,10 +780,52 @@ fn next_within(document: &Document, node: NodeId, root: NodeId) -> next: Option<
   return None<NodeId>();
 }
 
+struct SideKey {
+  doc "One structural subject key and its positive finite + suffix bound.";
+  subject: SubjectKey;
+  plus_hops: u32;
+}
+
 struct SideKeys {
-  doc "The subject keys the structural reaches name for the children at one place around an edit point, for the children themselves or for their descendants; any when a reach there names every element.";
+  doc "The subject keys reaches name at one place around an edit point, for children or their descendants. any names every element without a bound; keys holds the other unbounded subject keys; bounded holds positive finite + suffix bounds, including Anything. wide marks any unbounded key; plus_hops is the largest finite bound. Both lists are per reach, never per element; class reaches keep their original subject-key lists.";
   any: Bool;
+  wide: Bool;
+  plus_hops: u32;
   keys: Box<Slots<SubjectKey>>;
+  bounded: Box<Slots<SideKey>>;
+}
+
+fn bounded_hops(reach: FeatureReach, deep: Bool) -> hops: u32 pure {
+  doc "The finite number of additional element siblings after the nearest remaining element, only for a next-side reach through an exclusively + suffix. Position reaches naming further children and mixed or downward reaches keep their wide meaning.";
+  if deep {
+    return 0_u32;
+  }
+  if reach.side == side_next {
+    if reach.reach == reach_siblings {
+      return reach.plus_hops;
+    }
+  }
+  return 0_u32;
+}
+
+fn side_carries(document: &Document, keys: ElementKeys, wanted: &SideKeys, distance: u32) -> found: Bool reads(document), reads(wanted) {
+  doc "Whether keys carry an unbounded subject key or a bounded structural subject key still reached at distance element siblings after the nearest one. Each bounded key expires independently even when another reach makes the walk wide, and a bounded Anything key cannot widen other children.";
+  let unbounded = carries(document: document, keys: keys, any: wanted^.any, wanted: &wanted^.keys);
+  if unbounded {
+    return True();
+  }
+  let count = wanted^.bounded.inner.len;
+  for (k in 0_u64..count) {
+    let key = wanted^.bounded.inner[k];
+    let within = distance <= key.plus_hops;
+    if within {
+      let holds = carries_key(document: document, keys: keys, key: key.subject);
+      if holds {
+        return True();
+      }
+    }
+  }
+  return False();
 }
 
 fn widen_side(side: u8) -> wide: u8 pure {
@@ -821,7 +873,10 @@ fn reach_places(reach: FeatureReach, deep: Bool) -> places: u8 pure {
 fn side_keys(store: &RuleStore, from: u64, context: FeatureFilter, place: u8, deep: Bool) -> result: Result<SideKeys, StyleError> reads(store) {
   doc "The keys of the structural reaches from index from on, the children reaches among them whose context the parent's context filter admits, that reach the children at place, or the elements of their subtrees when deep holds.";
   let keys = box_slots_new::<SubjectKey>(capacity: 0_u64);
+  let bounded = box_slots_new::<SideKey>(capacity: 0_u64);
   let any = False();
+  let wide = False();
+  let plus_hops = 0_u32;
   let count = store^.reaches.inner.len;
   for (r in from..count) {
     let reach = store^.reaches.inner[r];
@@ -832,29 +887,39 @@ fn side_keys(store: &RuleStore, from: u64, context: FeatureFilter, place: u8, de
       let places = reach_places(reach: reach, deep: deep);
       let here = iand(places, place);
       if here != 0_u8 {
-        let any_key = is_anything(key: reach.subject);
-        if any_key {
-          set any = True();
+        let hops = bounded_hops(reach: reach, deep: deep);
+        if hops == 0_u32 {
+          set wide = True();
+          let any_key = is_anything(key: reach.subject);
+          if any_key {
+            set any = True();
+          } else {
+            let pushed = propagate push::<SubjectKey>(cell: &keys, value: reach.subject, ceiling: key_ceiling);
+          }
         } else {
-          let pushed = propagate push::<SubjectKey>(cell: &keys, value: reach.subject, ceiling: key_ceiling);
+          set plus_hops = imax(plus_hops, hops);
+          let key = SideKey(subject: reach.subject, plus_hops: hops);
+          let pushed = propagate push::<SideKey>(cell: &bounded, value: key, ceiling: key_ceiling);
         }
       }
     }
   }
-  let made = SideKeys(any: any, keys: move keys);
+  let made = SideKeys(any: any, wide: wide, plus_hops: plus_hops, keys: move keys, bounded: move bounded);
   return Ok<SideKeys, StyleError>(value: move made);
 }
 
-fn visit_child(document: &Document, atoms: &AtomTable, child: NodeId, near: &SideKeys, deep: &SideKeys, nodes: &Box<Slots<NodeId>>) -> result: Result<unit, StyleError> reads(document), reads(atoms), reads(near), reads(deep), writes(nodes) {
+fn visit_child(document: &Document, atoms: &AtomTable, child: NodeId, near: &SideKeys, deep: &SideKeys, distance: u32, nodes: &Box<Slots<NodeId>>) -> result: Result<unit, StyleError> reads(document), reads(atoms), reads(near), reads(deep), writes(nodes) {
   doc "Lists the element child when it carries a key near names, and the elements of its subtree that carry a key deep names.";
   let limit = document^.nodes.inner.len;
   let keys = element_keys(document: document, atoms: atoms, node: child);
-  let near_hit = carries(document: document, keys: keys, any: near^.any, wanted: &near^.keys);
+  let near_hit = side_carries(document: document, keys: keys, wanted: near, distance: distance);
   if near_hit {
     let pushed = propagate push::<NodeId>(cell: nodes, value: child, ceiling: 4294967296_u64);
   }
   let deep_keyed = deep^.keys.inner.len > 0_u64;
-  let deep_some = bor(deep^.any, deep_keyed);
+  let deep_bounded = deep^.bounded.inner.len > 0_u64;
+  let deep_keys = bor(deep_keyed, deep_bounded);
+  let deep_some = bor(deep^.any, deep_keys);
   if deep_some {
   } else {
     return Ok<unit, StyleError>(value: unit);
@@ -866,7 +931,7 @@ fn visit_child(document: &Document, atoms: &AtomTable, child: NodeId, near: &Sid
         let below_element = is_element_node(document: document, node: below);
         if below_element {
           let below_keys = element_keys(document: document, atoms: atoms, node: below);
-          let deep_hit = carries(document: document, keys: below_keys, any: deep^.any, wanted: &deep^.keys);
+          let deep_hit = side_carries(document: document, keys: below_keys, wanted: deep, distance: distance);
           if deep_hit {
             let pushed = propagate push::<NodeId>(cell: nodes, value: below, ceiling: 4294967296_u64);
           }
@@ -882,7 +947,7 @@ fn visit_child(document: &Document, atoms: &AtomTable, child: NodeId, near: &Sid
 }
 
 fn structural_restyle(store: &RuleStore, document: &Document, atoms: &AtomTable, parent: NodeId, previous: Option<NodeId>, next: Option<NodeId>) -> result: Result<StructureSet, StyleError> reads(store), reads(document), reads(atoms) {
-  doc "Finds the structural reaches (feature_children and feature_parent) by binary search, then lists by NodeId the elements whose matching an insertion or removal of a child of parent, between the children previous and next, can change: the element children at the places around the point the children reaches name (the nearest element at or after next, the elements after it, the nearest at or before previous, the elements before it) that carry a reached subject key, the elements of their subtrees carrying a key reached downward, and parent itself for a parent reach of its own; full for a reach of the whole document, a parent reach beyond parent, or incomplete reaches. Reaches whose context the features of parent and its ancestors do not admit are skipped. Only the places some reach names are walked, from the point outward through the document's links.";
+  doc "Finds the structural reaches (feature_children and feature_parent) by binary search, then lists by NodeId the elements whose matching an insertion or removal of a child of parent, between the children previous and next, can change: the element children at the places around the point the children reaches name (the nearest element at or after next, the elements after it, the nearest at or before previous, the elements before it) that carry a reached subject key, the elements of their subtrees carrying a key reached downward, and parent itself for a parent reach of its own; full for a reach of the whole document, a parent reach beyond parent, or incomplete reaches. Reaches whose context the features of parent and its ancestors do not admit are skipped. Only the places some reach names are walked, from the point outward through the document's links. A next-side reach through only + names the nearest remaining element and at most its plus_hops following element siblings; each key expires at its own bound, and the forward walk stops at their maximum unless a wide reach also applies. The cursor and its local element distance follow true sibling-link order, skipping text and comments without consuming a hop, and add no order between elements' rematching.";
   let nodes = box_slots_new::<NodeId>(capacity: 0_u64);
   let parent_self = False();
   let full = bnot(store^.reaches_complete);
@@ -956,22 +1021,30 @@ fn structural_restyle(store: &RuleStore, document: &Document, atoms: &AtomTable,
     let near_later = propagate side_keys(store: store, from: from, context: context, place: side_later, deep: no);
     let deep_later = propagate side_keys(store: store, from: from, context: context, place: side_later, deep: yes);
     let later_used = iand(used, side_later);
+    let later_wide = bor(near_later.wide, deep_later.wide);
+    let last_hop = imax(near_later.plus_hops, deep_later.plus_hops);
     let cursor = next;
     let first = True();
+    let distance = 0_u32;
     for (step in 0_u64..limit) {
       match cursor {
         Some(value: current) => {
           let element = is_element_node(document: document, node: current);
           if element {
             if first {
-              let visited = propagate visit_child(document: document, atoms: atoms, child: current, near: &near_next, deep: &deep_next, nodes: &nodes);
+              let visited = propagate visit_child(document: document, atoms: atoms, child: current, near: &near_next, deep: &deep_next, distance: distance, nodes: &nodes);
               set first = False();
               if later_used == 0_u8 {
                 break;
               }
             } else {
-              let visited = propagate visit_child(document: document, atoms: atoms, child: current, near: &near_later, deep: &deep_later, nodes: &nodes);
+              let visited = propagate visit_child(document: document, atoms: atoms, child: current, near: &near_later, deep: &deep_later, distance: distance, nodes: &nodes);
             }
+            if later_wide {
+            } else if distance >= last_hop {
+              break;
+            }
+            set distance = distance +sat 1_u32;
           }
           let after = match node_links(document: document, node: current) {
             Some(value: links) => {
@@ -1004,13 +1077,13 @@ fn structural_restyle(store: &RuleStore, document: &Document, atoms: &AtomTable,
           let element = is_element_node(document: document, node: current);
           if element {
             if first {
-              let visited = propagate visit_child(document: document, atoms: atoms, child: current, near: &near_previous, deep: &deep_previous, nodes: &nodes);
+              let visited = propagate visit_child(document: document, atoms: atoms, child: current, near: &near_previous, deep: &deep_previous, distance: 0_u32, nodes: &nodes);
               set first = False();
               if earlier_used == 0_u8 {
                 break;
               }
             } else {
-              let visited = propagate visit_child(document: document, atoms: atoms, child: current, near: &near_earlier, deep: &deep_earlier, nodes: &nodes);
+              let visited = propagate visit_child(document: document, atoms: atoms, child: current, near: &near_earlier, deep: &deep_earlier, distance: 0_u32, nodes: &nodes);
             }
           }
           let before = match node_links(document: document, node: current) {
