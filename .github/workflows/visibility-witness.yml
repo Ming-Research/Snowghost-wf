@@ -1,0 +1,56 @@
+# Temporary: shows that the pinned Whitefoot compiler gives a module no way to
+# call another module's private function. Remove it with the witness once
+# Whitefoot closes board request sg-req-research-visibility.
+name: visibility-witness
+on:
+  push:
+    branches: [research/visibility-witness]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  witness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Pinned compiler
+        run: make -s compiler
+      - name: Check both variants
+        run: |
+          set -uo pipefail
+          release=$(sed -n 's/^release = //p' whitefoot.pin)
+          compiler=$(realpath "build/whitefoot/$release/whitefootc")
+          echo "pin: $release"
+          witness=$(realpath research/investigations/visibility/witness)
+          run_check() {
+            # $1 variant, $2 label; rest: whitefootc selection options
+            local variant=$1 label=$2; shift 2
+            local status=0
+            (cd "$witness/$variant" && "$compiler" --graph modules.wfg "$@") > "out-$label.log" 2>&1 || status=$?
+            echo "=== $label ($variant): whitefootc --graph modules.wfg $* exit $status"
+            cat "out-$label.log"
+            eval "status_$label=$status"
+          }
+          run_check private private_all --check-modules
+          run_check private private_stage --check-module pkg::stage
+          run_check private private_probe --check-module pkg::probe
+          run_check control control_all --check-modules
+          failed=0
+          # The control accepts: the same probe call is fine when step_one is public.
+          [ "$status_control_all" -eq 0 ] || { echo "FAIL: control exit $status_control_all, want 0"; failed=1; }
+          # In the private variant the stage alone is accepted, so only probe can fail.
+          [ "$status_private_stage" -eq 0 ] || { echo "FAIL: private stage exit $status_private_stage, want 0"; failed=1; }
+          # The probe is rejected, and the diagnostic is a visibility one.
+          [ "$status_private_probe" -ne 0 ] || { echo "FAIL: private probe accepted"; failed=1; }
+          [ "$status_private_all" -ne 0 ] || { echo "FAIL: private graph accepted"; failed=1; }
+          grep -q 'MOD-5\|MOD-6' out-private_probe.log || { echo "FAIL: no MOD-5/MOD-6 in the private probe diagnostic"; failed=1; }
+          grep -q 'step_one' out-private_probe.log || { echo "FAIL: diagnostic does not name step_one"; failed=1; }
+          # Any earlier error (parse, type, effect) would cite another rule.
+          if grep -o '[A-Z][A-Z]*-[0-9][0-9]*' out-private_probe.log | grep -qv '^MOD-[56]$'; then
+            echo "NOTE: other rule ids in the private probe diagnostic (read them; stage passing alone already excludes errors in stage):"
+            grep -o '[A-Z][A-Z]*-[0-9][0-9]*' out-private_probe.log | sort -u
+          fi
+          exit $failed
