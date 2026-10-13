@@ -4,6 +4,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `Nodes:` naming every node changed, `Owner-approved:` and `Summary:`;
 the design-tree part of the owner-wide agent instructions owns the form.
 
+## 2026-10-13 Place preserved tabs, justify lines and hang preserved line-end spaces as Chromium does
+
+Nodes: pipeline/layout
+
+Owner-approved: On the status board on 2026-10-13 the owner chose A on the card asking whether to approve the four new decisions on tabs, justification and hanging line-end spaces in Snowghost-wf#72 at head bfb57ac.
+
+Summary: A preserved tab advances to its next tab stop from where it falls, computed by line building and by the intrinsic-width walk where its position is known; a justified line a soft wrap ends shares its free space equally among its justification opportunities; spaces and tabs `white-space: pre-wrap` keeps at a line's end hang at full width in a fragment of their own; and those spaces add nothing to a min-content width where they hang unconditionally. Each rule follows Chromium 141's line breaker and was confirmed against its layout dumps of the line-fill cases (40/40 block boxes, 10/10 inline boxes, 48/48 text nodes) ([line-fill evidence](../research/investigations/layout/runs/line-fill.txt)).
+
 ## 2026-10-11 Bound the structural restyle of next-sibling `+` chains by their length
 
 Nodes: pipeline/style
