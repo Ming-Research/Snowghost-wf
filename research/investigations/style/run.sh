@@ -11,6 +11,31 @@
 #                               when a page misses criterion 1 or 3
 #   run.sh time [PAGE [REPS]]   builds both drivers and times the stage's
 #                               parts on every page, or on PAGE (criterion 2)
+#   run.sh profile [PAGE...]    builds both drivers, requires the dump of the
+#                               profiled path to equal MODE dump's (and, with
+#                               BASE_DRIVERS naming a directory with the
+#                               style_oracle of an earlier build, that build's
+#                               dump),
+#                               runs MODE profile on every page, or on PAGE...,
+#                               sequentially and with --par at one and four
+#                               workers, and prints each step's time
+#                               (the step-timing investigation below)
+#   run.sh overhead [PAGE...]   with BASE_DRIVERS naming a directory with the
+#                               style_oracle and style_oracle_par of an
+#                               earlier build, times MODE match with each build
+#                               in turn (RUNS_OVERHEAD rounds, five by default),
+#                               to bound what the matcher's counters cost when
+#                               they count nothing
+#   run.sh falsify [PAGE]       after profile, shows that its counter and
+#                               ledger checks fail on deliberately wrong
+#                               copies of PAGE's files (apollo11 by default)
+#
+# profile, overhead and falsify serve the step-timing investigation of
+# DESIGN.md and are one-shot: overhead compares this source with an earlier
+# build (BASE_DRIVERS, origin/main's in the temporary workflow
+# style-build-timing), which becomes a comparison of a build with itself once
+# this source is on main, and profile's comparison with BASE_DRIVERS likewise.
+# They are kept to repeat the investigation at the commit it records.
 #
 # PAGE is one of ecma262, html5 and apollo11, the real pages of the
 # concurrency investigation, or cases, tests/css/style-cases.html (checked,
@@ -28,6 +53,19 @@
 # the host lock RUN_CHECK names, such as Whitefoot's .github/run-check.pl,
 # so no other heavy job shares the machine; without RUN_CHECK they run as they
 # are, as on a CI runner that runs one job at a time.
+#
+# profile prints, per page, mode (seq, par1, par4: the sequential build, the
+# --par build at WF_WORKERS 1 and 4) and step, the least over RUNS_PROFILE
+# processes (three by default) of each process's least time over its repetitions
+# (PROFILE_REPS overrides the per-page counts 5, 5 and 10), in milliseconds,
+# the spread (the greatest of those over the least), and the share of the
+# stage's total, then the matcher's counters, and writes the raw lines to
+# build/research/style/profile-*.txt and the table to profile-table.txt. It
+# exits with 1 when a dump differs, the identity control fails to differ, the
+# ledger does not split both instances of match_all (the stage's, which does
+# not count, and the profiled path's), a counter is out of order (matched
+# above admitted, admitted above offered, or none matched) or two runs of one
+# page count differently.
 #
 # PAGES replaces the directory of the real pages and their sheets,
 # build/research/concurrency by default; a worktree whose build directory
@@ -177,7 +215,335 @@ time_parts() {
 	done
 }
 
+# Repetitions of MODE profile per page (the stage's four parts, once each per
+# repetition, plus the two steps run alone).
+profile_reps_of() {
+	case $1 in
+	ecma262 | html5) echo "${PROFILE_REPS:-5}" ;;
+	apollo11) echo "${PROFILE_REPS:-10}" ;;
+	*) echo "${PROFILE_REPS:-5}" ;;
+	esac
+}
+
+# Prints the step lines of every profile file as one table. The input is
+# profile-all.txt, whose lines are the profile output with the page, the mode
+# and the run in front.
+profile_table() {
+	awk '
+	BEGIN {
+		n = split("match match.rule_index match.positions match.pseudo_flags match.numbering match.allocation match.loop inherited reset intern total alone.positions alone.depth_check", names, " ")
+		m = split("seq par1 par4", modes, " ")
+	}
+	$4 == "step" {
+		key = $1 SUBSEP $2 SUBSEP $5
+		pages[$1] = 1
+		if (!(key in least) || $7 < least[key]) least[key] = $7
+		if (!(key in most) || $7 > most[key]) most[key] = $7
+	}
+	$4 == "count" { count[$1, $5] = $6 }
+	END {
+		print "page mode step best_ms spread share_of_total"
+		for (page in pages) {
+			for (j = 1; j <= m; j++) {
+				mode = modes[j]
+				total = least[page, mode, "total"]
+				for (i = 1; i <= n; i++) {
+					key = page SUBSEP mode SUBSEP names[i]
+					if (!(key in least)) continue
+					spread = (least[key] > 0) ? most[key] / least[key] : 0
+					share = (total > 0) ? 100 * least[key] / total : 0
+					printf "%s %s %s %.3f %.2f %.1f%%\n", page, mode, names[i], least[key] / 1e6, spread, share
+				}
+			}
+		}
+		print ""
+		print "page counter value"
+		for (key in count) {
+			split(key, parts, SUBSEP)
+			printf "%s %s %s\n", parts[1], parts[2], count[key]
+		}
+		print ""
+		print "page mode ns_per_offered_item ns_per_admitted_test ns_per_matched"
+		for (page in pages) {
+			for (j = 1; j <= m; j++) {
+				mode = modes[j]
+				loop = least[page, mode, "match.loop"]
+				offered = count[page, "candidates_sum"]
+				admitted = count[page, "admitted_sum"]
+				matched = count[page, "matched_sum"]
+				if (offered > 0 && admitted > 0 && matched > 0)
+					printf "%s %s %.2f %.2f %.2f\n", page, mode, loop / offered, loop / admitted, loop / matched
+			}
+		}
+	}' "$out/profile-all.txt"
+}
+
+# Exits with 1 unless the ledger FILE splits the loop of every instance of
+# match_all, and names at least two: the stage's (tally_none) and the
+# profiled path's (tally_count). A generic function's instance is named
+# style.match_all$instance$SUFFIX in the ledger.
+ledger_check() {
+	instances=$(grep -oE 'style\.match_all(\$instance\$[0-9a-f]+)? ' "$1" | sort -u | wc -l | tr -d ' ')
+	split=$(grep -E 'PAR split +style\.match_all(\$instance\$[0-9a-f]+)? ' "$1" | grep -v declined | grep -oE 'style\.match_all(\$instance\$[0-9a-f]+)? ' | sort -u | wc -l | tr -d ' ')
+	if [ "$instances" -ge 2 ] && [ "$split" = "$instances" ]; then
+		echo "ledger: all $instances instances of match_all split"
+		return 0
+	fi
+	echo "run.sh: the ledger does not split every instance of match_all ($split of $instances, at least 2 expected); its lines naming match_all:" >&2
+	grep 'match_all' "$1" >&2 || true
+	return 1
+}
+
+# Exits with 1 unless the profile files DIR/profile-PAGE-*.txt count alike in
+# every build, worker count and run (9 distinct count lines, the repetitions
+# aside, and 2 histogram lines), and the counts of the first sequential run
+# are in order: offered >= admitted >= matched > 0.
+counter_check() {
+	profiles=$1
+	page=$2
+	counted=0
+	distinct=$(grep -h '^count ' "$profiles"/profile-"$page"-*.txt | grep -v '^count reps ' | sort -u | wc -l | tr -d ' ')
+	if [ "$distinct" != 9 ]; then
+		echo "run.sh: $page: counters differ between runs ($distinct distinct lines, not 9)" >&2
+		counted=1
+	fi
+	hists=$(grep -h '^hist ' "$profiles"/profile-"$page"-*.txt | sort -u | wc -l | tr -d ' ')
+	if [ "$hists" != 2 ]; then
+		echo "run.sh: $page: histograms differ between runs" >&2
+		counted=1
+	fi
+	offered=$(sed -n 's/^count candidates_sum //p' "$profiles/profile-$page-seq-1.txt")
+	admitted=$(sed -n 's/^count admitted_sum //p' "$profiles/profile-$page-seq-1.txt")
+	matched=$(sed -n 's/^count matched_sum //p' "$profiles/profile-$page-seq-1.txt")
+	if [ "$offered" -ge "$admitted" ] && [ "$admitted" -ge "$matched" ] && [ "$matched" -gt 0 ]; then
+		echo "$page: counters in order, offered $offered >= admitted $admitted >= matched $matched > 0"
+	else
+		echo "run.sh: $page: counters out of order: offered $offered admitted $admitted matched $matched" >&2
+		counted=1
+	fi
+	return $counted
+}
+
+# The falsifiers of ledger_check and counter_check, run after `run.sh
+# profile` has profiled PAGE (apollo11 by default): both checks must pass on
+# that run's files, and each must fail, with the message of its fault, on a
+# copy with one deliberate fault: one run counting differently, one histogram
+# differing, admitted above offered, matched above admitted, nothing matched,
+# one instance of match_all declined, and only one instance in the ledger.
+falsify() {
+	page=${1:-apollo11}
+	if ! counter_check "$out" "$page" || ! ledger_check "$out/ledger.txt"; then
+		echo "run.sh: falsify: the checks fail on the unmodified files of $page; run run.sh profile $page first" >&2
+		return 1
+	fi
+	result=0
+	# expect CASE PATTERN COMMAND...: COMMAND must exit with 1 and print PATTERN.
+	expect() {
+		name=$1
+		pattern=$2
+		shift 2
+		if "$@" >"$out/falsify-$name.txt" 2>&1; then
+			echo "run.sh: falsify: $name passed; the check cannot see this fault" >&2
+			result=1
+		elif grep -q "$pattern" "$out/falsify-$name.txt"; then
+			echo "falsify: $name fails as it should: $(grep "$pattern" "$out/falsify-$name.txt" | head -1)"
+		else
+			echo "run.sh: falsify: $name failed without its message:" >&2
+			cat "$out/falsify-$name.txt" >&2
+			result=1
+		fi
+	}
+	# faulty CASE SED_SCRIPT FILE_GLOB: a copy of the profile files with the
+	# sed script applied to the files the glob names.
+	faulty() {
+		dir=$out/falsify/$1
+		rm -rf "$dir"
+		mkdir -p "$dir"
+		cp "$out"/profile-"$page"-*.txt "$dir/"
+		for file in "$dir"/$3; do
+			sed -i "$2" "$file"
+		done
+		echo "$dir"
+	}
+	dir=$(faulty runs 's/^\(count candidates_sum [0-9]*\)$/\11/' "profile-$page-par4-2.txt")
+	expect runs 'counters differ between runs' counter_check "$dir" "$page"
+	dir=$(faulty hist 's/^\(hist admitted [0-9]*\)/\19/' "profile-$page-par1-1.txt")
+	expect hist 'histograms differ between runs' counter_check "$dir" "$page"
+	offered=$(sed -n 's/^count candidates_sum //p' "$out/profile-$page-seq-1.txt")
+	admitted=$(sed -n 's/^count admitted_sum //p' "$out/profile-$page-seq-1.txt")
+	dir=$(faulty admitted "s/^count admitted_sum .*/count admitted_sum $((offered + 1))/" "profile-$page-*.txt")
+	expect admitted 'counters out of order' counter_check "$dir" "$page"
+	dir=$(faulty matched "s/^count matched_sum .*/count matched_sum $((admitted + 1))/" "profile-$page-*.txt")
+	expect matched 'counters out of order' counter_check "$dir" "$page"
+	dir=$(faulty zero 's/^count matched_sum .*/count matched_sum 0/' "profile-$page-*.txt")
+	expect zero 'counters out of order' counter_check "$dir" "$page"
+	# The ledger: one instance's split declined, and only one instance named.
+	first=$(grep -E 'PAR split +style\.match_all(\$instance\$[0-9a-f]+)? ' "$out/ledger.txt" | grep -v declined | grep -oE 'style\.match_all(\$instance\$[0-9a-f]+)? ' | sort -u | head -1)
+	grep -vF "$first" "$out/ledger.txt" >"$out/falsify-ledger-declined.txt"
+	grep -F "$first" "$out/ledger.txt" | sed 's/$/  declined (falsifier)/' >>"$out/falsify-ledger-declined.txt"
+	expect declined 'does not split every instance' ledger_check "$out/falsify-ledger-declined.txt"
+	grep -F "$first" "$out/ledger.txt" >"$out/falsify-ledger-one.txt"
+	expect one 'does not split every instance' ledger_check "$out/falsify-ledger-one.txt"
+	return $result
+}
+
+profile() {
+	build
+	status=0
+	echo "machine: $(uname -srm), $(getconf _NPROCESSORS_ONLN) processors"
+	echo "compiler: $compiler $(sha256sum <"$compiler" | cut -c1-16)"
+	echo "commit: $(git rev-parse --short HEAD)"
+	echo "parallelism ledger ($out/ledger.txt):"
+	grep -E 'PAR split +style\.' "$out/ledger.txt" || true
+	ledger_check "$out/ledger.txt" || status=1
+	pages_run=${*:-ecma262 html5 apollo11}
+	first=
+	for page in $pages_run; do
+		first=${first:-$page}
+		sheets=$(sheets_of "$page")
+		file=$(page_file "$page")
+		build/style_oracle dump 1 "$file" "$ua" $sheets >"$out/$page.seq.tsv"
+		build/style_oracle profdump 1 "$file" "$ua" $sheets >"$out/$page.prof-seq.tsv"
+		WF_WORKERS=4 build/style_oracle_par profdump 1 "$file" "$ua" $sheets >"$out/$page.prof-par.tsv"
+		for kind in prof-seq prof-par; do
+			if cmp -s "$out/$page.seq.tsv" "$out/$page.$kind.tsv"; then
+				echo "$page: $kind dump identical to MODE dump, $(sha256sum <"$out/$page.seq.tsv" | cut -c1-16)"
+			else
+				echo "$page: $kind dump differs from MODE dump" >&2
+				status=1
+			fi
+		done
+		if [ -n "${BASE_DRIVERS:-}" ]; then
+			"$BASE_DRIVERS/style_oracle" dump 1 "$file" "$ua" $sheets >"$out/$page.base.tsv"
+			if cmp -s "$out/$page.base.tsv" "$out/$page.seq.tsv"; then
+				echo "$page: dump identical to the earlier build's, $(sha256sum <"$out/$page.base.tsv" | cut -c1-16)"
+			else
+				echo "$page: dump differs from the earlier build's" >&2
+				status=1
+			fi
+		fi
+	done
+	# Control: a user-agent sheet with one more rule must change the dump of the
+	# profiled path, or the comparisons above could not have failed. The rule is
+	# important: a plain user-agent declaration loses to the page's own sheets
+	# (ecma262's sets display on body), an important one beats every origin.
+	{ cat "$ua"; printf '\nbody { display: none !important; }\n'; } >"$out/ua-control.css"
+	sheets=$(sheets_of "$first")
+	file=$(page_file "$first")
+	build/style_oracle profdump 1 "$file" "$out/ua-control.css" $sheets >"$out/$first.control.tsv"
+	if cmp -s "$out/$first.seq.tsv" "$out/$first.control.tsv"; then
+		echo "run.sh: the control dump equals the plain one; the identity check cannot fail" >&2
+		status=1
+	else
+		echo "control: a changed user-agent sheet changes the profiled dump of $first"
+	fi
+	: >"$out/profile-all.txt"
+	for page in $pages_run; do
+		sheets=$(sheets_of "$page")
+		file=$(page_file "$page")
+		reps=$(profile_reps_of "$page")
+		for mode in seq par1 par4; do
+			run=1
+			while [ "$run" -le "${RUNS_PROFILE:-3}" ]; do
+				raw=$out/profile-$page-$mode-$run.txt
+				case $mode in
+				seq) build/style_oracle profile "$reps" "$file" "$ua" $sheets >"$raw" ;;
+				par1) WF_WORKERS=1 build/style_oracle_par profile "$reps" "$file" "$ua" $sheets >"$raw" ;;
+				par4) WF_WORKERS=4 build/style_oracle_par profile "$reps" "$file" "$ua" $sheets >"$raw" ;;
+				esac
+				sed "s/^/$page $mode $run /" "$raw" >>"$out/profile-all.txt"
+				run=$((run + 1))
+			done
+		done
+		counter_check "$out" "$page" || status=1
+	done
+	profile_table | tee "$out/profile-table.txt"
+	return $status
+}
+
+# Times MODE match with the earlier build (BASE_DRIVERS) and this one in turn,
+# RUNS_OVERHEAD rounds (five by default) of one timed process each, per
+# build, worker count and page; prints the least over the rounds per build
+# and the ratio of this build's to the earlier one's.
+overhead() {
+	if [ -z "${BASE_DRIVERS:-}" ]; then
+		echo "run.sh: overhead needs BASE_DRIVERS" >&2
+		exit 2
+	fi
+	mkdir -p "$out"
+	echo "page workers reps base_s new_s base_twin_s new_over_base"
+	for page in ${*:-ecma262 html5 apollo11}; do
+		sheets=$(sheets_of "$page")
+		file=$(page_file "$page")
+		reps=$(reps_of "$page")
+		for lanes in seq 4; do
+			round=1
+			base_best=
+			twin_best=
+			new_best=
+			while [ "$round" -le "${RUNS_OVERHEAD:-5}" ]; do
+				for who in base new twin; do
+					case $who in
+					new) dir=build ;;
+					*) dir=$BASE_DRIVERS ;;
+					esac
+					if [ "$lanes" = seq ]; then
+						binary=$dir/style_oracle
+						workers_env=1
+					else
+						binary=$dir/style_oracle_par
+						workers_env=$lanes
+					fi
+					zero=$(elapsed_of "$workers_env" "$binary" match 0 "$file" "$ua" $sheets)
+					full=$(elapsed_of "$workers_env" "$binary" match "$reps" "$file" "$ua" $sheets)
+					stage=$(echo "$zero $full $reps" | awk '{ printf "%.4f", ($2 - $1) / $3 }')
+					case $who in
+					base) base_best=$(least_of "$base_best" "$stage") ;;
+					new) new_best=$(least_of "$new_best" "$stage") ;;
+					twin) twin_best=$(least_of "$twin_best" "$stage") ;;
+					esac
+				done
+				round=$((round + 1))
+			done
+			echo "$page $lanes $reps $base_best $new_best $twin_best" | awk '{ printf "%s %s %s %s %s %s %.3f\n", $1, $2, $3, $4, $5, $6, $5 / $4 }'
+		done
+	done
+}
+
+# Prints the elapsed seconds of one run of binary, with WF_WORKERS set to lanes.
+elapsed_of() {
+	lanes=$1
+	binary=$2
+	shift 2
+	if ! WF_WORKERS=$lanes command time -p sh -c 'exec "$@" >/dev/null 2>&1' sh "$binary" "$@" 2>"$out/time.txt"; then
+		echo "run.sh: $binary $* failed" >&2
+		exit 1
+	fi
+	awk '$1 == "real" { print $2 }' "$out/time.txt"
+}
+
+# Prints the lesser of two numbers, the second alone when the first is empty.
+least_of() {
+	if [ -z "$1" ]; then
+		echo "$2"
+	else
+		echo "$1 $2" | awk '{ print ($2 < $1) ? $2 : $1 }'
+	fi
+}
+
 case ${1:-} in
+profile)
+	shift
+	profile "$@"
+	;;
+overhead)
+	shift
+	overhead "$@"
+	;;
+falsify)
+	shift
+	falsify "$@"
+	;;
 check)
 	shift
 	check "$@"
@@ -187,7 +553,7 @@ time)
 	time_parts "$@"
 	;;
 *)
-	echo "usage: run.sh check [PAGE...] | time [PAGE [REPS]]" >&2
+	echo "usage: run.sh check [PAGE...] | time [PAGE [REPS]] | profile [PAGE...] | overhead [PAGE...] | falsify [PAGE]" >&2
 	exit 2
 	;;
 esac

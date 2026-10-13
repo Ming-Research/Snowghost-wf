@@ -1,0 +1,349 @@
+alias AtomTable = pkg::base::atom::AtomTable;
+alias Cascade = pkg::style::Cascade;
+alias Clock = std::time::Clock;
+alias Document = pkg::dom::Document;
+alias Environment = pkg::css::values::Environment;
+alias HandleFactory = std::io::HandleFactory;
+alias Inherited = pkg::style::Inherited;
+alias Instant = std::time::Instant;
+alias MatchProfile = pkg::style::MatchProfile;
+alias OutputStream = std::io::OutputStream;
+alias Positions = pkg::css::selectors::Positions;
+alias Resets = pkg::style::Resets;
+alias RuleStore = pkg::style::RuleStore;
+alias StyleError = pkg::style::StyleError;
+alias Styles = pkg::style::Styles;
+alias Traversal = pkg::style::Traversal;
+alias depth_check = pkg::style::depth_check;
+alias flush = pkg::oracle::support::flush;
+alias inherited_pass = pkg::style::inherited_pass;
+alias intern_styles = pkg::style::intern_styles;
+alias match_elements_profiled = pkg::style::match_elements_profiled;
+alias nanoseconds_from = std::time::nanoseconds_from;
+alias now = std::time::now;
+alias put_byte = pkg::oracle::support::put_byte;
+alias put_decimal = pkg::oracle::support::put_decimal;
+alias put_text = pkg::oracle::support::put_text;
+alias reset_pass = pkg::style::reset_pass;
+alias rule_count = pkg::style::rule_count;
+alias sibling_positions = pkg::css::selectors::sibling_positions;
+
+const step_names: Array<u8, 164> = "match match.rule_index match.positions match.pseudo_flags match.numbering match.allocation match.loop inherited reset intern total alone.positions alone.depth_check";
+
+const count_names: Array<u8, 105> = "nodes elements rules reps candidates_sum admitted_sum matched_sum candidates_max admitted_max matched_max";
+
+const step_label: Array<u8, 5> = "step ";
+
+const count_label: Array<u8, 6> = "count ";
+
+const min_label: Array<u8, 8> = " min_ns ";
+
+const sum_label: Array<u8, 8> = " sum_ns ";
+
+const hist_candidates_label: Array<u8, 16> = "hist candidates ";
+
+const hist_admitted_label: Array<u8, 14> = "hist admitted ";
+
+const lap_slots: u64 = 16_u64;
+
+const step_total: u64 = 13_u64;
+
+const stat_slots: u64 = 80_u64;
+
+const candidate_hist: u64 = 16_u64;
+
+const admitted_hist: u64 = 48_u64;
+
+const hist_buckets: u64 = 25_u64;
+
+fn run_profile(store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal, environment: Environment, reps: u64, clock: &Clock, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> code: u8 reads(store), reads(document), reads(traversal), writes(atoms), writes(clock), writes(out), writes(err), writes(files) waits {
+  doc "Runs the whole style stage reps times with profile_once and prints, per step, the least and the sum over the repetitions of its time in nanoseconds, then the matcher's counts of the last repetition (profile_once says what each is).";
+  if reps == 0_u64 {
+    report(err: err, files: files, text: &usage_text[0_u64..usage_text.len]);
+    return 2_u8;
+  }
+  let mins = box_array_filled::<u64>(count: lap_slots, value: 18446744073709551615_u64);
+  let sums = box_array_filled::<u64>(count: lap_slots, value: 0_u64);
+  let laps = box_array_filled::<u64>(count: lap_slots, value: 0_u64);
+  let stats = box_array_filled::<u64>(count: stat_slots, value: 0_u64);
+  for (rep in 0_u64..reps) {
+    match profile_once(store: store, document: document, atoms: atoms, traversal: traversal, environment: environment, clock: clock, laps: &laps, stats: &stats) {
+      Ok(..) => {
+      }
+      Err(error: failure) => {
+        report_style(err: err, files: files, failure: failure);
+        return 2_u8;
+      }
+    }
+    for (k in 0_u64..lap_slots) {
+      let in_laps = k < laps.inner.len;
+      let in_mins = k < mins.inner.len;
+      let in_sums = k < sums.inner.len;
+      let tracked = band(in_mins, in_sums);
+      let all_in = band(in_laps, tracked);
+      if all_in {
+        let lap = laps.inner[k];
+        set sums.inner[k] = sums.inner[k] +sat lap;
+        if lap < mins.inner[k] {
+          set mins.inner[k] = lap;
+        }
+      }
+    }
+  }
+  let elements = traversal^.elements.inner.len;
+  let rules = rule_count(store: store);
+  if 3_u64 < stats.inner.len {
+    set stats.inner[1_u64] = elements;
+    set stats.inner[2_u64] = rules;
+    set stats.inner[3_u64] = reps;
+  }
+  let buffer = box_slots_new::<u8>(capacity: 4096_u64);
+  for (k in 0_u64..step_total) {
+    let in_mins = k < mins.inner.len;
+    let in_sums = k < sums.inner.len;
+    let tracked = band(in_mins, in_sums);
+    if tracked {
+      put_text(buffer: &buffer, text: &step_label[0_u64..step_label.len]);
+      put_nth_word(buffer: &buffer, list: &step_names[0_u64..step_names.len], index: k);
+      put_text(buffer: &buffer, text: &min_label[0_u64..min_label.len]);
+      put_decimal(buffer: &buffer, value: mins.inner[k]);
+      put_text(buffer: &buffer, text: &sum_label[0_u64..sum_label.len]);
+      put_decimal(buffer: &buffer, value: sums.inner[k]);
+      put_byte(buffer: &buffer, value: 10_u8);
+    }
+  }
+  let named = 10_u64;
+  for (k in 0_u64..named) {
+    if k < stats.inner.len {
+      put_text(buffer: &buffer, text: &count_label[0_u64..count_label.len]);
+      put_nth_word(buffer: &buffer, list: &count_names[0_u64..count_names.len], index: k);
+      put_byte(buffer: &buffer, value: 32_u8);
+      put_decimal(buffer: &buffer, value: stats.inner[k]);
+      put_byte(buffer: &buffer, value: 10_u8);
+    }
+  }
+  put_text(buffer: &buffer, text: &hist_candidates_label[0_u64..hist_candidates_label.len]);
+  put_histogram(buffer: &buffer, stats: &stats, base: candidate_hist);
+  put_text(buffer: &buffer, text: &hist_admitted_label[0_u64..hist_admitted_label.len]);
+  put_histogram(buffer: &buffer, stats: &stats, base: admitted_hist);
+  let written = flush(factory: files, output: out, buffer: &buffer);
+  return 0_u8;
+}
+
+fn put_histogram(buffer: &Box<Slots<u8>>, stats: &Box<Array<u64>>, base: u64) -> result: unit reads(stats), writes(buffer) {
+  doc "Appends the hist_buckets counts of stats from base, space separated, and a line feed.";
+  for (b in 0_u64..hist_buckets) {
+    let at = base +sat b;
+    if at < stats^.inner.len {
+      if b > 0_u64 {
+        put_byte(buffer: buffer, value: 32_u8);
+      }
+      put_decimal(buffer: buffer, value: stats^.inner[at]);
+    }
+  }
+  put_byte(buffer: buffer, value: 10_u8);
+  return unit;
+}
+
+fn run_profdump(store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal, environment: Environment, clock: &Clock, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> code: u8 reads(store), reads(document), reads(traversal), writes(atoms), writes(clock), writes(out), writes(err), writes(files) waits {
+  doc "Computes the styles once by profile_once and writes them as MODE dump does, so that a dump of the profiled path can be compared byte for byte with a dump of the stage itself.";
+  let laps = box_array_filled::<u64>(count: lap_slots, value: 0_u64);
+  let stats = box_array_filled::<u64>(count: stat_slots, value: 0_u64);
+  let styles = match profile_once(store: store, document: document, atoms: atoms, traversal: traversal, environment: environment, clock: clock, laps: &laps, stats: &stats) {
+    Ok(value: found) => {
+      give move found;
+    }
+    Err(error: failure) => {
+      report_style(err: err, files: files, failure: failure);
+      return 2_u8;
+    }
+  }
+  let written = dump(styles: &styles, document: document, atoms: atoms, traversal: traversal, out: out, files: files);
+  if written {
+    return 0_u8;
+  }
+  return 2_u8;
+}
+
+fn profile_once(store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal, environment: Environment, clock: &Clock, laps: &Box<Array<u64>>, stats: &Box<Array<u64>>) -> result: Result<Styles, StyleError> reads(store), reads(document), reads(traversal), writes(atoms), writes(clock), writes(laps), writes(stats) {
+  doc "Runs the style stage once as compute_styles does, reading the clock between its parts, and fills laps with the nanoseconds of each step in the order of step_names: the first part from match_elements_profiled (its total, then its rule indexes, sibling positions, pseudo_flags, numbering, allocation and match_all), the second, third and fourth parts, their sum, and then, after the stage, sibling_positions and depth_check each run alone on the same document and traversal. It fills stats with the matcher's counts: totals, maxima and log2 histograms over the styled nodes of the rule items offered and those the filter admitted (summarize).";
+  let profile = propagate match_elements_profiled(store: store, document: document, atoms: atoms, traversal: traversal, clock: clock);
+  let matched_at = stamp_profile(clock: clock, profile: &profile);
+  let inherited = propagate inherited_after(started: matched_at, store: store, cascade: &profile.cascade, document: document, atoms: atoms, traversal: traversal, environment: environment);
+  let (inherited_at, inherited_kept) = stamp_inherited(clock: clock, inherited: move inherited);
+  let resets = propagate reset_after(started: inherited_at, store: store, cascade: &profile.cascade, inherited: &inherited_kept, atoms: atoms, traversal: traversal, environment: environment);
+  let (reset_at, resets_kept) = stamp_resets(clock: clock, resets: move resets);
+  let styles = propagate intern_after(started: reset_at, inherited: &inherited_kept, resets: &resets_kept, traversal: traversal);
+  let interned_at = stamp_styles(clock: clock, styles: &styles);
+  let alone = positions_alone(started: interned_at, document: document);
+  let (positions_at, positions_kept) = stamp_alone(clock: clock, positions: move alone);
+  let accepted = depth_alone(started: positions_at, traversal: traversal);
+  let depth_at = stamp_depth(clock: clock, accepted: accepted);
+  let inherited_ns = nanoseconds_from(earlier: matched_at, later: inherited_at);
+  let reset_ns = nanoseconds_from(earlier: inherited_at, later: reset_at);
+  let intern_ns = nanoseconds_from(earlier: reset_at, later: interned_at);
+  let positions_ns = nanoseconds_from(earlier: interned_at, later: positions_at);
+  let depth_ns = nanoseconds_from(earlier: positions_at, later: depth_at);
+  let match_ns = take_lap(laps: &profile.laps, slot: 6_u64);
+  let stage_ns = match_ns +sat inherited_ns;
+  let stage_more = stage_ns +sat reset_ns;
+  let total_ns = stage_more +sat intern_ns;
+  set_lap(laps: laps, slot: 0_u64, value: match_ns);
+  for (k in 0_u64..6_u64) {
+    let inner_ns = take_lap(laps: &profile.laps, slot: k);
+    let slot = k +sat 1_u64;
+    set_lap(laps: laps, slot: slot, value: inner_ns);
+  }
+  set_lap(laps: laps, slot: 7_u64, value: inherited_ns);
+  set_lap(laps: laps, slot: 8_u64, value: reset_ns);
+  set_lap(laps: laps, slot: 9_u64, value: intern_ns);
+  set_lap(laps: laps, slot: 10_u64, value: total_ns);
+  set_lap(laps: laps, slot: 11_u64, value: positions_ns);
+  set_lap(laps: laps, slot: 12_u64, value: depth_ns);
+  summarize(counts: &profile.counts, stats: stats);
+  return Ok<Styles, StyleError>(value: move styles);
+}
+
+fn take_lap(laps: &Box<Array<u64>>, slot: u64) -> result: u64 reads(laps) {
+  doc "The interval at slot of laps, or 0 past its end.";
+  if slot < laps^.inner.len {
+    return laps^.inner[slot];
+  }
+  return 0_u64;
+}
+
+fn set_lap(laps: &Box<Array<u64>>, slot: u64, value: u64) -> result: unit writes(laps) {
+  doc "Stores one interval, in nanoseconds, at slot of laps.";
+  if slot < laps^.inner.len {
+    set laps^.inner[slot] = value;
+  }
+  return unit;
+}
+
+fn bit_length(value: u64) -> result: u64 pure {
+  doc "The number of binary digits of value, 0 for 0, up to 24 for a value of 2^23 or more.";
+  let length = 0_u64;
+  for (s in 0_u64..24_u64) {
+    let shift = cvt::<u64, u32>(s);
+    let shifted = ishr(value, shift);
+    if shifted != 0_u64 {
+      set length = s +sat 1_u64;
+    }
+  }
+  return length;
+}
+
+fn summarize(counts: &Box<Slots<u32>>, stats: &Box<Array<u64>>) -> result: unit reads(counts), writes(stats) {
+  doc "Totals, maxima and log2 histograms of the matcher's counters: counts holds three words per styled node (offered, admitted, matched); stats gets the nodes in slot 0, the sums in slots 4 to 6, the maxima in 7 to 9, and, from candidate_hist and admitted_hist, hist_buckets buckets each, bucket b holding the nodes whose count has b binary digits.";
+  let sized = stats^.inner.len == stat_slots;
+  if sized {
+  } else {
+    return unit;
+  }
+  for (k in 0_u64..stat_slots) {
+    set stats^.inner[k] = 0_u64;
+  }
+  let words = counts^.inner.len;
+  let nodes = words / 3_u64;
+  set stats^.inner[0_u64] = nodes;
+  for (n in 0_u64..nodes) {
+    let base = n *sat 3_u64;
+    let second = base +sat 1_u64;
+    let top = base +sat 2_u64;
+    let first_in = base < words;
+    let second_in = second < words;
+    let top_in = top < words;
+    let pair_in = band(first_in, second_in);
+    let inside = band(pair_in, top_in);
+    if inside {
+      let offered = cvt::<u32, u64>(counts^.inner[base]);
+      let admitted = cvt::<u32, u64>(counts^.inner[second]);
+      let matched = cvt::<u32, u64>(counts^.inner[top]);
+      set stats^.inner[4_u64] = stats^.inner[4_u64] +sat offered;
+      set stats^.inner[5_u64] = stats^.inner[5_u64] +sat admitted;
+      set stats^.inner[6_u64] = stats^.inner[6_u64] +sat matched;
+      set stats^.inner[7_u64] = imax(stats^.inner[7_u64], offered);
+      set stats^.inner[8_u64] = imax(stats^.inner[8_u64], admitted);
+      set stats^.inner[9_u64] = imax(stats^.inner[9_u64], matched);
+      let offered_bucket = bit_length(value: offered);
+      let admitted_bucket = bit_length(value: admitted);
+      let offered_at = candidate_hist +sat offered_bucket;
+      let admitted_at = admitted_hist +sat admitted_bucket;
+      if offered_at < stats^.inner.len {
+        set stats^.inner[offered_at] = stats^.inner[offered_at] +sat 1_u64;
+      }
+      if admitted_at < stats^.inner.len {
+        set stats^.inner[admitted_at] = stats^.inner[admitted_at] +sat 1_u64;
+      }
+    }
+  }
+  return unit;
+}
+
+fn stamp_profile(clock: &Clock, profile: &MatchProfile) -> result: Instant reads(profile), writes(clock) {
+  doc "Reads the clock after match_elements_profiled has returned its profile.";
+  let held = profile^.laps.inner.len;
+  let made = now(clock: clock);
+  return made;
+}
+
+fn inherited_after(started: Instant, store: &RuleStore, cascade: &Cascade, document: &Document, atoms: &AtomTable, traversal: &Traversal, environment: Environment) -> result: Result<Inherited, StyleError> reads(store), reads(cascade), reads(document), reads(traversal), writes(atoms) {
+  doc "inherited_pass, called with the reading that starts its interval as an argument, so that the work cannot begin before the reading is taken.";
+  let made = inherited_pass(store: store, cascade: cascade, document: document, atoms: atoms, traversal: traversal, environment: environment);
+  return move made;
+}
+
+fn stamp_inherited(clock: &Clock, inherited: Inherited) -> (at: Instant, kept: Inherited) writes(clock) {
+  doc "Reads the clock once inherited exists and hands it back: the move is the dependence on it.";
+  let made = now(clock: clock);
+  return made, move inherited;
+}
+
+fn reset_after(started: Instant, store: &RuleStore, cascade: &Cascade, inherited: &Inherited, atoms: &AtomTable, traversal: &Traversal, environment: Environment) -> result: Result<Resets, StyleError> reads(store), reads(cascade), reads(inherited), reads(atoms), reads(traversal) {
+  doc "reset_pass, called with the reading that starts its interval as an argument.";
+  let made = reset_pass(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, environment: environment);
+  return move made;
+}
+
+fn stamp_resets(clock: &Clock, resets: Resets) -> (at: Instant, kept: Resets) writes(clock) {
+  doc "Reads the clock once resets exists and hands it back.";
+  let made = now(clock: clock);
+  return made, move resets;
+}
+
+fn intern_after(started: Instant, inherited: &Inherited, resets: &Resets, traversal: &Traversal) -> result: Result<Styles, StyleError> reads(inherited), reads(resets), reads(traversal) {
+  doc "intern_styles, called with the reading that starts its interval as an argument.";
+  let made = intern_styles(inherited: inherited, resets: resets, traversal: traversal);
+  return move made;
+}
+
+fn stamp_styles(clock: &Clock, styles: &Styles) -> result: Instant reads(styles), writes(clock) {
+  doc "Reads the clock after intern_styles has returned styles.";
+  let held = styles^.elements.inner.len;
+  let made = now(clock: clock);
+  return made;
+}
+
+fn positions_alone(started: Instant, document: &Document) -> result: Positions reads(document) {
+  doc "sibling_positions on the document, called with the reading that starts its interval as an argument; the stage builds the same table inside match_elements.";
+  let made = sibling_positions(document: document);
+  return move made;
+}
+
+fn stamp_alone(clock: &Clock, positions: Positions) -> (at: Instant, kept: Positions) writes(clock) {
+  doc "Reads the clock once the sibling positions exist and hands them back.";
+  let made = now(clock: clock);
+  return made, move positions;
+}
+
+fn depth_alone(started: Instant, traversal: &Traversal) -> result: Bool reads(traversal) {
+  doc "depth_check on the traversal, called with the reading that starts its interval as an argument.";
+  let made = depth_check(traversal: traversal);
+  return made;
+}
+
+fn stamp_depth(clock: &Clock, accepted: Bool) -> result: Instant writes(clock) {
+  doc "Reads the clock once depth_check has answered.";
+  let made = now(clock: clock);
+  return made;
+}

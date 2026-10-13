@@ -1,0 +1,234 @@
+alias AtomTable = pkg::base::atom::AtomTable;
+alias Clock = std::time::Clock;
+alias Document = pkg::dom::Document;
+alias Instant = std::time::Instant;
+alias NodeId = pkg::dom::NodeId;
+alias Positions = pkg::css::selectors::Positions;
+alias nanoseconds_from = std::time::nanoseconds_from;
+alias now = std::time::now;
+alias pseudo_element_after = pkg::css::selectors::pseudo_element_after;
+alias pseudo_element_before = pkg::css::selectors::pseudo_element_before;
+alias pseudo_element_none = pkg::css::selectors::pseudo_element_none;
+alias sibling_positions = pkg::css::selectors::sibling_positions;
+
+const lap_count: u64 = 8_u64;
+
+fn index_after(started: Instant, store: &RuleStore, atoms: &AtomTable, pseudo: Bool) -> result: Result<RuleIndex, StyleError> reads(store), reads(atoms) {
+  doc "build_rule_index, called with the reading that starts its interval as an argument, so that the work cannot begin before the reading is taken.";
+  let made = build_rule_index(store: store, atoms: atoms, pseudo: pseudo);
+  return move made;
+}
+
+fn stamp_indexes(clock: &Clock, first: &RuleIndex, second: &RuleIndex) -> result: Instant reads(first), reads(second), writes(clock) {
+  doc "Reads the clock after both rule indexes are built.";
+  let held_first = first^.starts.inner.len;
+  let held_second = second^.starts.inner.len;
+  let made = now(clock: clock);
+  return made;
+}
+
+fn positions_after(started: Instant, document: &Document) -> result: Positions reads(document) {
+  doc "sibling_positions, called with the reading that starts its interval as an argument.";
+  let made = sibling_positions(document: document);
+  return move made;
+}
+
+fn stamp_positions(clock: &Clock, positions: Positions) -> (at: Instant, kept: Positions) writes(clock) {
+  doc "Reads the clock once the sibling positions exist, and hands them back: the table is private to pkg::css::selectors, so the dependence on it is the move.";
+  let made = now(clock: clock);
+  return made, move positions;
+}
+
+fn flags_after(started: Instant, flags: &[u8], elements: &[NodeId], pseudo_index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions) -> result: Bool reads(elements), reads(pseudo_index), reads(store), reads(document), reads(atoms), reads(positions), writes(flags) {
+  doc "pseudo_flags, called with the reading that starts its interval as an argument.";
+  let made = pseudo_flags(flags: flags, elements: elements, pseudo_index: pseudo_index, store: store, document: document, atoms: atoms, positions: positions);
+  return made;
+}
+
+fn stamp_flags(clock: &Clock, flags: &Box<Array<u8>>, done: Bool) -> result: Instant reads(flags), writes(clock) {
+  doc "Reads the clock after pseudo_flags has written flags.";
+  let held = flags^.inner.len;
+  let made = now(clock: clock);
+  return made;
+}
+
+fn stamp_numbered(clock: &Clock, nodes: &Box<Slots<NodeId>>, parents: &Box<Slots<u32>>, kinds: &Box<Slots<u8>>) -> result: Instant reads(nodes), reads(parents), reads(kinds), writes(clock) {
+  doc "Reads the clock after the styled nodes are numbered.";
+  let held_nodes = nodes^.inner.len;
+  let held_parents = parents^.inner.len;
+  let held_kinds = kinds^.inner.len;
+  let made = now(clock: clock);
+  return made;
+}
+
+fn stamp_allocated(clock: &Clock, bits: &Box<Slots<u64>>, winners: &Box<Slots<u32>>, counts: &Box<Slots<u32>>) -> result: Instant reads(bits), reads(winners), reads(counts), writes(clock) {
+  doc "Reads the clock after the winner, custom-key and counter tables exist.";
+  let held_bits = bits^.inner.len;
+  let held_winners = winners^.inner.len;
+  let held_counts = counts^.inner.len;
+  let made = now(clock: clock);
+  return made;
+}
+
+fn tally_count(counts: &[u32], slot: u64) -> result: unit writes(counts) {
+  doc "The profiled path's tally for test_rule: adds one to the counter at slot of the node's run of counters (0 offered, 1 admitted by the feature filter, 2 matched). The stage's own instances take tally_none instead, so only the instances this file calls count.";
+  if slot < counts^.len {
+    set counts^[slot] = counts^[slot] +wrap 1_u32;
+  }
+  return unit;
+}
+
+fn match_all_after(started: Instant, winners: &[u32], bits: &[u64], words: u64, counts: &[u32], count_words: u64, nodes: &[NodeId], kinds: &[u8], element_count: u64, index: &RuleIndex, pseudo_index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions) -> result: Bool reads(nodes), reads(kinds), reads(index), reads(pseudo_index), reads(store), reads(document), reads(atoms), reads(positions), writes(winners), writes(bits), writes(counts) {
+  doc "match_all with the counting tally, called with the reading that starts its interval as an argument.";
+  let made = match_all::<fn tally_count>(winners: winners, bits: bits, words: words, counts: counts, count_words: count_words, nodes: nodes, kinds: kinds, element_count: element_count, index: index, pseudo_index: pseudo_index, store: store, document: document, atoms: atoms, positions: positions);
+  return made;
+}
+
+fn stamp_matched(clock: &Clock, winners: &Box<Slots<u32>>, bits: &Box<Slots<u64>>, counts: &Box<Slots<u32>>, done: Bool) -> result: Instant reads(winners), reads(bits), reads(counts), writes(clock) {
+  doc "Reads the clock after match_all has written the winner, custom-key and counter tables.";
+  let held_winners = winners^.inner.len;
+  let held_bits = bits^.inner.len;
+  let held_counts = counts^.inner.len;
+  let made = now(clock: clock);
+  return made;
+}
+
+fn set_lap(laps: &Box<Array<u64>>, slot: u64, value: u64) -> result: unit writes(laps) {
+  doc "Stores one interval, in nanoseconds, at slot of laps.";
+  if slot < laps^.inner.len {
+    set laps^.inner[slot] = value;
+  }
+  return unit;
+}
+
+fn match_elements_profiled(store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal, clock: &Clock) -> result: Result<MatchProfile, StyleError> reads(store), reads(document), reads(atoms), reads(traversal), writes(clock) {
+  doc "match_elements with the clock read between its steps, and match_all counting. It repeats match_with's steps in order, with the same checks, bounds and loops, so that the cascade it builds equals match_elements's; the steps are timed in laps (see MatchProfile).";
+  let no = False();
+  let yes = True();
+  let count = traversal^.elements.inner.len;
+  let rules = store^.rules.inner.len;
+  let customs = store^.custom_rules.inner.len;
+  let few_elements = count <= 1431655764_u64;
+  let few_rules = rules <= 4194304_u64;
+  let few_customs = customs <= words_ceiling;
+  let some_rules = band(few_rules, few_customs);
+  let small = band(few_elements, some_rules);
+  let listed = traversal^.parents.inner.len == count;
+  let usable = band(small, listed);
+  if usable {
+  } else {
+    let failure = StyleError::TooLarge();
+    return Err<MatchProfile, StyleError>(error: failure);
+  }
+  let words = customs;
+  let begin = now(clock: clock);
+  let index = propagate index_after(started: begin, store: store, atoms: atoms, pseudo: no);
+  let pseudo_index = propagate index_after(started: begin, store: store, atoms: atoms, pseudo: yes);
+  let indexed = stamp_indexes(clock: clock, first: &index, second: &pseudo_index);
+  let made_positions = positions_after(started: indexed, document: document);
+  let (positioned, positions) = stamp_positions(clock: clock, positions: move made_positions);
+  let flags = box_array_filled::<u8>(count: count, value: 0_u8);
+  let elements = &traversal^.elements.inner[0_u64..count];
+  let flagged = flags_after(started: positioned, flags: &flags.inner[0_u64..count], elements: elements, pseudo_index: &pseudo_index, store: store, document: document, atoms: atoms, positions: &positions);
+  let flag_pass = stamp_flags(clock: clock, flags: &flags, done: flagged);
+  if flagged {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return Err<MatchProfile, StyleError>(error: failure);
+  }
+  let pseudo_count = 0_u64;
+  for (i in 0_u64..count) {
+    let bits = flags.inner[i];
+    let before = iand(bits, 1_u8);
+    let after = iand(bits, 2_u8);
+    if before != 0_u8 {
+      set pseudo_count = pseudo_count +sat 1_u64;
+    }
+    if after != 0_u8 {
+      set pseudo_count = pseudo_count +sat 1_u64;
+    }
+  }
+  let node_count = count +sat pseudo_count;
+  let few_nodes = node_count <= 4294967294_u64;
+  if few_nodes {
+  } else {
+    let failure = StyleError::TooLarge();
+    return Err<MatchProfile, StyleError>(error: failure);
+  }
+  let first_node = if count > 0_u64 {
+    give traversal^.elements.inner[0_u64];
+  } else {
+    give NodeId(index: 0_u32);
+  }
+  let nodes = filled_slots::<NodeId>(count: node_count, value: first_node);
+  let parents = filled_slots::<u32>(count: node_count, value: 0_u32);
+  let kinds = filled_slots::<u8>(count: node_count, value: pseudo_element_none);
+  for (i in 0_u64..count) {
+    set nodes.inner[i] = traversal^.elements.inner[i];
+    set parents.inner[i] = traversal^.parents.inner[i];
+  }
+  let next = count;
+  for (i in 0_u64..count) {
+    let bits = flags.inner[i];
+    let narrowed = cvt.wrap::<u64, u32>(i);
+    for (side in 0_u64..2_u64) {
+      let mask = if side == 0_u64 {
+        give 1_u8;
+      } else {
+        give 2_u8;
+      }
+      let kind = if side == 0_u64 {
+        give pseudo_element_before;
+      } else {
+        give pseudo_element_after;
+      }
+      let present = iand(bits, mask);
+      let room = next < node_count;
+      if present != 0_u8 {
+        if room {
+          set nodes.inner[next] = traversal^.elements.inner[i];
+          set parents.inner[next] = narrowed;
+          set kinds.inner[next] = kind;
+          set next = next +sat 1_u64;
+        }
+      }
+    }
+  }
+  let numbered = stamp_numbered(clock: clock, nodes: &nodes, parents: &parents, kinds: &kinds);
+  let counter_words = 3_u64;
+  let total_bits = words * node_count;
+  let total_winners = winner_words * node_count;
+  let total_counts = counter_words * node_count;
+  let bits = filled_slots::<u64>(count: total_bits, value: 0_u64);
+  let winners = filled_slots::<u32>(count: total_winners, value: 0_u32);
+  let counts = filled_slots::<u32>(count: total_counts, value: 0_u32);
+  let allocated = stamp_allocated(clock: clock, bits: &bits, winners: &winners, counts: &counts);
+  let bit_count = bits.inner.len;
+  let winner_count = winners.inner.len;
+  let counter_count = counts.inner.len;
+  let fits = match_all_after(started: allocated, winners: &winners.inner[0_u64..winner_count], bits: &bits.inner[0_u64..bit_count], words: words, counts: &counts.inner[0_u64..counter_count], count_words: counter_words, nodes: &nodes.inner[0_u64..node_count], kinds: &kinds.inner[0_u64..node_count], element_count: count, index: &index, pseudo_index: &pseudo_index, store: store, document: document, atoms: atoms, positions: &positions);
+  let finished = stamp_matched(clock: clock, winners: &winners, bits: &bits, counts: &counts, done: fits);
+  if fits {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return Err<MatchProfile, StyleError>(error: failure);
+  }
+  let laps = box_array_filled::<u64>(count: lap_count, value: 0_u64);
+  let index_ns = nanoseconds_from(earlier: begin, later: indexed);
+  let positions_ns = nanoseconds_from(earlier: indexed, later: positioned);
+  let flags_ns = nanoseconds_from(earlier: positioned, later: flag_pass);
+  let numbering_ns = nanoseconds_from(earlier: flag_pass, later: numbered);
+  let allocation_ns = nanoseconds_from(earlier: numbered, later: allocated);
+  let loop_ns = nanoseconds_from(earlier: allocated, later: finished);
+  let total_ns = nanoseconds_from(earlier: begin, later: finished);
+  set_lap(laps: &laps, slot: 0_u64, value: index_ns);
+  set_lap(laps: &laps, slot: 1_u64, value: positions_ns);
+  set_lap(laps: &laps, slot: 2_u64, value: flags_ns);
+  set_lap(laps: &laps, slot: 3_u64, value: numbering_ns);
+  set_lap(laps: &laps, slot: 4_u64, value: allocation_ns);
+  set_lap(laps: &laps, slot: 5_u64, value: loop_ns);
+  set_lap(laps: &laps, slot: 6_u64, value: total_ns);
+  let made = Cascade(positions: move positions, winners: move winners, custom_keys: move bits, custom_count: words, element_count: count, nodes: move nodes, parents: move parents, kinds: move kinds);
+  let profile = MatchProfile(cascade: move made, laps: move laps, counts: move counts);
+  return Ok<MatchProfile, StyleError>(value: move profile);
+}
