@@ -1,0 +1,189 @@
+# Temporary M2 diagnostic: compare the full pages before and after the
+# line-anchoring merge, with one compiler and Chromium 141. Remove before
+# this research branch is ready; parity mismatches are observations.
+name: m2-page-parity
+
+on:
+  push:
+    branches: [research/m2-page-parity]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: m2-page-parity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  page-parity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      HEAD_REV: aa3f999db871fca41cedbf1585973efae96f58f8
+      BASE_REV: da2191eef6ddc2aaffa10ecc7e7d138014e81459
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: aa3f999db871fca41cedbf1585973efae96f58f8
+          submodules: true
+          fetch-depth: 0
+      - name: Toolchain, fonts and Chromium 141
+        run: |
+          set -euo pipefail
+          mkdir -p build/parity
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-mono fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          npm install --prefix build/reference playwright@1.56.1
+          build/reference/node_modules/.bin/playwright install --with-deps chromium
+          echo "PLAYWRIGHT=$GITHUB_WORKSPACE/build/reference/node_modules/playwright" >> "$GITHUB_ENV"
+          chromium=$(node -e 'console.log(require("./build/reference/node_modules/playwright").chromium.executablePath())')
+          echo "CHROMIUM=$chromium" >> "$GITHUB_ENV"
+          "$chromium" --version > build/parity/chromium-version.txt
+          cat build/parity/chromium-version.txt
+          grep -Eq '^Chromium 141\.' build/parity/chromium-version.txt
+          make -s toolchain compiler oracle-fonts
+          compiler=$GITHUB_WORKSPACE/build/whitefoot/$(sed -n 's/^release = //p' whitefoot.pin)/whitefootc
+          echo "COMPILER=$compiler" >> "$GITHUB_ENV"
+          sha256sum "$compiler" > build/parity/compiler.sha256
+          cp whitefoot.pin build/parity/head.whitefoot.pin
+      - name: Pinned page inputs and the HEAD and BASE drivers, one compiler
+        run: |
+          set -euo pipefail
+          data=build/research/concurrency
+          mkdir -p "$data"
+          tar -xzf tests/layout/fixtures/apollo11/inputs.tar.gz -C "$data"
+          sha256sum -c tests/layout/fixtures/apollo11/inputs.sha256
+          # The fixture's Apollo bytes differ from concurrency/run.sh's older
+          # Apollo pins. Fetch only its revision-stable ECMA262 and HTML5 inputs;
+          # the URL/hash records below are copied from that script's pins().
+          while read -r name url sum; do
+            curl -fsSL --retry 3 -o "$data/$name" "$url"
+            printf '%s  %s\n' "$sum" "$data/$name" | sha256sum -c -
+          done <<'PINS'
+          ecma262.html https://raw.githubusercontent.com/tc39/ecma262/24620d3341aaf1a59440fde65343cda3e3f0ad4c/index.html e2b29c85f37b8ded51873ce385b6573a35cbc26b467c21c14f8184f3bab5aa26
+          ecma262-ecmarkup.css https://raw.githubusercontent.com/tc39/ecma262/24620d3341aaf1a59440fde65343cda3e3f0ad4c/assets/css/ecmarkup.css 8bef2688107197ac28abe81b62a61100904cec548e223d03a10ac7ea7b6b2fc7
+          ecma262-print.css https://raw.githubusercontent.com/tc39/ecma262/24620d3341aaf1a59440fde65343cda3e3f0ad4c/assets/css/print.css e80f1880ab96cb3418cddbcd7a529aa6e474113f4a87c2555d079f84fc09c53f
+          html5.html https://raw.githubusercontent.com/WebKit/WebKit/e9f2cf896959ec35ce49b0458b2b1bcfbd301e86/PerformanceTests/Parser/resources/html5.html f0466f5a8c8099935a9394607abcd4bbbb3b41384a14b3f906eea80a521fe06e
+          PINS
+          sha256sum "$data"/* > build/parity/inputs.sha256
+          base=$RUNNER_TEMP/m2-page-parity-base
+          git worktree add --detach "$base" "$BASE_REV"
+          test "$(git rev-parse HEAD)" = "$HEAD_REV"
+          test "$(git -C "$base" rev-parse HEAD)" = "$BASE_REV"
+          {
+            echo "HEAD: $(git rev-parse HEAD)"
+            echo "BASE: $(git -C "$base" rev-parse HEAD)"
+            echo "Both drivers use: $COMPILER"
+            cat build/parity/compiler.sha256
+          } > build/parity/revisions.txt
+          cat build/parity/revisions.txt
+          cp "$base/whitefoot.pin" build/parity/base.whitefoot.pin
+          mkdir -p "$base/build/research"
+          # Dereference copies: the driver cannot open paths through symlinks.
+          cp -rL build/fonts "$base/build/fonts"
+          cp -rL "$data" "$base/build/research/concurrency"
+          for label in head base; do
+            tree=$GITHUB_WORKSPACE
+            if [ "$label" = base ]; then tree=$base; fi
+            status=0
+            (cd "$tree/renderer" && "$COMPILER" --cache "$tree/build/whitefoot-cache" --fragments function --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle) > "build/parity/$label.build.txt" 2>&1 || status=$?
+            cat "build/parity/$label.build.txt"
+            if [ "$status" -ne 0 ]; then exit "$status"; fi
+            sha256sum "$tree/build/layout_oracle" > "build/parity/$label.driver.sha256"
+          done
+      - name: Full-page dumps and every compare result
+        run: |
+          set -euo pipefail
+          base=$RUNNER_TEMP/m2-page-parity-base
+          data=build/research/concurrency
+          ua=renderer/style/ua.css
+          infrastructure_error=0
+          printf 'page\ttree\texit\n' > build/parity/compare-exits.tsv
+          for page in ecma262 apollo11 html5; do
+            # Same URL suffix mappings as investigations/layout/run.sh.
+            sheets=()
+            case "$page" in
+              ecma262) sheets=("assets/css/ecmarkup.css=$data/ecma262-ecmarkup.css" "assets/css/print.css=$data/ecma262-print.css") ;;
+              apollo11) sheets=("wikibase.client.init&only=styles&skin=vector-2022=$data/apollo11-modules.css" "modules=site.styles&only=styles&skin=vector-2022=$data/apollo11-site.css") ;;
+              html5) ;;
+            esac
+            node tests/layout/layout_oracle.mjs dump "$data/$page.html" "${sheets[@]}" > "build/parity/$page.chromium.tsv"
+            (cd "$base" && build/layout_oracle dump 1 "$data/$page.html" "$ua" "${sheets[@]}") > "build/parity/$page.base.tsv"
+            build/layout_oracle dump 1 "$data/$page.html" "$ua" "${sheets[@]}" > "build/parity/$page.head.tsv"
+            for tree in head base; do
+              status=0
+              node tests/layout/layout_oracle.mjs compare "build/parity/$page.chromium.tsv" "build/parity/$page.$tree.tsv" > "build/parity/$page.$tree.compare.txt" 2>&1 || status=$?
+              printf '%s\t%s\t%s\n' "$page" "$tree" "$status" >> build/parity/compare-exits.tsv
+              echo "== $page ${tree^^} against Chromium (compare exit $status; 0/1: judged, 3: structure mismatch)"
+              cat "build/parity/$page.$tree.compare.txt"
+              case "$status" in
+                0|1|3) ;;
+                *) infrastructure_error=1 ;;
+              esac
+            done
+          done
+          # Keep comparing after input/usage errors, then fail after the summary.
+          echo "$infrastructure_error" > build/parity/compare-infrastructure-error.txt
+      - name: Apollo11 rectangles beyond 1 px and ECMA262 mismatch counts
+        run: |
+          set -euo pipefail
+          python3 -B - > build/parity/summary.txt <<'PYEOF'
+          from pathlib import Path
+          import re
+
+          root = Path('build/parity')
+
+          def elements(path):
+              result = {}
+              for line in path.read_text().splitlines():
+                  fields = line.split('\t')
+                  if fields[0] == 'E':
+                      rects = [tuple(map(float, rect.split(',')))
+                               for rect in fields[5].split()]
+                      result[int(fields[1])] = (fields[2], rects)
+              return result
+
+          chromium = elements(root / 'apollo11.chromium.tsv')
+          for tree in ('head', 'base'):
+              snowghost = elements(root / f'apollo11.{tree}.tsv')
+              print(f'== apollo11 {tree.upper()}: every element with missing/different rect count or any x,y,width,height difference >1 px')
+              print('The dump has no class attribute; elements are identified by index and tag. Rects are (x,y,width,height).')
+              count = 0
+              for index in sorted(chromium.keys() | snowghost.keys()):
+                  c, s = chromium.get(index), snowghost.get(index)
+                  if (c is None or s is None or len(c[1]) != len(s[1])
+                          or any(abs(a - b) > 1 for cr, sr in zip(c[1], s[1])
+                                 for a, b in zip(cr, sr))):
+                      count += 1
+                      tag = c[0] if c is not None else s[0]
+                      print(f'{index} {tag}: Chromium {c[1] if c is not None else "MISSING"}; Snowghost {s[1] if s is not None else "MISSING"}')
+              print(f'Total elements differing: {count}')
+
+          for tree in ('head', 'base'):
+              text = (root / f'ecma262.{tree}.compare.txt').read_text()
+              print(f'== ecma262 {tree.upper()}: compare counts')
+              for measure in ('block-level boxes', 'inline-level boxes', 'text nodes'):
+                  match = re.search(rf'^{re.escape(measure)}: (\d+)/(\d+) ', text, re.M)
+                  if match:
+                      matched, total = map(int, match.groups())
+                      print(f'{measure}: {matched} matched / {total} total; {total - matched} mismatched')
+                  else:
+                      print(f'{measure}: counts unavailable; see full compare output and compare-exits.tsv (structure mismatch exits 3)')
+          PYEOF
+          cat build/parity/summary.txt
+      - name: Fail only for compare infrastructure errors
+        run: |
+          set -euo pipefail
+          if [ "$(cat build/parity/compare-infrastructure-error.txt)" != 0 ]; then
+            echo 'Unexpected compare exit (including input/usage errors, exit 2); see compare-exits.tsv.' >&2
+            exit 1
+          fi
+      - name: Keep full-page parity evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: m2-page-parity
+          path: build/parity
+          retention-days: 7
+          if-no-files-found: warn
