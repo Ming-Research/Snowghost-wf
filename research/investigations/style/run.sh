@@ -19,13 +19,36 @@
 #                               runs MODE profile on every page, or on PAGE...,
 #                               sequentially and with --par at one and four
 #                               workers, and prints each step's time
-#                               (the step-timing investigation below)
+#                               (the step-timing investigation below), then
+#                               the fourth part again through the profiled
+#                               copy of interning, step by step and table by
+#                               table, with a summary per page and mode
+#                               (DESIGN.md, "Interning in parallel")
 #   run.sh overhead [PAGE...]   with BASE_DRIVERS naming a directory with the
 #                               style_oracle and style_oracle_par of an
 #                               earlier build, times MODE match with each build
 #                               in turn (RUNS_OVERHEAD rounds, five by default),
 #                               to bound what the matcher's counters cost when
 #                               they count nothing
+#   run.sh compare [PAGE...]    with BASE_DRIVERS naming a directory with the
+#                               style_oracle, style_oracle_par and ledger.txt
+#                               of an earlier build by the same compiler,
+#                               builds this one (unless BUILT is set), requires
+#                               its dumps and distinct counts to equal the
+#                               earlier build's, checks that the ledger
+#                               permits the seven hashing loops, reports which
+#                               value groups' calls each build offers, and
+#                               times the stage's interning with the earlier
+#                               build, this one, a copy of the earlier build
+#                               (the twin) and, with BONLY_DRIVERS, this
+#                               revision with the seven calls kept apart, in
+#                               interleaved rounds (DESIGN.md, "Hashing
+#                               outside the chain (B)" and "Attributing the
+#                               four-worker gain")
+#   run.sh identity DIR [PAGE...]
+#                               with BASE_DRIVERS as for compare, requires the
+#                               dumps and distinct counts of the drivers in
+#                               DIR to equal the earlier build's
 #   run.sh falsify [PAGE]       after profile, shows that its counter and
 #                               ledger checks fail on deliberately wrong
 #                               copies of PAGE's files (apollo11 by default)
@@ -231,7 +254,9 @@ profile_reps_of() {
 profile_table() {
 	awk '
 	BEGIN {
-		n = split("match match.rule_index match.positions match.pseudo_flags match.numbering match.allocation match.loop inherited reset intern total alone.positions alone.depth_check", names, " ")
+		n = split("match match.rule_index match.positions match.pseudo_flags match.numbering match.allocation match.loop inherited reset intern total alone.positions alone.depth_check intern.prepare intern.setup intern.box intern.size intern.spacing intern.border intern.font intern.text intern.background intern.custom intern.container intern.item intern.table intern.content intern.ids intern.place intern.whole hash.box hash.size hash.spacing hash.border hash.font hash.text hash.background", names, " ")
+		t = split("intern.box intern.size intern.spacing intern.border intern.font intern.text intern.background intern.custom intern.container intern.item intern.table intern.content", tables, " ")
+		h = split("hash.box hash.size hash.spacing hash.border hash.font hash.text hash.background", hashes, " ")
 		m = split("seq par1 par4", modes, " ")
 	}
 	$4 == "step" {
@@ -254,6 +279,24 @@ profile_table() {
 					share = (total > 0) ? 100 * least[key] / total : 0
 					printf "%s %s %s %.3f %.2f %.1f%%\n", page, mode, names[i], least[key] / 1e6, spread, share
 				}
+			}
+		}
+		print ""
+		print "page mode whole_ms groups7_ms others5_ms largest_table largest_ms rest_ms hash7_ms stage_intern_ms"
+		for (page in pages) {
+			for (j = 1; j <= m; j++) {
+				mode = modes[j]
+				whole = least[page, mode, "intern.whole"]
+				if (!(whole > 0)) continue
+				groups = 0; others = 0; big = ""; bigv = 0; hashed = 0
+				for (i = 1; i <= t; i++) {
+					v = least[page, mode, tables[i]]
+					if (i <= 7) groups += v; else others += v
+					if (v > bigv) { bigv = v; big = tables[i] }
+				}
+				for (i = 1; i <= h; i++) hashed += least[page, mode, hashes[i]]
+				rest = whole - groups - others
+				printf "%s %s %.3f %.3f %.3f %s %.3f %.3f %.3f %.3f\n", page, mode, whole / 1e6, groups / 1e6, others / 1e6, big, bigv / 1e6, rest / 1e6, hashed / 1e6, least[page, mode, "intern"] / 1e6
 			}
 		}
 		print ""
@@ -531,7 +574,304 @@ least_of() {
 	fi
 }
 
+# Checks the drivers in DIR (its style_oracle and style_oracle_par, either may
+# be missing) against the earlier build's style_oracle in BASE_DRIVERS, on
+# PAGE... (LABEL names DIR in the messages). A dump checks the computed values;
+# MODE all's distinct counts check the sharing, which a dump cannot see: each
+# table gives a value the identifier of the first equal value, comparing by
+# equality, so a wrong or misaligned hash can only make a value miss its equal
+# entry and be appended again, which raises that table's count, and equal
+# counts with equal dumps mean equal identifiers (DESIGN.md, "Hashing outside
+# the chain (B)"). With style_oracle: MODE dump, MODE profdump and MODE all
+# sequentially; with style_oracle_par: MODE profdump and MODE all at four
+# workers. Prints one line per check and returns 1 when any differs.
+identity_of() {
+	label=$1
+	dir=$2
+	shift 2
+	result=0
+	for page in "$@"; do
+		sheets=$(sheets_of "$page")
+		file=$(page_file "$page")
+		if [ ! -s "$out/$page.compare-base.tsv" ]; then
+			"$BASE_DRIVERS/style_oracle" dump 1 "$file" "$ua" $sheets >"$out/$page.compare-base.tsv"
+			"$BASE_DRIVERS/style_oracle" all 1 "$file" "$ua" $sheets >"$out/$page.compare-base-all.txt"
+		fi
+		kinds=
+		if [ -x "$dir/style_oracle" ]; then
+			"$dir/style_oracle" dump 1 "$file" "$ua" $sheets >"$out/$page.$label-dump.tsv"
+			"$dir/style_oracle" profdump 1 "$file" "$ua" $sheets >"$out/$page.$label-prof-seq.tsv"
+			"$dir/style_oracle" all 1 "$file" "$ua" $sheets >"$out/$page.$label-all-seq.txt"
+			kinds="dump prof-seq"
+		fi
+		if [ -x "$dir/style_oracle_par" ]; then
+			WF_WORKERS=4 "$dir/style_oracle_par" profdump 1 "$file" "$ua" $sheets >"$out/$page.$label-prof-par.tsv"
+			WF_WORKERS=4 "$dir/style_oracle_par" all 1 "$file" "$ua" $sheets >"$out/$page.$label-all-par.txt"
+			kinds="$kinds prof-par"
+		fi
+		for kind in $kinds; do
+			if cmp -s "$out/$page.compare-base.tsv" "$out/$page.$label-$kind.tsv"; then
+				echo "$page: $label $kind identical to the earlier build's dump, $(sha256sum <"$out/$page.compare-base.tsv" | cut -c1-16)"
+			else
+				echo "run.sh: $page: $label $kind differs from the earlier build's dump" >&2
+				result=1
+			fi
+		done
+		for counts in "$out/$page.$label-all-seq.txt" "$out/$page.$label-all-par.txt"; do
+			[ -f "$counts" ] || continue
+			if cmp -s "$out/$page.compare-base-all.txt" "$counts"; then
+				echo "$page: $label distinct counts $(basename "$counts" .txt | sed 's/.*-all-//') equal the earlier build's: $(cat "$counts")"
+			else
+				echo "run.sh: $page: $label distinct counts $(basename "$counts" .txt | sed 's/.*-all-//') differ from the earlier build's" >&2
+				echo "  earlier: $(cat "$out/$page.compare-base-all.txt")" >&2
+				echo "  $label: $(cat "$counts")" >&2
+				result=1
+			fi
+		done
+	done
+	return $result
+}
+
+# Whether LEDGER publishes the offer of the call to NAME in intern_values: a
+# permitted pair names it and no call-grain line omits it.
+offer_of() {
+	if grep -Eq "^PAR actualization +style\.intern_values +call grain: omitted offer of style\.$2 " "$1"; then
+		echo omitted
+	elif grep -Eq "^PAR permitted +\./style/intern\.wf:[0-9]+ +pair\(([a-z_]+, )?$2(, [a-z_]+)?\)" "$1"; then
+		echo offered
+	else
+		echo "not permitted"
+	fi
+}
+
+# Prints the words of the list in $2 rotated left by $1 places.
+rotate() {
+	echo "$2" | awk -v n="$1" '{ for (i = 0; i < NF; i++) printf "%s%s", $(((i + n) % NF) + 1), ((i < NF - 1) ? " " : "\n") }'
+}
+
+# Compares this build's interning with an earlier build's (BASE_DRIVERS, with
+# the earlier --par build's ledger.txt) and with a copy of the earlier build
+# (the twin), all by the same compiler; with BONLY_DRIVERS naming the
+# style_oracle_par and ledger.txt of this revision built with
+# intern-tables-in-order.patch, also with that build, in which the seven value
+# groups' calls cannot overlap, as in the earlier build, so it has option B
+# without the seven calls' offers (DESIGN.md, "Attributing the four-worker
+# gain"). Every build's dumps and distinct counts must equal the earlier
+# build's (identity_of); the ledger must permit every loop of the seven
+# hash_*_values functions of renderer/style/intern.wf; for each of the seven
+# value groups the script prints whether each build offers its call in
+# intern_values, and the B-only build must offer none of them. Then, per
+# page, ROUNDS_COMPARE rounds (five by default) run MODE profile once per build
+# in a rotating order, sequentially (earlier, this, twin) and at four workers
+# (and the B-only build), and record the stage's own intern step, the
+# profiled copy's intern.whole (whose twelve table calls run one after
+# another in every build) and the total, each the least over the process's
+# repetitions. The summary prints each build's least and median over the
+# rounds, the ratios to the earlier build, the twin's spread (|twin - base| /
+# base, least times), the attribution and the falsifier's verdicts for
+# ecma262 and html5. It exits with 1 when a dump or a count differs, the
+# ledger does not permit a hashing loop, the B-only build offers a chained
+# call or a run fails; the verdicts do not change the exit status.
+compare() {
+	if [ -z "${BASE_DRIVERS:-}" ]; then
+		echo "run.sh: compare needs BASE_DRIVERS" >&2
+		exit 2
+	fi
+	if [ -n "${BUILT:-}" ]; then mkdir -p "$out"; else build; fi
+	twin=$out/twin
+	mkdir -p "$twin"
+	cp "$BASE_DRIVERS/style_oracle" "$BASE_DRIVERS/style_oracle_par" "$twin/"
+	bonly=${BONLY_DRIVERS:-}
+	status=0
+	echo "machine: $(uname -srm), $(getconf _NPROCESSORS_ONLN) processors"
+	echo "compiler: $compiler $(sha256sum <"$compiler" | cut -c1-16)"
+	echo "commit: $(git rev-parse --short HEAD)"
+	echo "base drivers: $(sha256sum <"$BASE_DRIVERS/style_oracle" | cut -c1-16) $(sha256sum <"$BASE_DRIVERS/style_oracle_par" | cut -c1-16)"
+	echo "twin drivers: $(sha256sum <"$twin/style_oracle" | cut -c1-16) $(sha256sum <"$twin/style_oracle_par" | cut -c1-16)"
+	echo "change drivers: $(sha256sum <build/style_oracle | cut -c1-16) $(sha256sum <build/style_oracle_par | cut -c1-16)"
+	if [ -n "$bonly" ]; then
+		echo "B-only driver: $(sha256sum <"$bonly/style_oracle_par" | cut -c1-16)"
+	fi
+	pages_run=${*:-ecma262 html5 apollo11}
+	identity_of change build $pages_run || status=1
+	if [ -n "$bonly" ]; then
+		identity_of bonly "$bonly" $pages_run || status=1
+	fi
+	lines=$(awk '/^fn hash_[a-z]*_values\(/ { inside = 1 } /^}/ { inside = 0 } inside && /^  for \(/ { print NR }' renderer/style/intern.wf)
+	found=0
+	for line in $lines; do
+		found=$((found + 1))
+		verdict=$(grep -E "^PAR loop +\./style/intern\.wf:$line +loop " "$out/ledger.txt" || true)
+		echo "${verdict:-run.sh: no ledger line for ./style/intern.wf:$line}"
+		if ! echo "$verdict" | grep -Eq ' loop +permitted '; then
+			echo "run.sh: the ledger does not permit the hashing loop at ./style/intern.wf:$line" >&2
+			status=1
+		fi
+	done
+	if [ "$found" != 7 ]; then
+		echo "run.sh: found $found hashing loops in renderer/style/intern.wf, not 7" >&2
+		status=1
+	fi
+	echo "call grain of intern_values, earlier build:"
+	grep -E 'style\.intern_values +call grain: omitted offer of style\.' "$BASE_DRIVERS/ledger.txt" || true
+	echo "call grain of intern_values, this build:"
+	grep -E 'style\.intern_values +call grain: omitted offer of style\.' "$out/ledger.txt" || true
+	echo "offer of each value group's call in intern_values (earlier build / this build):"
+	for group in box size spacing border font text background; do
+		echo "intern_${group}_group: $(offer_of "$BASE_DRIVERS/ledger.txt" "intern_${group}_group") / $(offer_of "$out/ledger.txt" "intern_${group}_group")"
+	done
+	if [ -n "$bonly" ]; then
+		echo "B-only build, permitted pairs of intern_values's calls:"
+		grep -E '^PAR permitted +\./style/intern\.wf:[0-9]+ +pair\(' "$bonly/ledger.txt" | grep -E 'pair\(((intern|chained)_[a-z]+_group|(chained_)?canon_sets), ((intern|chained)_[a-z]+_group|(chained_)?canon_sets)\)' | tee "$out/compare-bonly-pairs.txt" || true
+		chained=$(grep -Ec 'pair\([^)]*(chained_[a-z]+_group|intern_box_group)' "$out/compare-bonly-pairs.txt" || true)
+		pairs=$(wc -l <"$out/compare-bonly-pairs.txt" | tr -d ' ')
+		if [ "$pairs" != 4 ]; then
+			echo "run.sh: the B-only build permits $pairs pairs of intern_values's calls, not the 4 among canon_sets and the four other tables" >&2
+			status=1
+		fi
+		if [ "$chained" != 0 ]; then
+			echo "run.sh: the B-only build permits $chained pairs with a value group's call; it does not keep the seven calls apart" >&2
+			status=1
+		else
+			echo "B-only build: no value group's call may overlap another call, so the seven run one after another"
+		fi
+	fi
+	if [ "$status" != 0 ]; then
+		return $status
+	fi
+	: >"$out/compare-times.txt"
+	for page in $pages_run; do
+		sheets=$(sheets_of "$page")
+		file=$(page_file "$page")
+		reps=$(profile_reps_of "$page")
+		round=1
+		while [ "$round" -le "${ROUNDS_COMPARE:-5}" ]; do
+			for mode in seq par4; do
+				if [ "$mode" = par4 ] && [ -n "$bonly" ]; then
+					order=$(rotate "$round" "base change twin bonly")
+				else
+					order=$(rotate "$round" "base change twin")
+				fi
+				for who in $order; do
+					case $who in
+					base) dir=$BASE_DRIVERS ;;
+					change) dir=build ;;
+					twin) dir=$twin ;;
+					bonly) dir=$bonly ;;
+					esac
+					if [ "$mode" = seq ]; then
+						binary=$dir/style_oracle
+						lanes=1
+					else
+						binary=$dir/style_oracle_par
+						lanes=4
+					fi
+					if ! WF_WORKERS=$lanes "$binary" profile "$reps" "$file" "$ua" $sheets >"$out/compare-raw.txt"; then
+						echo "run.sh: $binary profile $page failed" >&2
+						return 1
+					fi
+					awk -v page="$page" -v mode="$mode" -v who="$who" -v round="$round" '
+					$1 == "step" && $2 == "intern" { intern = $4 }
+					$1 == "step" && $2 == "intern.whole" { whole = $4 }
+					$1 == "step" && $2 == "total" { total = $4 }
+					END { print page, mode, who, round, intern, whole, total }' "$out/compare-raw.txt" | tee -a "$out/compare-times.txt"
+				done
+			done
+			round=$((round + 1))
+		done
+	done
+	awk '
+	{
+		key = $1 SUBSEP $2 SUBSEP $3
+		c = ++n[key]
+		v[key, c] = $5
+		w[key, c] = $6
+		if (!(key in total) || $7 < total[key]) total[key] = $7
+		pages[$1] = 1
+	}
+	function sort_values(arr, key,    a, b, t, c) {
+		c = n[key]
+		for (a = 1; a <= c; a++) for (b = a + 1; b <= c; b++) if (arr[key, b] < arr[key, a]) { t = arr[key, a]; arr[key, a] = arr[key, b]; arr[key, b] = t }
+	}
+	function rel(a, b) { return 100 * (a - b) / b }
+	END {
+		split("seq par4", modes, " ")
+		nb = split("base change twin bonly", builds, " ")
+		print "page mode build intern_least_ms intern_median_ms least_to_base median_to_base whole_least_ms whole_to_base total_least_ms intern_share"
+		for (page in pages) for (j = 1; j <= 2; j++) {
+			mode = modes[j]
+			for (i = 1; i <= nb; i++) {
+				key = page SUBSEP mode SUBSEP builds[i]
+				if (!(key in n)) continue
+				sort_values(v, key)
+				sort_values(w, key)
+				least[key] = v[key, 1]
+				median[key] = v[key, int((n[key] + 1) / 2)]
+				wleast[key] = w[key, 1]
+			}
+			base = page SUBSEP mode SUBSEP "base"
+			for (i = 1; i <= nb; i++) {
+				key = page SUBSEP mode SUBSEP builds[i]
+				if (!(key in n)) continue
+				printf "%s %s %s %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.1f%%\n", page, mode, builds[i], least[key] / 1e6, median[key] / 1e6, least[key] / least[base], median[key] / median[base], wleast[key] / 1e6, wleast[key] / wleast[base], total[key] / 1e6, 100 * least[key] / total[key]
+			}
+		}
+		print ""
+		print "page mode comparison change twin_spread verdict"
+		for (page in pages) for (j = 1; j <= 2; j++) {
+			mode = modes[j]
+			base = least[page, mode, "base"]
+			spread = least[page, mode, "twin"] - base
+			if (spread < 0) spread = -spread
+			spread = 100 * spread / base
+			judged = (page == "ecma262" || page == "html5") ? "" : " (not judged on this page)"
+			if (mode == "seq") {
+				change = rel(least[page, mode, "change"], base)
+				printf "%s seq B-alone(change/base) %+.1f%% %.1f%% %s%s\n", page, change, spread, (change > spread) ? "slower beyond the twin spread: rejected" : "not slower beyond the twin spread", judged
+				continue
+			}
+			change = rel(least[page, mode, "change"], base)
+			printf "%s par4 A+B(change/base) %+.1f%% %.1f%% %s\n", page, change, spread, (-change > spread) ? "faster beyond the twin spread" : "not faster beyond the twin spread"
+			if ((page SUBSEP mode SUBSEP "bonly") in n) {
+				b = rel(least[page, mode, "bonly"], base)
+				a = rel(least[page, mode, "change"], least[page, mode, "bonly"])
+				printf "%s par4 B-alone(bonly/base) %+.1f%% %.1f%% %s%s\n", page, b, spread, (-b > spread) ? "faster beyond the twin spread" : "not faster beyond the twin spread: rejected", judged
+				printf "%s par4 seven-offers-given-B(change/bonly) %+.1f%% %.1f%% %s\n", page, a, spread, (-a > spread) ? "faster beyond the twin spread" : "not faster beyond the twin spread"
+				key = page SUBSEP mode SUBSEP "bonly"
+				printf "%s par4 B-only intern share %.1f%% of total\n", page, 100 * least[key] / total[key]
+			}
+			wbase = wleast[page, mode, "base"]
+			printf "%s par4 B-alone-profiled-copy(change/base, intern.whole) %+.1f%% (twin %+.1f%%)\n", page, rel(wleast[page, mode, "change"], wbase), rel(wleast[page, mode, "twin"], wbase)
+			key = page SUBSEP mode SUBSEP "change"
+			share = 100 * least[key] / total[key]
+			printf "%s par4 change intern share %.1f%% of total: %s%s\n", page, share, (share <= 15) ? "within 15 percent" : "above 15 percent", judged
+		}
+	}' "$out/compare-times.txt" | tee "$out/compare-table.txt"
+	return $status
+}
+
+# Checks DIR's drivers against BASE_DRIVERS's by identity_of (the wrong-hash
+# control of the intern-compare job runs it and requires it to fail).
+identity() {
+	if [ -z "${BASE_DRIVERS:-}" ] || [ -z "${1:-}" ]; then
+		echo "run.sh: identity needs BASE_DRIVERS and DIR" >&2
+		exit 2
+	fi
+	mkdir -p "$out"
+	dir=$1
+	shift
+	identity_of "$(basename "$dir")" "$dir" ${*:-ecma262 html5 apollo11}
+}
+
 case ${1:-} in
+compare)
+	shift
+	compare "$@"
+	;;
+identity)
+	shift
+	identity "$@"
+	;;
 profile)
 	shift
 	profile "$@"
@@ -553,7 +893,7 @@ time)
 	time_parts "$@"
 	;;
 *)
-	echo "usage: run.sh check [PAGE...] | time [PAGE [REPS]] | profile [PAGE...] | overhead [PAGE...] | falsify [PAGE]" >&2
+	echo "usage: run.sh check [PAGE...] | time [PAGE [REPS]] | profile [PAGE...] | overhead [PAGE...] | falsify [PAGE] | compare [PAGE...] | identity DIR [PAGE...]" >&2
 	exit 2
 	;;
 esac

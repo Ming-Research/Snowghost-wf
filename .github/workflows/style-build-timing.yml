@@ -3,13 +3,18 @@
 # runner (research/investigations/style/DESIGN.md, "Step timing"). The numbers
 # attribute time to steps; they are not precise timings, which run on the
 # 14900K runner. The incremental job runs the style oracle's structure, reach
-# and incremental modes, which reach the matcher's incremental call sites this
-# branch changed. Remove this workflow when the investigation closes.
+# and incremental modes, which reach the matcher's incremental call sites.
+# A push to research/style-intern-par runs the profile job, for the per-table
+# interning breakdown (DESIGN.md, "Interning in parallel"), and the
+# intern-compare job, for option B against its base revision and the
+# attribution of its four-worker gain (DESIGN.md, "Hashing outside the chain
+# (B)" and "Attributing the four-worker gain").
+# Remove this workflow when the investigation closes.
 name: style-build-timing
 
 on:
   push:
-    branches: [research/style-build-timing]
+    branches: [research/style-build-timing, research/style-intern-par]
   workflow_dispatch:
 
 permissions:
@@ -85,6 +90,11 @@ jobs:
         run: |
           grep -h -E 'style\.match_all(\$instance\$[^ ]*)? ' build/base-drivers/ledger.txt build/research/style/ledger.txt | tee build/research/style/ledger-match-all.txt
 
+      - name: The ledger for interning's per-table calls
+        if: always()
+        run: |
+          grep -hE 'style\.intern_values +call grain|pair\((intern_[a-z_]*|canon_sets), (intern_[a-z_]*|canon_sets)\)' build/research/style/ledger.txt | tee build/research/style/ledger-intern.txt
+
       - name: Cost of the counters when they count nothing
         if: always()
         run: |
@@ -104,8 +114,121 @@ jobs:
             build/research/style/ledger*.txt
             build/base-drivers/ledger.txt
 
+  # Option B of "Interning in parallel": the stage's interning with each of the
+  # seven hashed groups hashed in a loop of independent iterations before its
+  # probe chain, against the build of its base revision, a copy of that build
+  # as twin and this revision with the seven groups' calls kept apart (the
+  # B-only build), all by the same compiler, timed in interleaved rounds on one
+  # runner, and a control that a wrong hash fails the identity check
+  # (DESIGN.md, "Hashing outside the chain (B)" and "Attributing the
+  # four-worker gain").
+  intern-compare:
+    name: interning before and after hashing leaves the chain
+    if: github.ref_name == 'research/style-intern-par'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      INTERN_BASE: b96ca9b3da2382a071bfbeff937de02f5f743381
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Host toolchain and compiler
+        run: make -s toolchain compiler
+
+      - name: Machine
+        run: |
+          mkdir -p build/research/style
+          { uname -srm; nproc; lscpu | sed -n 's/^\(Model name\|CPU(s)\|Thread(s) per core\|L2 cache\|L3 cache\):/\1:/p'; cat whitefoot.pin; git rev-parse HEAD; echo "base $INTERN_BASE"; } | tee build/research/style/compare-machine.txt
+
+      - name: Pages
+        run: |
+          set -euo pipefail
+          sh research/investigations/concurrency/run.sh fetch || true
+          tar -xzf tests/layout/fixtures/apollo11/inputs.tar.gz -C build/research/concurrency
+          sha256sum -c tests/layout/fixtures/apollo11/inputs.sha256
+          for file in ecma262.html ecma262-ecmarkup.css ecma262-print.css html5.html apollo11.html apollo11-modules.css apollo11-site.css; do
+            test -s "build/research/concurrency/$file"
+          done
+          rm -f build/research/concurrency/*.unverified
+
+      - name: Base build (the base revision, same compiler)
+        run: |
+          set -euo pipefail
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          mkdir -p build/base-drivers
+          git worktree add -q --detach build/base "$INTERN_BASE"
+          diff whitefoot.pin build/base/whitefoot.pin
+          (cd build/base/renderer && "$wfc" --cache "$GITHUB_WORKSPACE/build/whitefoot-cache" --fragments function --graph modules.wfg --entry style_oracle -o "$GITHUB_WORKSPACE/build/base-drivers/style_oracle")
+          (cd build/base/renderer && "$wfc" --cache "$GITHUB_WORKSPACE/build/whitefoot-cache" --fragments function --par --par-ledger --graph modules.wfg --entry style_oracle -o "$GITHUB_WORKSPACE/build/base-drivers/style_oracle_par" > "$GITHUB_WORKSPACE/build/base-drivers/ledger.txt")
+          git -C build/base rev-parse HEAD
+
+      # Attribution experiment only: this revision with
+      # intern-tables-in-order.patch, whose seven value groups' calls read the
+      # identifiers the call before wrote, so none may overlap another and
+      # only option B differs from the base build.
+      - name: B-only build (this revision, the seven calls kept apart)
+        run: |
+          set -euo pipefail
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          mkdir -p build/bonly-drivers
+          git worktree add -q --detach build/bonly HEAD
+          git -C build/bonly apply "$GITHUB_WORKSPACE/research/investigations/style/intern-tables-in-order.patch"
+          (cd build/bonly/renderer && "$wfc" --cache "$GITHUB_WORKSPACE/build/whitefoot-cache" --fragments function --par --par-ledger --graph modules.wfg --entry style_oracle -o "$GITHUB_WORKSPACE/build/bonly-drivers/style_oracle_par" > "$GITHUB_WORKSPACE/build/bonly-drivers/ledger.txt")
+
+      - name: Identity, ledger and interleaved timing
+        run: |
+          set -o pipefail
+          BASE_DRIVERS="$GITHUB_WORKSPACE/build/base-drivers" BONLY_DRIVERS="$GITHUB_WORKSPACE/build/bonly-drivers" sh research/investigations/style/run.sh compare ecma262 html5 apollo11 2>&1 | tee build/research/style/compare-log.txt
+          { echo '```'; cat build/research/style/compare-table.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      # The identity check's control: this revision with wrong-box-hash.patch,
+      # which seeds each box value's hash with its position, so equal values
+      # hash apart and lose their sharing while every computed value stays
+      # right. The dumps must stay identical and the distinct counts must
+      # differ on ecma262 and html5, so the counts are what detects it.
+      - name: Control, a wrong hash fails the identity check
+        if: always()
+        run: |
+          # The default shell stops at the first failure; this step expects one.
+          set +e -uo pipefail
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          mkdir -p build/wronghash-drivers build/research/style
+          git worktree add -q --detach build/wronghash HEAD || exit 1
+          git -C build/wronghash apply "$GITHUB_WORKSPACE/research/investigations/style/wrong-box-hash.patch" || exit 1
+          (cd build/wronghash/renderer && "$wfc" --cache "$GITHUB_WORKSPACE/build/whitefoot-cache" --fragments function --graph modules.wfg --entry style_oracle -o "$GITHUB_WORKSPACE/build/wronghash-drivers/style_oracle") || exit 1
+          BASE_DRIVERS="$GITHUB_WORKSPACE/build/base-drivers" sh research/investigations/style/run.sh identity "$GITHUB_WORKSPACE/build/wronghash-drivers" ecma262 html5 apollo11 >build/research/style/control-log.txt 2>&1
+          code=$?
+          cat build/research/style/control-log.txt
+          if [ "$code" != 1 ]; then
+            echo "control: the identity check exited with $code, not 1: a wrong hash was not detected"
+            exit 1
+          fi
+          for page in ecma262 html5 apollo11; do
+            grep -q "^$page: wronghash-drivers dump identical" build/research/style/control-log.txt || { echo "control: $page's dump differs, so the counts are not what detected the wrong hash"; exit 1; }
+          done
+          for page in ecma262 html5; do
+            grep -q "^run.sh: $page: wronghash-drivers distinct counts seq differ" build/research/style/control-log.txt || { echo "control: $page's distinct counts did not detect the wrong hash"; exit 1; }
+          done
+          echo "control: the wrong hash keeps every dump identical and is detected by the distinct counts"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: style-intern-compare-${{ github.run_id }}
+          path: |
+            build/research/style/compare-*.txt
+            build/research/style/control-log.txt
+            build/research/style/*-all-*.txt
+            build/research/style/ledger.txt
+            build/base-drivers/ledger.txt
+            build/bonly-drivers/ledger.txt
+
   scan-param:
     name: scan entry with and without the positions parameter
+    if: github.ref_name == 'research/style-build-timing'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:

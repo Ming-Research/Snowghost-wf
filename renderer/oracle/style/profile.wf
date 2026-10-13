@@ -18,6 +18,7 @@ alias depth_check = pkg::style::depth_check;
 alias flush = pkg::oracle::support::flush;
 alias inherited_pass = pkg::style::inherited_pass;
 alias intern_styles = pkg::style::intern_styles;
+alias intern_styles_profiled = pkg::style::intern_styles_profiled;
 alias match_elements_profiled = pkg::style::match_elements_profiled;
 alias nanoseconds_from = std::time::nanoseconds_from;
 alias now = std::time::now;
@@ -28,7 +29,7 @@ alias reset_pass = pkg::style::reset_pass;
 alias rule_count = pkg::style::rule_count;
 alias sibling_positions = pkg::css::selectors::sibling_positions;
 
-const step_names: Array<u8, 164> = "match match.rule_index match.positions match.pseudo_flags match.numbering match.allocation match.loop inherited reset intern total alone.positions alone.depth_check";
+const step_names: Array<u8, 474> = "match match.rule_index match.positions match.pseudo_flags match.numbering match.allocation match.loop inherited reset intern total alone.positions alone.depth_check intern.prepare intern.setup intern.box intern.size intern.spacing intern.border intern.font intern.text intern.background intern.custom intern.container intern.item intern.table intern.content intern.ids intern.place intern.whole hash.box hash.size hash.spacing hash.border hash.font hash.text hash.background";
 
 const count_names: Array<u8, 105> = "nodes elements rules reps candidates_sum admitted_sum matched_sum candidates_max admitted_max matched_max";
 
@@ -44,11 +45,15 @@ const hist_candidates_label: Array<u8, 16> = "hist candidates ";
 
 const hist_admitted_label: Array<u8, 14> = "hist admitted ";
 
-const lap_slots: u64 = 16_u64;
+const lap_slots: u64 = 40_u64;
 
-const step_total: u64 = 13_u64;
+const step_total: u64 = 37_u64;
 
 const stat_slots: u64 = 80_u64;
+
+const intern_steps: u64 = 24_u64;
+
+const intern_first_slot: u64 = 13_u64;
 
 const candidate_hist: u64 = 16_u64;
 
@@ -146,7 +151,7 @@ fn put_histogram(buffer: &Box<Slots<u8>>, stats: &Box<Array<u64>>, base: u64) ->
 }
 
 fn run_profdump(store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal, environment: Environment, clock: &Clock, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> code: u8 reads(store), reads(document), reads(traversal), writes(atoms), writes(clock), writes(out), writes(err), writes(files) waits {
-  doc "Computes the styles once by profile_once and writes them as MODE dump does, so that a dump of the profiled path can be compared byte for byte with a dump of the stage itself.";
+  doc "Computes the styles once by profile_once, whose first part is match_elements_profiled and whose fourth is intern_styles_profiled, and writes them as MODE dump does, so that a dump of the profiled path can be compared byte for byte with a dump of the stage itself.";
   let laps = box_array_filled::<u64>(count: lap_slots, value: 0_u64);
   let stats = box_array_filled::<u64>(count: stat_slots, value: 0_u64);
   let styles = match profile_once(store: store, document: document, atoms: atoms, traversal: traversal, environment: environment, clock: clock, laps: &laps, stats: &stats) {
@@ -166,7 +171,7 @@ fn run_profdump(store: &RuleStore, document: &Document, atoms: &AtomTable, trave
 }
 
 fn profile_once(store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal, environment: Environment, clock: &Clock, laps: &Box<Array<u64>>, stats: &Box<Array<u64>>) -> result: Result<Styles, StyleError> reads(store), reads(document), reads(traversal), writes(atoms), writes(clock), writes(laps), writes(stats) {
-  doc "Runs the style stage once as compute_styles does, reading the clock between its parts, and fills laps with the nanoseconds of each step in the order of step_names: the first part from match_elements_profiled (its total, then its rule indexes, sibling positions, pseudo_flags, numbering, allocation and match_all), the second, third and fourth parts, their sum, and then, after the stage, sibling_positions and depth_check each run alone on the same document and traversal. It fills stats with the matcher's counts: totals, maxima and log2 histograms over the styled nodes of the rule items offered and those the filter admitted (summarize).";
+  doc "Runs the style stage once as compute_styles does, reading the clock between its parts, and fills laps with the nanoseconds of each step in the order of step_names: the first part from match_elements_profiled (its total, then its rule indexes, sibling positions, pseudo_flags, numbering, allocation and match_all), the second, third and fourth parts, their sum, and then, after the stage, sibling_positions and depth_check each run alone on the same document and traversal, and then the fourth part again by intern_styles_profiled on the same second and third parts, its 24 steps after them (the module interface of pkg::style lists them). The styles it returns are intern_styles_profiled's, so that a dump of them checks the profiled copy against the stage. It fills stats with the matcher's counts: totals, maxima and log2 histograms over the styled nodes of the rule items offered and those the filter admitted (summarize).";
   let profile = propagate match_elements_profiled(store: store, document: document, atoms: atoms, traversal: traversal, clock: clock);
   let matched_at = stamp_profile(clock: clock, profile: &profile);
   let inherited = propagate inherited_after(started: matched_at, store: store, cascade: &profile.cascade, document: document, atoms: atoms, traversal: traversal, environment: environment);
@@ -179,6 +184,8 @@ fn profile_once(store: &RuleStore, document: &Document, atoms: &AtomTable, trave
   let (positions_at, positions_kept) = stamp_alone(clock: clock, positions: move alone);
   let accepted = depth_alone(started: positions_at, traversal: traversal);
   let depth_at = stamp_depth(clock: clock, accepted: accepted);
+  let intern_laps = box_array_filled::<u64>(count: intern_steps, value: 0_u64);
+  let profiled = propagate intern_profiled_after(started: depth_at, inherited: &inherited_kept, resets: &resets_kept, traversal: traversal, clock: clock, laps: &intern_laps);
   let inherited_ns = nanoseconds_from(earlier: matched_at, later: inherited_at);
   let reset_ns = nanoseconds_from(earlier: inherited_at, later: reset_at);
   let intern_ns = nanoseconds_from(earlier: reset_at, later: interned_at);
@@ -200,8 +207,19 @@ fn profile_once(store: &RuleStore, document: &Document, atoms: &AtomTable, trave
   set_lap(laps: laps, slot: 10_u64, value: total_ns);
   set_lap(laps: laps, slot: 11_u64, value: positions_ns);
   set_lap(laps: laps, slot: 12_u64, value: depth_ns);
+  for (k in 0_u64..intern_steps) {
+    let intern_step_ns = take_lap(laps: &intern_laps, slot: k);
+    let slot = intern_first_slot +sat k;
+    set_lap(laps: laps, slot: slot, value: intern_step_ns);
+  }
   summarize(counts: &profile.counts, stats: stats);
-  return Ok<Styles, StyleError>(value: move styles);
+  return Ok<Styles, StyleError>(value: move profiled);
+}
+
+fn intern_profiled_after(started: Instant, inherited: &Inherited, resets: &Resets, traversal: &Traversal, clock: &Clock, laps: &Box<Array<u64>>) -> result: Result<Styles, StyleError> reads(inherited), reads(resets), reads(traversal), writes(clock), writes(laps) {
+  doc "intern_styles_profiled, called with the reading that ends the steps run alone as an argument.";
+  let made = intern_styles_profiled(inherited: inherited, resets: resets, traversal: traversal, clock: clock, laps: laps);
+  return move made;
 }
 
 fn take_lap(laps: &Box<Array<u64>>, slot: u64) -> result: u64 reads(laps) {

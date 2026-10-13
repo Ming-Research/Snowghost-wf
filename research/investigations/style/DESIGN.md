@@ -1256,6 +1256,465 @@ holds the items.
 - **The earlier matching shares** (47, 73 and 87 percent): explained under
   question 2 by code and machine differences; closed.
 
+## Interning in parallel
+
+Board item sg-bl-02-29. Interning was 20.0 and 21.1 percent of the
+four-worker stage on ecma262 and html5 (above the item's 15 percent rule)
+and scaled 1.1 to 1.2x from `seq` to `par4` ("Step timing" above). This
+section was written before any code changed.
+
+**What stays sequential, and why.** Both the full build (`intern_styles`)
+and a restyle (`intern_nodes`) intern through `intern_values`, which makes
+twelve calls, one per table: the seven value groups (box, size, spacing,
+border, font, text, background), the custom-property sets (`canon_sets`) and
+the container, item, table and content groups. The full ledger of run
+38306217375 (artifact `style-step-timing-38306217375`, `ledger.txt`, pin
+`wf-d837678c6905`) shows two things:
+
+- Every adjacent pair of the twelve calls is permitted to overlap
+  (`PAR permitted ./style/intern.wf:1627 pair(intern_box_group,
+  intern_size_group) eligible`, and so on through `pair(intern_table_group,
+  intern_content_group)`). The per-table parallelism the vocabulary tree
+  decided (Q48, "each is interned as its own task in parallel") is written
+  and admitted by the language.
+- The compiler then drops the offer of each of the seven value groups:
+  `PAR actualization style.intern_values call grain: omitted offer of
+  style.intern_box_group (static work 35791 below 150000, no recursion)`,
+  and likewise size 108,847, spacing 75,599, border 76,175, font 37,055,
+  text 77,311 and background 33,183. The call grain prices a call by a
+  static instruction count that charges each loop 16 times its body, not by
+  the loop's runtime extent; each of these calls runs one loop over every
+  styled node (179,471 elements on ecma262), so its runtime work is far
+  above its static price. The seven therefore run one after another as
+  ordinary calls. The other five have no such line and are offered.
+  Whitefoot's call-offer grain investigation records this as the rule's
+  known limit (a non-recursive helper whose work is large only through its
+  runtime extents loses its offer), not exercised by any program it
+  measured; this is such a program.
+
+Inside one table the loop is denied (`PAR loop ./style/intern.wf:756 loop
+denied condition 1: PAR-2 indexed accumulator ... at set index^.inner[at] =
+narrowed;`). That order is a true dependency of the written algorithm: a
+value's identifier is the position of the first equal value, so whether a
+value is new depends on every value interned before it. The kept-state
+decision (`design/pipeline/style.md`: each group's table keeps its
+identifiers across edits and an edit appends the values not found) requires
+only that existing identifiers do not move; the first-seen order among the
+values one run adds is required by no decision, but it is what makes the
+identifiers, and every output that exposes them, the same in every build, so
+each candidate below keeps it.
+
+Also sequential, outside the tables: the loop that copies each node's
+identifiers into `styles.elements` and the pseudo-elements
+(`intern.wf:1449`, denied because a `propagate` leaves it) and
+`copy_families`; both copy, they do not hash or compare.
+
+**Candidates and their dependency chains.** N is the number of nodes
+interned, c_t the cost per value of table t, split into h_t (hashing, which
+reads only the value) and p_t (probing, comparing with the table's entries
+and appending, which reads the table as earlier values left it), W the
+workers, S the preparation and assembly loops (split, N/W) plus the copy
+loop above.
+
+| candidate | chain |
+|---|---|
+| current, as compiled at the pin | S + sum over the seven value groups of N c_t, then the other five overlapped |
+| A, per-table tasks (Q48, the code as written) | S + max over all tables of N c_t |
+| B, A with each table's hashes computed first in a split loop | S + sum of N h_t / W + max of N p_t |
+| C, A with each table cut into P hash partitions, first-seen identifiers restored by a prefix count | S + max of N c_t / P + N / W + a prefix count of N |
+
+A changes no code; only the compiler's call grain stands between the source
+and its chain. B keeps the tables' formats and kept state and adds one array
+of N hashes per table. C needs each table's kept index cut into P indexes
+kept across edits, a mark per node saying whether it was the first of its
+value, a prefix count of those marks to give first-seen identifiers, and
+writes from each partition to its own row of N slots (a range reference per
+partition) gathered afterwards; it adds work of order N P.
+
+**What each predicts for the four-worker share.** The step timing does not
+split interning by table, so the per-table costs are not measured. The
+static weights above (size 24.5 percent of the seven value groups' sum;
+text, border and spacing 17 percent each) are a proxy for their relative
+cost per value. To reach 15 percent, interning at `par4` must fall from
+114.9 to at most 81.4 ms on ecma262 (0.15/0.85 of the other parts' 461.1 ms)
+and from 69.8 to at most 46.1 ms on html5 (of 261.0 ms). Assuming the seven
+value groups run at their sequential speed today, A shrinks them to the
+larger of their largest table and their sum over the effective cores: about
+half their time on the hosted runner (two physical cores), about a quarter
+on a machine that scales four workers 4x, since the size group is about a
+quarter of them. A therefore passes the rule on the hosted runner only if
+the seven value groups take at least 67 of ecma262's 135.4 ms of sequential
+interning (49 percent) and 47 of html5's 84.7 ms (56 percent); on a machine
+that scales four workers 4x, at least 45 and 32 ms (33 and 37 percent). B
+further removes the hashing from each table's chain; C divides the largest
+table's chain by P. Which is needed depends on that breakdown, which the
+profiled path does not yet record.
+
+**The falsifier.** A change is rejected, by the item's rule, when interning
+at `par4` stays above 15 percent of `total` on ecma262 or html5 (least of
+three processes, the same spread rule as question 1 above), or when, in a
+same-compiler, interleaved before-and-after comparison with a second copy of
+the base build as twin (as `scan-param.sh` does), the change's `par4`
+interning time is within the twin's spread of the base's, or its `seq`
+interning time is slower than the base's by more than the twin's spread. A
+build whose ledger still shows an `omitted offer of style.intern_*_group`
+line does not test A, whatever its times. Every change keeps the profiled
+dump equal to MODE `dump`'s and to the base's, byte for byte, on the three
+pages.
+
+**Result.** Not implemented. The natural parallel form, A, is the code as
+written and is permitted; the compiler's call grain does not hand it out.
+Writing the twelve calls in another shape to cross the grain, or building
+with `--par-call-grain off` (which offers every small call too), would route
+around a Whitefoot gap, so the gap goes to Whitefoot with this witness (a
+fragment, not a standalone program):
+
+```text
+fn intern_words(table: &Box<Slots<u64>>, index: &Box<Array<u32>>, values: &[u64], ids: &[u32]) -> result: unit reads(values), writes(table), writes(index), writes(ids) {
+  doc "One counted loop over values^.len: hash, probe index, append to table when new, write the identifier.";
+  ...
+}
+
+intern_words(table: &first_table, index: &first_index, values: &first_values.inner[0_u64..count], ids: &first_ids.inner[0_u64..count]);
+intern_words(table: &second_table, index: &second_index, values: &second_values.inner[0_u64..count], ids: &second_ids.inner[0_u64..count]);
+```
+
+The two calls write disjoint places, so [PAR-1] admits their overlap, as
+the ledger shows for the twelve calls of `intern_values`; the call grain
+then omits the offer whenever the static work of the loop is below 150,000
+units, which does not depend on `count`, so the pair runs sequentially at
+every worker count. The fragment has not been compiled alone; the observed
+case is `intern_values` at the pin. Acceptance: with `count` at 10^6 the pair is offered (no
+omitted-offer line for it) and its four-worker time on the 14900K is at
+most 0.6 of its sequential time, while with `count` at 3 it costs no more
+than the sequential build within the noise floor. Whitefoot's planned
+on-demand phase keeps the static call grain (owner's ruling of 2026-10-10,
+with runtime feedback per call site to follow if a static estimate
+misjudges a call); this is such a misjudged call.
+
+### Per-table breakdown
+
+The predictions above need each table's cost, which the step timing does not
+record. `pkg::style::intern_styles_profiled` repeats `intern_styles` and
+`intern_values` step by step, with a reading of the clock between steps and
+each table's call between two readings, so the twelve calls run one after
+another. MODE profile runs it after the stage, on the same second and third
+parts, and prints its 24 steps: `intern.prepare` (completing the text, table
+and content groups), `intern.setup` (the empty result, identifier arrays and
+side stores), one step per table (`intern.box` through `intern.content`,
+`intern.custom` being the custom-property sets), `intern.ids` (assembling
+each node's identifiers), `intern.place` (placing them by element and
+pseudo-element, and the families), `intern.whole`, and then `hash.box`
+through `hash.background`: each of the seven hashed groups' values hashed
+alone in a loop whose iterations are independent, which is B's first step.
+The stage's own `intern` step is unchanged. MODE profdump now interns
+through this copy, so its byte-for-byte equality with MODE dump checks that
+the copy builds the stage's styles. `run.sh profile` adds a summary per page
+and mode: `intern.whole`, the seven value groups' sum, the other five's,
+the largest table, the rest (S), the seven hashes' sum and the stage's
+`intern`.
+
+**Rules, fixed before the run.**
+
+- The breakdown stands for the stage when `intern.whole` in `seq` is within
+  25 percent of `intern` in `seq` on each page (the bound question 3 used
+  for steps run alone); otherwise its shares are not used.
+- A's prediction is the one above: on the hosted runner the seven value
+  groups (`groups7_ms`, `seq`) must reach 67 ms on ecma262 and 47 ms on
+  html5 for A to bring interning to 15 percent.
+- B is worth doing when the seven groups' hashing (`hash7_ms`, `seq`) is at
+  least 20 percent of `intern.whole` (`seq`) on both ecma262 and html5:
+  hashing then leaves the sequential chain and cuts at least 10 percent of
+  interning on the hosted runner (half of it, at two physical cores), above
+  the 7 percent spread of the step timing, and 15 percent at a true 4x. Below
+  20 percent on either page, B is not done.
+- C is what A would need when the largest table is more than half of the
+  twelve tables' sum (`largest_ms` against `groups7_ms` plus `others5_ms`),
+  since per-table tasks then leave that table as the chain.
+
+**Results.** Workflow `style-build-timing`, hosted run 38314107962 at
+b96ca9b, pin `wf-d837678c6905`, on GitHub-hosted `ubuntu-24.04` (the
+limits of "Step timing" apply: four workers on two physical cores, least of
+three processes). Milliseconds; `seq` is the sequential build, `par4` four
+workers:
+
+| page | intern.whole seq | stage intern seq | groups7 seq | others5 seq | largest table | hash7 seq | hash7 par4 |
+|---|---|---|---|---|---|---|---|
+| ecma262 | 146.9 | 133.5 | 73.1 | 55.4 | container 24.9 | 40.9 (27.8%) | 16.9 |
+| html5 | 83.9 | 82.2 | 44.1 | 34.3 | container 15.5 | 25.4 (30.3%) | 10.6 |
+| apollo11 | 10.2 | 9.8 | 5.2 | 4.1 | container 1.7 | 2.8 (27.6%) | 1.2 |
+
+`hash7`'s percentage is its share of `intern.whole` in `seq`.
+
+- *The breakdown stands.* `intern.whole` is within 25 percent of the
+  stage's `intern` on every page (1.10, 1.02 and 1.04 times it).
+- *A's prediction fails on html5 and holds on ecma262.* The seven value
+  groups take 44.1 ms on html5, under the 47 ms A needs there, and 73.1 ms
+  on ecma262, above the 67 ms it needs. A is blocked anyway on Whitefoot's
+  call grain (board request sg-req-call-grain-runtime-extent); it is not
+  reached by reshaping the calls or building with `--par-call-grain off`.
+- *B is worth doing.* The seven groups' hashing is 27.8 percent of
+  `intern.whole` on ecma262 and 30.3 percent on html5, above the 20
+  percent rule on both, and alone it scales 2.4x from `seq` to `par4` on
+  both pages.
+- *C is not needed.* The largest table, container (one of the five tables
+  that are not hashed here), is 19.4, 19.8 and 18.3 percent of the twelve
+  tables' sum on the three pages, under half of it.
+
+### Hashing outside the chain (B)
+
+Written before the code changed.
+
+**The chain today.** Each of the seven value groups' interning functions
+(`intern_box_group` through `intern_background_group`) runs one counted
+loop over the N nodes it is given. Iteration i hashes value i, probes the
+table's open-addressing index with that hash, compares with the entries it
+finds and, when none is equal, appends the value and gives it the next
+identifier. The loop is denied (an indexed accumulator: the index and the
+table), so hashing and probing alternate in one sequential chain of N
+steps, and the seven calls run one after another (the call grain omits
+their offers). Per table the chain is N (h_t + p_t); for the seven,
+S + sum over t of N (h_t + p_t).
+
+**The chain with B.** Each of the seven functions first fills an array of
+N hashes in a counted loop whose iteration i reads only value i and writes
+only slot i (`hash_box_values` through `hash_background_values`), then runs
+the probe loop as before, reading hash i from that array instead of
+computing it.
+
+- *Stays sequential:* the probe and append loop, in first-occurrence order.
+  Whether value i is new depends on every value interned before it, and the
+  identifiers are the positions of the first equal values; that order is
+  what makes them the same in every build and keeps an edit's identifiers
+  stable (the kept-state decision). The index's growth (`index_*_group`,
+  which places the table's earlier values again, and on a full build has
+  none to place), the five other tables and the assembly loop are
+  unchanged.
+- *Leaves the chain:* the hashing. Each table's chain becomes
+  N h_t / W + N p_t, and the seven together S + sum over t of
+  (N h_t / W + N p_t) while the call grain keeps them sequential, or
+  S + max over t of (N h_t / W + N p_t) once Whitefoot offers them (A).
+- *Costs:* one array of N 64-bit hashes per table call (1.4 MB on ecma262),
+  one store and one load per value, and a fork and join per table at
+  `par4`.
+
+**What B predicts.** On the hosted runner the seven groups' hashing took
+40.9 ms in `seq` and 16.9 ms at `par4` on ecma262 (25.4 and 10.6 on html5),
+so B should take about 24 ms off ecma262's `par4` interning and about 15 ms
+off html5's, if the probe loops keep their speed. Against the `par4`
+interning of "Step timing" (114.9 and 69.8 ms) that is about 91 and 55 ms,
+still above the 81.4 and 46.1 ms the 15 percent rule needs: B alone is not
+predicted to bring interning within 15 percent on the hosted runner, and the
+rest stays with A. In `seq`, B does the same hashing plus a store and a load
+per value, so it should be within the noise of the base.
+
+*Tested by the results below; it is partly wrong there.*
+
+**The comparison and the falsifier.** `run.sh compare` times the base
+build (b96ca9b), the change and a copy of the base's binary (the twin), all
+built by the same compiler, in interleaved rounds whose order rotates, and
+reads the stage's own `intern` step and `total` from MODE profile, `seq` and
+`par4`, on ecma262, html5 and apollo11; each build's time is its least over
+the rounds. The twin's spread is how far its time lies from the base's. By
+the rules of "The falsifier" above, B is rejected when its `par4` interning
+is not below the base's by more than the twin's spread, or when its `seq`
+interning is slower than the base's by more than the twin's spread, on
+ecma262 or html5; the 15 percent clause is reported as well and, as
+predicted above, is not expected to pass with B alone. The ledger must
+permit each of the seven hashing loops, and the per-table calls' call-grain
+lines are compared between base and change so that a change in which calls
+are offered, which would mix A into the measurement, is seen. The profiled
+dump must equal MODE `dump`'s and the base's byte for byte on the three
+pages (`run.sh profile`, the `profile` job).
+
+**Results.** Two hosted runs of the job "interning before and after hashing
+leaves the chain", on GitHub-hosted runners with two physical cores, not the
+14900K: run 38316806349 at 945d0b1 and run 38321713341 at 4e48376, whose
+renderer and harness are those of 945d0b1 (the commits between them change
+only documents). Five interleaved rounds each; base b96ca9b, twin a second
+copy of the base. Times are the stage's `intern` step, least of five, in
+milliseconds; "twin spread" is how far the twin lies from the base; the share
+is interning's share of the four-worker `total`. The two runs landed on
+runners of different speed (the base's sequential ecma262 interning is 73.3
+ms in the first and 110.1 ms in the second), so only ratios within a run are
+compared.
+
+| page | mode | run 1 base | run 1 change | change vs base | twin spread | share | run 2 base | run 2 change | change vs base | twin spread | share |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| ecma262 | seq | 73.348 | 68.306 | -6.9% | 1.2% | | 110.113 | 101.813 | -7.5% | 0.1% | |
+| ecma262 | par4 | 66.848 | 40.290 | -39.7% | 1.2% | 13.9% (base 21.1%) | 89.392 | 56.136 | -37.2% | 0.4% | 13.4% (base 19.9%) |
+| html5 | seq | 48.196 | 45.152 | -6.3% | 1.0% | | 68.500 | 63.386 | -7.5% | 0.0% | |
+| html5 | par4 | 40.774 | 27.000 | -33.8% | 2.5% | 15.4% (base 21.4%) | 55.880 | 35.725 | -36.1% | 0.1% | 14.8% (base 21.3%) |
+| apollo11 | seq | 5.363 | 5.027 | -6.3% | 0.7% | | 8.102 | 7.501 | -7.4% | 0.3% | |
+| apollo11 | par4 | 4.968 | 3.286 | -33.9% | 0.7% | 9.5% (base 14.2%) | 6.959 | 4.289 | -38.4% | 1.4% | 8.5% (base 13.2%) |
+
+The identity checks passed in both runs: MODE `dump`, `profdump` in `seq` and
+`profdump` in `par4` equal the base's byte for byte on all three pages, and
+the ledger permits the seven hashing loops.
+
+**The change build also offers the seven calls (A).** In both runs the
+base's ledger omits the offers of the seven value groups' calls in
+`intern_values` (static work 33,183 to 108,847, below the call grain's
+150,000), while the change's ledger omits none of them and still permits
+every adjacent pair of the twelve calls, so the change build publishes the
+seven per-table offers: candidate A. The job printed this in both runs ("the
+two builds omit different call offers" and the seven names); the text first
+written here for run 1 said the call-grain lines were unchanged and A was
+not mixed in, which was wrong. The ledger prints only omitted offers, so the
+change's static work for the seven calls is not printed; it is at least
+150,000. The likely cause is the added hashing loop, whose body the static
+estimate charges 16 times (an inference from the call grain's pricing, not
+read from the ledger). Hence the four-worker figures above measure B and the
+seven offers together, while the sequential figures measure B alone, since a
+sequential build overlaps nothing.
+
+Verdicts, by the falsifier fixed above, read with that correction:
+
+- *B's sequential clause passes.* B alone is not slower in `seq` but 6.3 to
+  6.9 percent (run 1) and 7.4 to 7.5 percent (run 2) faster, beyond the
+  twin's spread (at most 1.2 percent). These runs do not explain the gain;
+  the prediction expected no change.
+- *B's four-worker clause is not yet tested.* The change build is 33.8 to
+  39.7 percent (run 1) and 36.1 to 38.4 percent (run 2) faster than the base
+  at `par4`, far beyond the twin's spread, but that build has the seven
+  offers as well. "Attributing the four-worker gain" below separates the
+  two; B's four-worker clause is judged there, on B alone.
+- *The 15 percent rule straddles its bound on the hosted runners.* With B
+  and the seven offers together, interning is 13.9 and 13.4 percent of
+  ecma262's four-worker `total` in the two runs, within the bound, and 15.4
+  and 14.8 percent of html5's, one run on each side of it. The hosted runner
+  cannot settle html5; the board item's completion condition measures on the
+  14900K, which decides it.
+- *The prediction cannot be judged from these runs.* It was for B alone
+  (about 24 and 15 ms off ecma262's and html5's `par4` interning on the
+  scale of "Step timing"), and the four-worker figures include the seven
+  offers; the attribution run tests it.
+- *Not yet done.* The 14900K measurement, and E1's per-edit costs, since a
+  restyle interns through the same `intern_values` with only the restyled
+  nodes.
+
+**The identity check, strengthened.** The dumps compare computed values, so
+a wrong or misaligned hash that only loses sharing (an equal value probing
+elsewhere and being appended again) would leave them identical. `run.sh
+compare` and `run.sh identity` therefore also require MODE `all`'s distinct
+counts, the size of every table, to equal the base's, sequentially and at
+four workers. That is enough for the identifiers too: a table gives each
+value the identifier of the first equal entry it finds, comparing by
+equality (`same_*_group`, unchanged), so a hash can only cause a value to be
+appended again, which raises the count, never to take a wrong identifier;
+with equal counts every value is appended exactly when it first occurs, in
+the same order, so the identifiers equal the base's. The control
+`wrong-box-hash.patch` seeds each box value's hash with its position, which
+keeps every computed value right and loses the box group's sharing; the job
+requires the identity check to exit with 1 on it, with identical dumps on all
+three pages and differing distinct counts on ecma262 and html5.
+
+**Index growth.** Growing a table's index (`index_*_group`) hashes each held
+entry again inside its sequential placement loop, the shape B removes from
+the probe loop; no true dependency orders those hashes. It is left as it is
+for now because it does little work: a full build passes an empty table, so
+nothing is placed; a restyle grows the index only when the held entries plus
+the restyled nodes pass half its capacity, which the first full build set to
+at least that build's node count, and each growth doubles the capacity; and a
+growth hashes the held entries, one per distinct value, not one per node.
+Neither run above exercises it. It is recorded on the board's backlog (item sg-intern-index-growth-hash), to be
+reopened when a per-edit profile (E1) shows index growth in interning's
+cost, or when documents built up by script from a small first build land.
+
+### Attributing the four-worker gain
+
+Written before the run.
+
+**The question.** How much of the change's four-worker interning gain is B,
+hashing outside the chain, and how much is the seven value groups' call
+offers, which the change build publishes and the base build omits?
+
+**Why a build, not a compiler option.** `whitefootc` at the pin
+(`wf-d837678c6905`) controls the call grain only by `--par-call-grain
+auto|off`; `off` publishes every permitted offer in the program, which
+changes far more than these seven calls, and no option keeps chosen offers
+omitted or sets the 150,000 threshold. The sequential build isolates B but at
+one worker, where B's hashing loops run sequentially, so it does not answer
+the four-worker question.
+
+**The B-only build.** This revision with `intern-tables-in-order.patch`, an
+attribution experiment that no product build contains: the calls of the size
+through background groups and `canon_sets` in `intern_values` each go
+through a wrapper that also reads the identifiers the call before it wrote.
+Each adjacent pair of those eight calls then conflicts, so [PAR-1] permits
+none of them to overlap (a run of overlapping statements must be pairwise
+permitted), as in the base build, where the seven offers are omitted; the
+five other tables keep their offers in both builds, and every value group
+keeps B's hashing loop. The B-only build therefore differs from the base only
+by B, and from the change only by the seven offers. The job fails when the
+B-only build's ledger permits any pair naming a value group's call, and
+prints, for each value group, whether the base and the change offer its call.
+The B-only build must pass the same identity checks.
+
+**The comparison.** `run.sh compare` with `BONLY_DRIVERS` times the base,
+the change, the twin and the B-only build in rotating interleaved rounds, the
+B-only build at `par4` only. At `par4`:
+
+- B alone is the B-only build against the base;
+- the seven offers given B are the change against the B-only build;
+- their product is the change against the base;
+- a cross-check of B alone is the profiled copy's `intern.whole` of the
+  change against the base's: `intern_styles_profiled` runs all twelve table
+  calls one after another in every build, so it holds B without any
+  per-table overlap.
+
+**What it predicts.** From the per-table breakdown (the seven groups'
+hashing is 27.8 and 30.3 percent of sequential interning on ecma262 and
+html5 and scales 2.4x to `par4`) and B's sequential gain of about 7 percent,
+B alone should make `par4` interning 15 to 35 percent faster than the base on
+ecma262 and html5, and the seven offers the rest of the change's 34 to 40
+percent. The range is wide because the sequential gain is unexplained and the
+runners vary; it is exploratory, not a criterion.
+
+**The falsifier.** B is rejected, by "The falsifier" above, when the B-only
+build's `par4` interning is not below the base's by more than the twin's
+spread on ecma262 or html5 (its `seq` clause passed above). The 15 percent
+rule is reported for the B-only build and the change; when only the change
+meets it, the bound rests on the seven offers, which the call grain
+publishes for a reason unrelated to their runtime work (next paragraph).
+
+**Result (hosted runner, run 38325149283).** Four-worker style stage against
+the base:
+
+| page | change (both parts) | B alone | seven offers given B |
+| --- | --- | --- | --- |
+| ecma262 | -33.7% | -29.1% | -6.5% |
+| html5 | -34.4% | -29.4% | -7.2% |
+| apollo11 | -37.4% | -23.4% | -18.2% |
+
+Interning's share of the four-worker stage fell from 19.5, 21.0 and 12.8
+percent at the base to 14.8, 15.8 and 10.1 with B alone and 13.9, 14.9 and
+8.3 with the change. Sequentially the change was 4.8, 5.3 and 5.3 percent
+faster. Every build's dumps were byte-identical to the base's, and the build
+with a deliberately wrong hash (`wrong-box-hash.patch`) failed the identity
+check. B is kept: alone it is 29 percent below the base on both falsifier
+pages, where the twin's four-worker interning varied by about 5 percent
+between rounds. The 15 percent bound is met on all three pages by the change
+and by B alone on ecma262 and apollo11 but not html5 (15.8 percent), so on
+html5 it rests on the seven offers, as the falsifier paragraph anticipated.
+
+**What this means for the call-grain request.** The Whitefoot request that
+calls be offered by their runtime extent (board request
+sg-req-call-grain-runtime-extent) was filed because the seven calls lost
+their offers at the pin. With B they cross the static threshold, so the full
+build's interning no longer waits on that request at this pin. The request
+still stands, and Snowghost is still affected by it in three ways. The same
+seven calls, over the same N values, flip from omitted to offered because a
+loop was added inside them, not because their runtime work changed, which is
+the request's point. A restyle passes `intern_values` only the restyled
+nodes, often a handful, and the seven offers are now published there too,
+where publishing, stealing and joining an offer may cost more than the call
+(the request's acceptance case of a count of 3); E1's per-edit costs will
+show whether it does. And a later change that lowers their static estimate
+below 150,000 would make them sequential again with nothing in the source to
+say so. The observed omitted case stays the base revision b96ca9b; the
+change build is an observed flip.
+
 ## Owner rulings
 
 - **2026-10-02, Q64, the level cascade,** written in Chinese after the

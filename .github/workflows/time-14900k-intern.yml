@@ -1,0 +1,220 @@
+# Temporary, removed before the PR is ready: the first timing sample of the
+# interning change (research/investigations/style/DESIGN.md, "Hashing outside
+# the chain (B)") on the owner's i9-14900K runner, which time-14900k.yml
+# describes. One job, so the machine runs one thing at a time; whether the
+# runner is idle is checked and announced before dispatch, not here.
+#   1. interning compare: base revision, this revision, a twin of the base and
+#      the B-only build, in interleaved rounds at WF_WORKERS 1 and 4;
+#   2. matcher overhead: this revision against origin/main, with a twin;
+#   3. E1 per-edit cost of origin/research/m2-layout against this branch, every
+#      edit kind, sequential and --par at four workers, and the full stages.
+# Each step prints "step-seconds: N" when it ends. Rounds: ROUNDS_COMPARE and
+# RUNS_OVERHEAD for the style steps, E1's interleaved rounds for step 3 (1 means
+# three process runs per edit script, as time-14900k does).
+name: time-14900k-intern
+
+on:
+  workflow_dispatch:
+    inputs:
+      pages: {type: string, required: false, default: "ecma262 html5 apollo11"}
+      rounds: {type: string, required: false, default: "1"}
+
+concurrency:
+  group: time-14900k
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  PAGE_LIST: ${{ inputs.pages }}
+  ROUNDS: ${{ inputs.rounds }}
+  INTERN_BASE: b96ca9b3da2382a071bfbeff937de02f5f743381
+  EDIT_KINDS: word sentence colour fontsize rootfont block
+  EDIT_MODES: seq par4
+
+jobs:
+  time:
+    runs-on: [self-hosted, 14900k]
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup (compiler, pages, fonts, base builds)
+        run: |
+          set -euo pipefail
+          trap 'echo "step-seconds: $SECONDS"' EXIT
+          case "$ROUNDS" in ''|*[!0-9]*|0*) echo "rounds must be a positive integer, not '$ROUNDS'" >&2; exit 1 ;; esac
+          git fetch -q origin '+refs/heads/*:refs/remotes/origin/*'
+          git worktree prune
+          if grep -q '^toolchain-check' whitefoot-kit/whitefoot.mk; then make -s toolchain-check; fi
+          make -s compiler
+          mkdir -p build/research/style
+          { uname -srm; nproc; lscpu | sed -n 's/^\(Model name\|CPU(s)\|Thread(s) per core\|L2 cache\|L3 cache\):/\1:/p'; /usr/bin/clang --version | head -1; cat whitefoot.pin; git rev-parse HEAD; echo "intern base $INTERN_BASE"; echo "main $(git rev-parse origin/main)"; echo "m2-layout $(git rev-parse origin/research/m2-layout)"; } | tee build/research/style/machine.txt
+          # Pages: the fixtures the hosted job uses, hashes checked.
+          sh research/investigations/concurrency/run.sh fetch || true
+          tar -xzf tests/layout/fixtures/apollo11/inputs.tar.gz -C build/research/concurrency
+          sha256sum -c tests/layout/fixtures/apollo11/inputs.sha256
+          for file in ecma262.html ecma262-ecmarkup.css ecma262-print.css html5.html apollo11.html apollo11-modules.css apollo11-site.css; do
+            test -s "build/research/concurrency/$file"
+          done
+          rm -f build/research/concurrency/*.unverified
+          # Fonts, from the Ubuntu 24.04 packages without sudo (time-14900k.yml).
+          deps=$HOME/snowghost-deps
+          noble=$deps/apt-noble
+          mkdir -p "$noble/lists/partial" "$noble/cache/archives/partial" "$noble/sources.list.d" "$deps/fonts-noble"
+          fonts="fonts-dejavu-core fonts-dejavu-mono fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol"
+          printf 'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] http://archive.ubuntu.com/ubuntu noble main universe\ndeb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] http://archive.ubuntu.com/ubuntu noble-updates main universe\n' > "$noble/sources.list"
+          : > "$noble/status"
+          apt_noble="-o Dir::State::status=$noble/status -o Dir::Etc::SourceList=$noble/sources.list -o Dir::Etc::SourceParts=$noble/sources.list.d -o Dir::State::Lists=$noble/lists -o Dir::Cache=$noble/cache -o APT::Architecture=amd64"
+          apt-get $apt_noble update > /dev/null
+          ( cd "$deps/fonts-noble"
+            rm -f ./*.deb
+            for p in $fonts; do apt-get $apt_noble download "$p" > /dev/null; done
+            for d in ./*.deb; do dpkg -x "$d" "$deps/fonts-noble/root"; done )
+          make -s oracle-fonts FONT_ROOT="$deps/fonts-noble/root"
+          ls build/fonts | wc -l
+          # The base revision of the interning change, and origin/main, by the
+          # same compiler as this revision.
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          mkdir -p build/base-drivers build/main-drivers build/bonly-drivers
+          git worktree add -q --detach build/base "$INTERN_BASE"
+          diff whitefoot.pin build/base/whitefoot.pin
+          (cd build/base/renderer && "$wfc" --cache "$GITHUB_WORKSPACE/build/whitefoot-cache" --fragments function --graph modules.wfg --entry style_oracle -o "$GITHUB_WORKSPACE/build/base-drivers/style_oracle")
+          (cd build/base/renderer && "$wfc" --cache "$GITHUB_WORKSPACE/build/whitefoot-cache" --fragments function --par --par-ledger --graph modules.wfg --entry style_oracle -o "$GITHUB_WORKSPACE/build/base-drivers/style_oracle_par" > "$GITHUB_WORKSPACE/build/base-drivers/ledger.txt")
+          git worktree add -q --detach build/main origin/main
+          diff whitefoot.pin build/main/whitefoot.pin
+          (cd build/main/renderer && "$wfc" --cache "$GITHUB_WORKSPACE/build/whitefoot-cache" --fragments function --graph modules.wfg --entry style_oracle -o "$GITHUB_WORKSPACE/build/main-drivers/style_oracle")
+          (cd build/main/renderer && "$wfc" --cache "$GITHUB_WORKSPACE/build/whitefoot-cache" --fragments function --par --par-ledger --graph modules.wfg --entry style_oracle -o "$GITHUB_WORKSPACE/build/main-drivers/style_oracle_par" > "$GITHUB_WORKSPACE/build/main-drivers/ledger.txt")
+          # The B-only build: this revision with the seven calls kept apart.
+          git worktree add -q --detach build/bonly HEAD
+          git -C build/bonly apply "$GITHUB_WORKSPACE/research/investigations/style/intern-tables-in-order.patch"
+          (cd build/bonly/renderer && "$wfc" --cache "$GITHUB_WORKSPACE/build/whitefoot-cache" --fragments function --par --par-ledger --graph modules.wfg --entry style_oracle -o "$GITHUB_WORKSPACE/build/bonly-drivers/style_oracle_par" > "$GITHUB_WORKSPACE/build/bonly-drivers/ledger.txt")
+
+      - name: 1. Interning compare (base, change, twin, B-only; 1 and 4 workers)
+        run: |
+          set -o pipefail
+          trap 'echo "step-seconds: $SECONDS"' EXIT
+          ROUNDS_COMPARE="$ROUNDS" BASE_DRIVERS="$GITHUB_WORKSPACE/build/base-drivers" BONLY_DRIVERS="$GITHUB_WORKSPACE/build/bonly-drivers" sh research/investigations/style/run.sh compare $PAGE_LIST 2>&1 | tee build/research/style/compare-log.txt
+          { echo '```'; cat build/research/style/compare-table.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      # run.sh compare leaves this revision's style_oracle and style_oracle_par
+      # in build/, which overhead times against origin/main's drivers.
+      - name: 2. Matcher overhead (this revision against origin/main, with twin)
+        run: |
+          set -o pipefail
+          trap 'echo "step-seconds: $SECONDS"' EXIT
+          RUNS_OVERHEAD="$ROUNDS" BASE_DRIVERS="$GITHUB_WORKSPACE/build/main-drivers" sh research/investigations/style/run.sh overhead $PAGE_LIST 2>&1 | tee build/research/style/overhead.txt
+          { echo '```'; cat build/research/style/overhead.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 3a. E1 builds (origin/research/m2-layout and this branch) and edit scripts
+        run: |
+          set -euo pipefail
+          trap 'echo "step-seconds: $SECONDS"' EXIT
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          mkdir -p build/drivers results
+          for pair in base=origin/research/m2-layout change=HEAD; do
+            name=${pair%%=*} ref=${pair#*=}
+            tree=build/trees/$name
+            rm -rf "$tree"; git worktree prune
+            git worktree add -q --detach "$tree" "$ref"
+            (cd "$tree" && git submodule update -q --init whitefoot-kit design/skill 2>/dev/null || git submodule update -q --init)
+            diff whitefoot.pin "$tree/whitefoot.pin"
+            (cd "$tree/renderer" && "$wfc" --cache "$HOME/snowghost-data/wf-cache" --fragments function --graph modules.wfg --entry layout_oracle -o "$GITHUB_WORKSPACE/build/drivers/$name-seq")
+            (cd "$tree/renderer" && "$wfc" --cache "$HOME/snowghost-data/wf-cache" --fragments function --par --graph modules.wfg --entry layout_oracle -o "$GITHUB_WORKSPACE/build/drivers/$name-par")
+            # The drivers the full-stage timing (BUILT=1) reads from the tree.
+            mkdir -p "$tree/build"
+            cp "build/drivers/$name-seq" "$tree/build/layout_oracle"
+            cp "build/drivers/$name-par" "$tree/build/layout_oracle_par"
+            (cd "$tree/renderer" && "$wfc" --cache "$HOME/snowghost-data/wf-cache" --fragments function --graph modules.wfg --entry style_oracle -o "../build/style_oracle")
+            (cd "$tree/renderer" && "$wfc" --cache "$HOME/snowghost-data/wf-cache" --fragments function --par --graph modules.wfg --entry style_oracle -o "../build/style_oracle_par")
+            echo "$name $ref $(git -C "$tree" rev-parse --short HEAD) seq $(sha256sum < build/drivers/$name-seq | cut -c1-16) par $(sha256sum < build/drivers/$name-par | cut -c1-16)"
+          done
+          cp build/drivers/base-seq build/layout_oracle_seq
+          sh research/investigations/incremental-layout/run.sh prepare $PAGE_LIST
+          wc -l build/x5/scripts/*.edits
+
+      - name: 3b. E1 per-edit cost, before and after (every edit kind)
+        run: |
+          set -euo pipefail
+          trap 'echo "step-seconds: $SECONDS"' EXIT
+          mkdir -p results
+          taskset -cp $$ > results/scheduling.txt
+          time_one() {
+            cp "build/drivers/$1-seq" build/layout_oracle_seq
+            cp "build/drivers/$1-par" build/layout_oracle_par
+            rm -rf build/x5/time
+            if [ "$2" = par4 ]; then
+              ALONE=1 WF_WORKERS=4 sh research/investigations/incremental-layout/run.sh time par "$3" "$4" "$5" | tee "$6"
+            else
+              ALONE=1 sh research/investigations/incremental-layout/run.sh time seq "$3" "$4" "$5" | tee "$6"
+            fi
+            mkdir -p "results/raw/$7" && cp build/x5/time/* "results/raw/$7/"
+          }
+          for mode in $EDIT_MODES; do
+            for page in $PAGE_LIST; do
+              for kind in $EDIT_KINDS; do
+                start=$SECONDS
+                if [ "$ROUNDS" -gt 1 ]; then
+                  for round in $(seq "$ROUNDS"); do
+                    for name in base change; do
+                      time_one "$name" "$mode" "$page" "$kind" 1 "results/$name-$mode-$page-$kind-$round.txt" "$name-$mode-round$round"
+                    done
+                  done
+                else
+                  for name in base change; do
+                    time_one "$name" "$mode" "$page" "$kind" 3 "results/$name-$mode-$page-$kind.txt" "$name-$mode"
+                  done
+                fi
+                echo "e1-seconds: $mode $page $kind $((SECONDS - start))"
+              done
+            done
+          done
+
+      - name: 3c. E1 full style and layout stages, before and after
+        run: |
+          set -euo pipefail
+          trap 'echo "step-seconds: $SECONDS"' EXIT
+          mkdir -p results
+          for name in base change; do
+            tree=build/trees/$name
+            mkdir -p "$tree/build/research" && rm -rf "$tree/build/research/concurrency" "$tree/build/fonts"
+            cp -R build/research/concurrency "$tree/build/research/"
+            cp -R build/fonts "$tree/build/fonts"
+            # A tree from before BUILT existed would rebuild its drivers.
+            cp research/investigations/style/run.sh "$tree/research/investigations/style/run.sh"
+            cp research/investigations/layout/run.sh "$tree/research/investigations/layout/run.sh"
+          done
+          runs=5
+          if [ "$ROUNDS" -gt 1 ]; then runs=1; fi
+          for round in $(seq "$ROUNDS"); do
+            for name in base change; do
+              tree=build/trees/$name
+              (cd "$tree" && BUILT=1 RUNS=$runs WORKERS=4 sh research/investigations/style/run.sh time) | tee "results/full-style-$name-$round.txt"
+              (cd "$tree" && BUILT=1 RUNS=$runs WORKERS=4 sh research/investigations/layout/run.sh time) | tee "results/full-layout-$name-$round.txt"
+            done
+          done
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: time-14900k-intern-${{ github.run_id }}
+          path: |
+            results/
+            build/research/style/machine.txt
+            build/research/style/compare-*.txt
+            build/research/style/overhead.txt
+            build/research/style/*-all-*.txt
+            build/base-drivers/ledger.txt
+            build/main-drivers/ledger.txt
+            build/bonly-drivers/ledger.txt
