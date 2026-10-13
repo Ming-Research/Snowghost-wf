@@ -1,0 +1,144 @@
+# TEMPORARY: collects page-by-page parity evidence for board item
+# sg-parity-pagewise. Move this to a permanent check or remove it when the
+# item closes.
+name: parity-pagewise
+
+on:
+  workflow_dispatch:
+    inputs:
+      store_ref:
+        type: string
+        default: main
+        description: "Snowghost-testset ref to check out"
+
+permissions:
+  contents: read
+
+jobs:
+  parity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Checkout the stored test set
+        uses: actions/checkout@v4
+        with:
+          repository: Ming-Research/Snowghost-testset
+          ref: ${{ inputs.store_ref || 'main' }}
+          token: ${{ secrets.TESTSET_READ_TOKEN }}
+          path: build/testset-store
+          persist-credentials: false
+
+      - name: Verify the stored set
+        run: |
+          set -euo pipefail
+          store=build/testset-store
+          echo "renderer revision: $(git rev-parse HEAD)"
+          echo "store commit: $(git -C "$store" rev-parse HEAD)"
+          cd "$store"
+          sha256sum --strict --quiet -c SHA256SUMS
+          find . -path ./.git -prune -o -type f ! -name SHA256SUMS -print | sed 's|^\./||' | LC_ALL=C sort > "$RUNNER_TEMP/store-files"
+          awk '{ sub(/^[^ ]+ [ *]/, ""); sub(/^\.\//, ""); print }' SHA256SUMS | LC_ALL=C sort > "$RUNNER_TEMP/listed-files"
+          diff "$RUNNER_TEMP/listed-files" "$RUNNER_TEMP/store-files" || { echo "SHA256SUMS does not list exactly the stored files"; exit 1; }
+          # Names become output directory components. Reject unsafe or repeated
+          # names before any page can overwrite another page's evidence.
+          awk -F'\t' '
+            NR == 1 {
+              expected = "name\turl\tfetched_at\tstatus\thtml_sha256\thtml_bytes\tdump_sha256\tfailure_reason\tfinal_url\thttp_status\telements\tshadow_hosts\tdump_repeat\tnotes"
+              if ($0 != expected) { print "manifest.tsv: unexpected header"; bad = 1 }
+              next
+            }
+            {
+              if (NF != 14 || $1 !~ /^[A-Za-z0-9][A-Za-z0-9_-]*$/ || seen[$1]++ || ($4 != "ok" && $4 != "failed")) {
+                print "manifest.tsv: invalid or duplicate page row " NR
+                bad = 1
+              }
+            }
+            END {
+              if (NR < 2) { print "manifest.tsv: no page rows"; bad = 1 }
+              exit bad
+            }
+          ' manifest.tsv
+          ok=0
+          bad=0
+          while read -r name html dump; do
+            ok=$((ok + 1))
+            [ "$(sha256sum "$name/page.html" | cut -d' ' -f1)" = "$html" ] || { echo "$name: page.html differs from the manifest's html_sha256"; bad=1; }
+            [ "$(sha256sum "$name/layout.chromium.tsv" | cut -d' ' -f1)" = "$dump" ] || { echo "$name: layout.chromium.tsv differs from the manifest's dump_sha256"; bad=1; }
+          done < <(awk -F'\t' 'NR > 1 && $4 == "ok" { print $1, $5, $7 }' manifest.tsv)
+          [ "$ok" -gt 0 ] || { echo "manifest.tsv lists no ok page"; exit 1; }
+          [ "$bad" = 0 ] || exit 1
+          echo "SHA256SUMS and manifest hashes verified for $(wc -l < "$RUNNER_TEMP/store-files") files, $ok ok pages"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The same font packages and compiler setup as q139. The compare command
+      # reads stored dumps using Node built-ins; it needs no reference browser.
+      - name: Toolchain and fonts
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld time fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          make -s toolchain compiler oracle-fonts
+
+      - name: Build the sequential layout driver
+        run: |
+          set -euo pipefail
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          time (cd renderer && "$wfc" --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_seq)
+
+      # Parity failures are evidence, not job gates. Every manifest data row is
+      # attempted, including failed snapshots whose missing inputs are errors.
+      - name: Collect page-by-page parity
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          store=build/testset-store
+          out=build/parity-pagewise
+          mkdir -p "$out"
+          printf 'name\tsnowghost_exit\tseconds\tdump_bytes\tcompare_exit\tblock_level_boxes\tinline_level_boxes\ttext_nodes\n' > "$out/summary.tsv"
+          while IFS= read -r name; do
+            page_out="$out/$name"
+            mkdir -p "$page_out"
+            # Keep PAGE relative: the driver's file reader resolves it from cwd.
+            if /usr/bin/time -q -f '%e' -o "$page_out/seconds.txt" \
+                timeout --kill-after=5s 300s build/layout_oracle_seq dump 1 "$store/$name/page.html" renderer/style/ua.css \
+                > "$page_out/snowghost.tsv" 2> "$page_out/dump.stderr"; then
+              snowghost_exit=0
+            else
+              snowghost_exit=$?
+            fi
+            # Compare even a crashed, timed-out, missing-input or empty dump.
+            if node tests/layout/layout_oracle.mjs compare "$store/$name/layout.chromium.tsv" "$page_out/snowghost.tsv" \
+                > "$page_out/compare.stdout" 2> "$page_out/compare.stderr"; then
+              compare_exit=0
+            else
+              compare_exit=$?
+            fi
+            seconds=$(cat "$page_out/seconds.txt")
+            seconds=${seconds:-NA}
+            dump_bytes=$(wc -c < "$page_out/snowghost.tsv")
+            counts=$(awk '
+              /^block-level boxes: [0-9]+\/[0-9]+ / { blocks = $3 }
+              /^inline-level boxes: [0-9]+\/[0-9]+ / { inlines = $3 }
+              /^text nodes: [0-9]+\/[0-9]+ / { texts = $3 }
+              END { printf "%s\t%s\t%s", blocks == "" ? "NA" : blocks, inlines == "" ? "NA" : inlines, texts == "" ? "NA" : texts }
+            ' "$page_out/compare.stdout")
+            printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$snowghost_exit" "$seconds" "$dump_bytes" "$compare_exit" "$counts" >> "$out/summary.tsv"
+          done < <(awk -F'\t' 'NR > 1 { print $1 }' "$store/manifest.tsv")
+          cat "$out/summary.tsv"
+
+      - name: Upload page-by-page parity evidence
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-pagewise
+          path: build/parity-pagewise/
+          retention-days: 14
+          if-no-files-found: ignore
