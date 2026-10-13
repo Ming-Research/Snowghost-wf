@@ -1,0 +1,187 @@
+# TEMPORARY: checks and extends the stored web-app test set
+# (research/investigations/testset); removed before the branch research/testset
+# is ready.
+#
+# The snapshots live in the private repository Ming-Research/Snowghost-testset
+# (the snapshot tool's output directory, one NAME/ per page, manifest.tsv,
+# SHA256SUMS and README.md at the root). The Actions secret TESTSET_READ_TOKEN is
+# a read-only token for it. Two modes, chosen by `mode` (a push runs verify-store):
+#
+# - verify-store: checks out the store, verifies SHA256SUMS and the manifest's
+#   hashes, and dumps every stored page again with the Chromium and fonts below;
+#   each new dump must be byte-identical to the stored layout.chromium.tsv, which
+#   shows the stored baselines reproduce in CI.
+# - snapshot: snapshots the live pages afresh (tests/testset/pages.txt, or the
+#   pages named by `pages`), uploads them as an artifact, and compares the new
+#   manifest with the stored set (`compare_store`, default on) and, when
+#   `previous_run` names an earlier run, with that run's artifact. A live page
+#   changes between runs, so a changed html in these comparisons is expected;
+#   the stability check reads the verdict column of `compare`.
+name: testset-snapshot
+
+on:
+  push:
+    branches: [research/testset]
+  workflow_dispatch:
+    inputs:
+      mode: {type: choice, default: verify-store, options: [verify-store, snapshot], description: "verify-store re-dumps the stored set; snapshot takes fresh snapshots of the live pages"}
+      store_ref: {type: string, required: false, description: "Snowghost-testset ref to check out; empty means main"}
+      pages: {type: string, required: false, description: "snapshot mode: comma-separated page names; empty means every page"}
+      shadow: {type: string, required: false, description: "snapshot mode: flatten (default) or declarative"}
+      compare_store: {type: boolean, default: true, description: "snapshot mode: compare the new manifest with the stored set"}
+      previous_run: {type: string, required: false, description: "snapshot mode: id of an earlier run to compare dumps against"}
+
+concurrency:
+  group: testset-snapshot-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  testset:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      MODE: ${{ inputs.mode || 'verify-store' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout the stored test set
+        uses: actions/checkout@v4
+        with:
+          repository: Ming-Research/Snowghost-testset
+          ref: ${{ inputs.store_ref || 'main' }}
+          token: ${{ secrets.TESTSET_READ_TOKEN }}
+          path: build/testset-store
+          persist-credentials: false
+
+      # Fails when a file differs from SHA256SUMS or is missing, and when the
+      # store holds a file SHA256SUMS does not list or lists one that is absent.
+      # The manifest's own hashes must also match the files they name, and the
+      # store must hold at least one ok page.
+      - name: Verify the stored set
+        run: |
+          set -euo pipefail
+          store=build/testset-store
+          echo "store commit: $(git -C "$store" rev-parse HEAD)"
+          cd "$store"
+          sha256sum --strict --quiet -c SHA256SUMS
+          find . -path ./.git -prune -o -type f ! -name SHA256SUMS -print | sed 's|^\./||' | LC_ALL=C sort > "$RUNNER_TEMP/store-files"
+          awk '{ sub(/^[^ ]+ [ *]/, ""); sub(/^\.\//, ""); print }' SHA256SUMS | LC_ALL=C sort > "$RUNNER_TEMP/listed-files"
+          diff "$RUNNER_TEMP/listed-files" "$RUNNER_TEMP/store-files" || { echo "SHA256SUMS does not list exactly the stored files"; exit 1; }
+          ok=0
+          bad=0
+          while read -r name html dump; do
+            ok=$((ok + 1))
+            [ "$(sha256sum "$name/page.html" | cut -d' ' -f1)" = "$html" ] || { echo "$name: page.html differs from the manifest's html_sha256"; bad=1; }
+            [ "$(sha256sum "$name/layout.chromium.tsv" | cut -d' ' -f1)" = "$dump" ] || { echo "$name: layout.chromium.tsv differs from the manifest's dump_sha256"; bad=1; }
+          done < <(awk -F'\t' 'NR > 1 && $4 == "ok" { print $1, $5, $7 }' manifest.tsv)
+          [ "$ok" -gt 0 ] || { echo "manifest.tsv lists no ok page"; exit 1; }
+          [ "$bad" = 0 ] || exit 1
+          echo "SHA256SUMS and manifest hashes verified for $(wc -l < "$RUNNER_TEMP/store-files") files, $ok ok pages"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The font packages the 14900K timing runs use
+      # (.github/workflows/time-14900k.yml), so Chromium lays text out with the
+      # faces the oracles' other runs use.
+      - name: Fonts
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq fonts-dejavu-core fonts-dejavu-mono fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          fc-cache -f
+
+      # Playwright 1.56.0 is the version whose Chromium (revision 1194) the
+      # oracles' default paths name.
+      - name: Playwright and Chromium
+        run: |
+          set -euo pipefail
+          pw=$RUNNER_TEMP/pw
+          mkdir -p "$pw"
+          (cd "$pw" && npm init -y > /dev/null && npm install --silent playwright@1.56.0 && npx playwright install --with-deps chromium)
+          chrome=$(ls -d "$HOME"/.cache/ms-playwright/chromium-1194/chrome-linux*/chrome)
+          echo "PLAYWRIGHT=$pw/node_modules/playwright" >> "$GITHUB_ENV"
+          echo "CHROMIUM=$chrome" >> "$GITHUB_ENV"
+          "$chrome" --version
+
+      # Dumps the stored page.html of every ok page again, with the command the
+      # snapshot tool used, and requires the bytes of the stored
+      # layout.chromium.tsv. A dump that differs in one byte, a page whose dump
+      # fails, or an empty dump (the stored dump is not empty) fails the step.
+      - name: Re-dump the stored pages
+        if: env.MODE == 'verify-store'
+        run: |
+          set -euo pipefail
+          store=$PWD/build/testset-store
+          out=$PWD/build/testset-redump
+          mkdir -p "$out"
+          same=0
+          different=0
+          while read -r name; do
+            mkdir -p "$out/$name"
+            if node tests/layout/layout_oracle.mjs dump "$store/$name/page.html" > "$out/$name/layout.chromium.tsv" 2> "$out/$name/dump.log" \
+               && [ -s "$out/$name/layout.chromium.tsv" ] && cmp -s "$store/$name/layout.chromium.tsv" "$out/$name/layout.chromium.tsv"; then
+              echo "$name: same"
+              same=$((same + 1))
+            else
+              echo "$name: DIFFERENT"
+              different=$((different + 1))
+              diff <(cut -c1-200 "$store/$name/layout.chromium.tsv") <(cut -c1-200 "$out/$name/layout.chromium.tsv") | head -10 || true
+              tail -3 "$out/$name/dump.log" || true
+            fi
+          done < <(awk -F'\t' 'NR > 1 && $4 == "ok" { print $1 }' "$store/manifest.tsv")
+          echo "$same dumps same, $different DIFFERENT"
+          [ "$different" = 0 ] && [ "$same" -gt 0 ]
+
+      - name: Upload the new dumps
+        if: failure() && env.MODE == 'verify-store'
+        uses: actions/upload-artifact@v4
+        with:
+          name: testset-redump
+          path: build/testset-redump
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Snapshot
+        if: env.MODE == 'snapshot'
+        env:
+          PAGES: ${{ inputs.pages }}
+          SHADOW: ${{ inputs.shadow }}
+        run: |
+          set -euo pipefail
+          args=""
+          if [ -n "$PAGES" ]; then args="$args --only $PAGES"; fi
+          if [ -n "$SHADOW" ]; then args="$args --shadow $SHADOW"; fi
+          # shellcheck disable=SC2086
+          node tests/testset/snapshot.mjs snapshot tests/testset/pages.txt build/testset $args
+          echo "--- manifest"
+          cut -f1,4,6,8,10,11,12,13 build/testset/manifest.tsv
+
+      - name: Upload the snapshots
+        if: always() && env.MODE == 'snapshot'
+        uses: actions/upload-artifact@v4
+        with:
+          name: testset-snapshot
+          path: build/testset
+          retention-days: 30
+          if-no-files-found: error
+
+      # Pages of the store that this run did not snapshot (--only) are reported
+      # as "only in old" and do not fail the step.
+      - name: Compare with the stored set
+        if: ${{ !cancelled() && env.MODE == 'snapshot' && inputs.compare_store }}
+        run: node tests/testset/snapshot.mjs compare build/testset-store/manifest.tsv build/testset/manifest.tsv
+
+      - name: Compare with the previous run
+        if: ${{ !cancelled() && env.MODE == 'snapshot' && inputs.previous_run != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS: ${{ inputs.previous_run }}
+        run: |
+          set -euo pipefail
+          gh run download "$PREVIOUS" --name testset-snapshot --dir build/testset-previous
+          node tests/testset/snapshot.mjs compare build/testset-previous/manifest.tsv build/testset/manifest.tsv

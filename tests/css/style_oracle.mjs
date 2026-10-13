@@ -6,7 +6,10 @@
 //
 // dump loads PAGE.html in Chromium headless with scripts disabled, a
 // 1280x720 viewport, device scale factor 1, media type screen and
-// prefers-color-scheme light. The page is served at the fixed URL
+// prefers-color-scheme light. After the load every CSS animation and
+// transition is cancelled and SMIL animation is switched off
+// (cancelAnimations), so the values are the static
+// style that Snowghost computes. The page is served at the fixed URL
 // http://snowghost.test/page/index.html. A request whose URL ends with one of
 // the given suffixes is answered from the mapped local file as text/css (the
 // longest matching suffix wins; a mapping splits at its last =, so a
@@ -176,6 +179,100 @@ function writeOut(text) {
   });
 }
 
+// ---- static style ----
+
+// Cancels every CSS animation and transition and switches off SMIL, so the
+// dump reports the static style: the computed values and boxes with no
+// animation applied.
+// Snowghost computes the static style and runs no animations, so this is the
+// state Chromium has to report to be the oracle of it. Without the cancel the
+// dump reads whatever frame an animation has reached when each query runs:
+// a page-load animation such as `slide-up` (translateY from 100px to 0 over
+// 1.2 s) leaves each box it moves a fraction of a pixel off its static
+// position, and the fraction differs between two dumps of one page. A
+// cancelled animation applies no effect, so the element's own declarations
+// remain, with `animation-fill-mode` effects gone too.
+// Cancelling can itself start a transition (an animation's value to the
+// static one, when the property has a `transition`), so the cancel is
+// repeated until no animation is left; a page that still has one after
+// MAX_PASSES is reported on standard error and dumped as it is.
+//
+// SMIL animations (animate, animateMotion, animateTransform, animateColor and
+// set inside an <svg>) are not CSS animations, so getAnimations() does not
+// list them and they run on the SVG time container instead: an animateMotion
+// on a <path> moves it along its motion path as the seconds pass, which
+// changes the rectangles of the <path> and of its enclosing <g> by fractions
+// of a pixel from one dump to the next (miro.com's connector decorations).
+// The static state is the document without them: by the SVG animation model
+// (SVG 1.1 section 19.2.1, SMIL Animation 3.6.8) an animation that is not
+// active contributes nothing, and the element shows its base value. So every
+// animation element gets begin="indefinite", which never begins it without a
+// script call (and scripts are disabled), and the elements stay in the DOM,
+// so the element numbering of the dump is unchanged. Setting the attribute is
+// not enough: an animation whose interval has begun may keep that interval
+// when its begin list changes, and a seek of the time container to 0 may
+// reset the animations only when it moves backwards, so whether the first
+// frame stayed (animateMotion puts the path at the start of its motion path)
+// seems to have depended on whether any time had elapsed since the load: two
+// dumps of one stored page, made on two runners, differed (miro.com's
+// connector decorations; the cause is inferred from that, not observed).
+// So each animation element is also taken out of its parent and put back at
+// the same place, which makes it resolve its timing afresh, now with the new begin and
+// therefore no interval; and, for each SVG root that owns an animation,
+// pauseAnimations(), setCurrentTime(1) and setCurrentTime(0) sample the time
+// container and freeze it at time 0 by a backward seek, where nothing is
+// active. Seeking to 0 alone would not give the base value: an animation with
+// the default begin is active at 0 and contributes its first frame. The
+// animation elements that still report a current interval (getStartTime()
+// does not throw) are counted and reported on standard error.
+// A page without SMIL elements is untouched, so the oracle's output for it
+// is unchanged.
+// tests/css/style_oracle.mjs and tests/layout/layout_oracle.mjs carry the same
+// function, because the two dumps of a page must see one state.
+const MAX_PASSES = 8;
+
+async function cancelAnimations(page) {
+  return page.evaluate((maxPasses) => {
+    // SMIL: see the comment above. getAnimations() does not list SMIL
+    // animations, so they are switched off here, before the CSS pass.
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+    const smil = [...document.querySelectorAll('animate, animateMotion, animateTransform, animateColor, set')]
+      .filter((element) => element.namespaceURI === SVG_NS);
+    const owners = new Set(smil.map((element) => element.ownerSVGElement).filter(Boolean));
+    for (const element of smil) {
+      element.setAttribute('begin', 'indefinite');
+      const parent = element.parentNode;
+      const next = element.nextSibling;
+      element.remove();
+      parent.insertBefore(element, next);
+    }
+    for (const svg of owners) {
+      svg.pauseAnimations();
+      svg.setCurrentTime(1);
+      svg.setCurrentTime(0);
+    }
+    const smilActive = smil.filter((element) => {
+      if (typeof element.getStartTime !== 'function') return false;
+      try {
+        element.getStartTime();
+        return true;
+      } catch {
+        return false;
+      }
+    }).length;
+    void document.documentElement.getBoundingClientRect();
+    let cancelled = 0;
+    for (let pass = 0; pass < maxPasses; pass++) {
+      const running = document.getAnimations();
+      if (running.length === 0) return { cancelled, left: 0, smilActive };
+      for (const animation of running) animation.cancel();
+      cancelled += running.length;
+      void document.documentElement.getBoundingClientRect();
+    }
+    return { cancelled, left: document.getAnimations().length, smilActive };
+  }, MAX_PASSES);
+}
+
 // ---- dump ----
 
 async function dump(pagePath, mappings) {
@@ -218,6 +315,9 @@ async function dump(pagePath, mappings) {
       return route.abort();
     });
     await page.goto(PAGE_URL, { waitUntil: 'load' });
+    const animations = await cancelAnimations(page);
+    if (animations.left > 0) process.stderr.write(`${animations.left} animations left after ${MAX_PASSES} cancel passes\n`);
+    if (animations.smilActive > 0) process.stderr.write(`${animations.smilActive} SMIL animations still have a current interval\n`);
 
     const count = await page.evaluate(() => {
       globalThis.__styleOracleElements = document.querySelectorAll('*');
@@ -272,7 +372,7 @@ async function dump(pagePath, mappings) {
     const seconds = Number(process.hrtime.bigint() - started) / 1e9;
     const kinds = [...refused].map(([type, n]) => `${n} ${type}`).join(', ');
     process.stderr.write(`${basename(pagePath)}: ${count} elements and ${pseudos} pseudo-elements in ${seconds.toFixed(2)} s` +
-      `; refused ${kinds || 'no requests'}\n`);
+      `; refused ${kinds || 'no requests'}; cancelled ${animations.cancelled} animations\n`);
   } finally {
     await browser.close();
   }
