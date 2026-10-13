@@ -3057,7 +3057,7 @@ fn lay_out_flow(context: &Context, events: &[Flow], styles: &Styles, document: &
 }
 
 fn paragraph_intrinsic(paragraph: &Paragraph, children: &[Context], styles: &Styles, fonts: &FontSet, picks: &FontPicks, minimum: Bool) -> (width: i32, first: i32, anchored: i32) reads(paragraph), reads(children), reads(styles), reads(fonts), reads(picks) {
-  doc "A paragraph's min-content width (its widest unbreakable run between allowed or mandatory break opportunities) or max-content width (its widest run between mandatory breaks), with the first line's indent, its inline boxes' margins, borders and paddings, and its atomic inlines at the margin-box widths their own intrinsic sizes give, except that the icon before an img's alt text floats in the reference, so it adds nothing to the min-content width of its line and only sets a least for it (research/investigations/layout/runs/alt-icon-min-content.txt); a preserved tab advances to its next tab stop from where it falls in its run, the run taken as a line. Each run is measured as the reference's line breaker measures a line (next_line): every item on it (Measure's items) counts as its width rounded up to a whole layout unit, so that content laid out in its own max-content width fits. For the max-content width, each float anchored in the paragraph (Mark's Anchor) adds its max-content margin box to the run between mandatory breaks it sits in, not to the widest one (research/investigations/layout/runs/float-intrinsic.txt). Also returns the first such run's width with its floats, which the floats placed before the paragraph's first piece join (intrinsic_flow), and the total of the anchored floats' widths; both are 0's meaning for the min-content width.";
+  doc "A paragraph's min-content width (its widest unbreakable run between allowed or mandatory break opportunities) or max-content width (its widest run between mandatory breaks), with the first line's indent, its inline boxes' margins, borders and paddings, and its atomic inlines at the margin-box widths their own intrinsic sizes give, except that the icon before an img's alt text floats in the reference, so it adds nothing to the min-content width of its line and only sets a least for it (research/investigations/layout/runs/alt-icon-min-content.txt); the spaces and tabs that end a run at an allowed break, a collapsible space or a space or tab white-space: pre-wrap keeps, hang and add nothing (CSS Text 3 4.1.3: they hang unconditionally there, and unconditionally hanging content adds nothing to intrinsic sizes), and so do the collapsible spaces at the paragraph's end, while those white-space: pre-wrap keeps at the paragraph's end or before a forced break count, as the reference counts them (they hang only conditionally there; research/investigations/layout/runs/line-fill.txt, observation 9), the forced break's own scalar ending their run; a preserved tab advances to its next tab stop from where it falls in its run, measured from 0 after each break that ends a run, because each such run is a line of its own when the box is that narrow (min-content) and starts after a forced break (max-content) (research/investigations/layout/runs/line-fill.txt). Each run is measured as the reference's line breaker measures a line (next_line): every item on it (Measure's items) counts as its width rounded up to a whole layout unit, so that content laid out in its own max-content width fits. For the max-content width, each float anchored in the paragraph (Mark's Anchor) adds its max-content margin box to the run between mandatory breaks it sits in, not to the widest one (research/investigations/layout/runs/float-intrinsic.txt). Also returns the first such run's width with its floats, which the floats placed before the paragraph's first piece join (intrinsic_flow), and the total of the anchored floats' widths; both are 0's meaning for the min-content width. Hanging composes with that measure: a run a break cuts counts its items up to its last scalar that does not hang, and the paragraph's last run up to its last scalar that is not a collapsible space, the item holding that scalar rounded up whole.";
   let count = paragraph^.text.inner.len;
   let sizes = measure(paragraph: paragraph, children: children, styles: styles, fonts: fonts, picks: picks, basis: 0_i32);
   let positions = count +sat 1_u64;
@@ -3137,6 +3137,7 @@ fn paragraph_intrinsic(paragraph: &Paragraph, children: &[Context], styles: &Sty
   let settled = indent;
   let item = 0.0_f32;
   let shown = indent;
+  let kept = indent;
   let line_floats = 0_i32;
   for (j in 0_u64..count) {
     let kind = break_at(paragraph: paragraph, sizes: &sizes, at: j);
@@ -3160,6 +3161,7 @@ fn paragraph_intrinsic(paragraph: &Paragraph, children: &[Context], styles: &Sty
       set settled = 0_i32;
       set item = 0.0_f32;
       set shown = 0_i32;
+      set kept = 0_i32;
       set line_floats = 0_i32;
     }
     if j < float_widths.inner.len {
@@ -3175,7 +3177,7 @@ fn paragraph_intrinsic(paragraph: &Paragraph, children: &[Context], styles: &Sty
     let opening_units = units_up(px: opening);
     set settled = settled +sat opening_units;
     let with_open = fadd.strict(current, opening);
-    let advance = advance_from(sizes: &sizes, at: j, position: with_open);
+    let advance = advance_from(paragraph: paragraph, sizes: &sizes, at: j, position: with_open);
     set item = fadd.strict(item, advance);
     let next = j +sat 1_u64;
     let ends_after = item_bound(sizes: &sizes, at: next);
@@ -3189,18 +3191,26 @@ fn paragraph_intrinsic(paragraph: &Paragraph, children: &[Context], styles: &Sty
     set settled = settled +sat closing_units;
     let with_advance = fadd.strict(with_open, advance);
     set current = fadd.strict(with_advance, closing);
-    let hangs = collapsible_at(sizes: &sizes, at: j);
+    let hangs = hangs_at(sizes: &sizes, at: j);
+    let open_item = units_up(px: item);
+    let through = settled +sat open_item;
     if hangs {
       set shown = shown +sat opening_units;
+      let collapsible = collapsible_at(sizes: &sizes, at: j);
+      if collapsible {
+        set kept = kept +sat opening_units;
+      } else {
+        set kept = through;
+      }
     } else {
-      let open_item = units_up(px: item);
-      set shown = settled +sat open_item;
+      set shown = through;
+      set kept = through;
     }
   }
   if count < float_widths.inner.len {
     set line_floats = line_floats +sat float_widths.inner[count];
   }
-  let run_total = shown +sat line_floats;
+  let run_total = kept +sat line_floats;
   set best = imax(best, run_total);
   if on_first {
     set first = run_total;

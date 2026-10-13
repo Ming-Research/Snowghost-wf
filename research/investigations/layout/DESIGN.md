@@ -130,9 +130,10 @@ breaking with `pkg::text::line_break` under `word-break: normal` and
 preparation results, Break opportunities); `letter-spacing`,
 `word-spacing`, `text-indent` and `text-align` (start, end, left, right,
 center, and justify, which no page uses: a line a soft wrap ends shares its
-free space among its spaces, CSS Text 3 7.3); `tab-size`, a preserved tab
-advancing to its next tab stop where line building places it; the spaces
-`pre-wrap` keeps hanging at the end of a line a soft wrap ends; line boxes from
+free space equally among its spaces, tabs and no-break spaces, CSS Text 3
+7.3); `tab-size`, a preserved tab advancing to its next tab stop where line
+building places it, its stops its own tab-size apart in its block
+container's space; the spaces and tabs `pre-wrap` keeps hanging at the end of a line (runs/line-fill.txt); line boxes from
 `line-height` and `vertical-align` (CSS 2.2 10.8); inline boxes' horizontal
 margins, borders and padding; atomic inlines (`inline-block`, replaced
 elements, `inline-flex`, `inline-grid`, `inline-table`); `br`.

@@ -521,7 +521,7 @@ fn breaks_shaping(styles: &Styles, mark: Mark) -> breaks: Bool reads(styles) {
 }
 
 fn same_shaping(styles: &Styles, first: TextRun, first_style: StyleRef, second: TextRun, second_style: StyleRef) -> same: Bool reads(styles) {
-  doc "Tells whether two adjacent runs shape alike: the same font family, size, weight and style, spacing, wrapping, white-space and tab-size (line building measures a run's tabs by its style), so that the reference shapes them as one text across the boundary between their elements.";
+  doc "Tells whether two adjacent runs shape alike: the same font family, size, weight and style, spacing, wrapping and white-space, so that the reference shapes them as one text across the boundary between their elements.";
   let one = font_of(styles: styles, style: first_style);
   let two = font_of(styles: styles, style: second_style);
   let starts = one.families_start == two.families_start;
@@ -543,19 +543,40 @@ fn same_shaping(styles: &Styles, first: TextRun, first_style: StyleRef, second: 
   let wrapping = band(wraps, word_rules);
   let text_one = text_of(styles: styles, style: first_style);
   let text_two = text_of(styles: styles, style: second_style);
-  let white_same = text_one.white_space == text_two.white_space;
-  let tab_kind = text_one.tab_size.kind == text_two.tab_size.kind;
-  let tab_length = feq(text_one.tab_size.value.px, text_two.tab_size.value.px);
-  let tabs = band(tab_kind, tab_length);
-  let white = band(white_same, tabs);
+  let white = text_one.white_space == text_two.white_space;
   let layout = band(spacing, wrapping);
   let style_like = band(font, white);
   let made = band(layout, style_like);
   return made;
 }
 
+fn holds_tab(paragraph: &Paragraph, run: TextRun) -> found: Bool reads(paragraph) {
+  doc "Whether run's text holds a tab, which text preparation keeps only where white-space preserves it.";
+  let low = cvt::<u32, u64>(run.start);
+  let high = cvt::<u32, u64>(run.end);
+  let count = paragraph^.text.inner.len;
+  let found = False();
+  for (i in low..high) {
+    if i < count {
+      let tab = paragraph^.text.inner[i] == 9_u32;
+      set found = bor(found, tab);
+    }
+  }
+  return found;
+}
+
+fn same_tab_size(styles: &Styles, first_style: StyleRef, second_style: StyleRef) -> same: Bool reads(styles) {
+  doc "Whether two run styles give a tab the same tab stops: the same tab-size kind (a number of spaces or a length) and value, the two fields tab_stop reads.";
+  let one = text_of(styles: styles, style: first_style);
+  let two = text_of(styles: styles, style: second_style);
+  let kind = one.tab_size.kind == two.tab_size.kind;
+  let value = feq(one.tab_size.value.px, two.tab_size.value.px);
+  let same = band(kind, value);
+  return same;
+}
+
 fn merge_runs(styles: &Styles, paragraph: &Paragraph) -> result: unit reads(styles), writes(paragraph) {
-  doc "Joins each run into the one before it when the two are contiguous, shape alike and no inline box edge that breaks shaping lies between them, since the reference shapes the text of adjacent inline elements as one when their fonts are alike (kerning and ligatures cross the element boundary).";
+  doc "Joins each run into the one before it when the two are contiguous, shape alike and no inline box edge that breaks shaping lies between them, since the reference shapes the text of adjacent inline elements as one when their fonts are alike (kerning and ligatures cross the element boundary). The joined run keeps the first run's style, from which line layout reads each tab's tab-size (tab_stop), while the reference takes a tab's tab-size from the inline box holding it (research/investigations/layout/runs/line-fill.txt, observation 8), so a run that holds a tab joins only a run of the same tab-size; a run with no tab joins whatever its tab-size, keeping shaping across the boundary, as tab-size is no font property.";
   let runs = paragraph^.runs.inner.len;
   let styled = paragraph^.run_styles.inner.len;
   let enough = runs > 1_u64;
@@ -584,7 +605,12 @@ fn merge_runs(styles: &Styles, paragraph: &Paragraph) -> result: unit reads(styl
       let previous_style = joined_styles.inner[last];
       let boundary = cvt::<u32, u64>(run.start);
       let adjacent = previous.end == run.start;
-      let alike = same_shaping(styles: styles, first: previous, first_style: previous_style, second: run, second_style: style);
+      let shaped_alike = same_shaping(styles: styles, first: previous, first_style: previous_style, second: run, second_style: style);
+      let tabbed = holds_tab(paragraph: paragraph, run: run);
+      let tab_free = bnot(tabbed);
+      let tabs_alike = same_tab_size(styles: styles, first_style: previous_style, second_style: style);
+      let tabs_kept = bor(tab_free, tabs_alike);
+      let alike = band(shaped_alike, tabs_kept);
       let candidate = band(adjacent, alike);
       let broken = False();
       for (step in pointer..marks) {
