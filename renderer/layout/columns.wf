@@ -91,24 +91,28 @@ fn push_unit(pieces_list: &Box<Slots<Unit>>, top: i32, bottom: i32) -> result: u
   return unit;
 }
 
-fn collect_units(context: &Context, styles: &Styles, pieces_list: &Box<Slots<Unit>>) -> result: unit reads(context), reads(styles), writes(pieces_list) {
-  doc "Collects the multi-column context's pieces_list in order: each paragraph, each block or child context whose break-inside avoids column breaks, each row of a table child, and each other child context; column breaks fall only between pieces_list, so a paragraph's lines stay in one column.";
+fn collect_units(context: &Context, events: &[Flow], styles: &Styles, pieces_list: &Box<Slots<Unit>>) -> result: unit reads(context), reads(events), reads(styles), writes(pieces_list) {
+  doc "Collects column break units in flow order: each paragraph line, each block that avoids column breaks, each row of a table child that permits breaks, and each other child context. An avoiding block contributes one unit instead of its enclosed units; column breaks fall only between units.";
   let skip_depth = 0_u64;
   let depth = 0_u64;
-  let flow_count = context^.flow.inner.len;
+  let flow_count = events^.len;
   for (k in 0_u64..flow_count) {
-    let item = context^.flow.inner[k];
+    if k >= events^.len {
+      break;
+    }
+    let item = events^[k];
     match item {
       Open(block: b) => {
         set depth = depth +sat 1_u64;
         let at = cvt::<u32, u64>(b);
         if skip_depth == 0_u64 {
           if at < context^.blocks.inner.len {
-            let block = context^.blocks.inner[at];
+            let block = block_snapshot(block: &context^.blocks.inner[at]);
             let avoided = avoids_columns(styles: styles, style: block.style);
             if avoided {
-              let bottom = block.y +sat block.height;
-              push_unit(pieces_list: pieces_list, top: block.y, bottom: bottom);
+              let unit_origin = block_position(context: context, at: at);
+              let bottom = unit_origin.y +sat block.height;
+              push_unit(pieces_list: pieces_list, top: unit_origin.y, bottom: bottom);
               set skip_depth = depth;
             }
           }
@@ -125,7 +129,8 @@ fn collect_units(context: &Context, styles: &Styles, pieces_list: &Box<Slots<Uni
           let at = cvt::<u32, u64>(p);
           if at < context^.paragraphs.inner.len {
             let lines = context^.paragraphs.inner[at].lines.inner.len;
-            let origin = context^.paragraphs.inner[at].top;
+            let geometry_read_1 = paragraph_position(context: context, at: at);
+            let origin = geometry_read_1.y;
             for (l in 0_u64..lines) {
               if at < context^.paragraphs.inner.len {
                 if l < context^.paragraphs.inner[at].lines.inner.len {
@@ -144,6 +149,7 @@ fn collect_units(context: &Context, styles: &Styles, pieces_list: &Box<Slots<Uni
           let at = cvt::<u32, u64>(c);
           if at < context^.children.inner.len {
             let child = &context^.children.inner[at];
+            let child_origin = child_position(context: context, at: at);
             let avoided = avoids_columns(styles: styles, style: child^.style);
             let table = child^.kind == ctx_table;
             let rows = child^.rows.inner.len;
@@ -154,13 +160,13 @@ fn collect_units(context: &Context, styles: &Styles, pieces_list: &Box<Slots<Uni
             if by_rows {
               for (r in 0_u64..rows) {
                 let row = child^.rows.inner[r];
-                let top = child^.y +sat row.y;
+                let top = child_origin.y +sat row.y;
                 let bottom = top +sat row.height;
                 push_unit(pieces_list: pieces_list, top: top, bottom: bottom);
               }
             } else {
-              let bottom = child^.y +sat child^.height;
-              push_unit(pieces_list: pieces_list, top: child^.y, bottom: bottom);
+              let bottom = child_origin.y +sat child^.height;
+              push_unit(pieces_list: pieces_list, top: child_origin.y, bottom: bottom);
             }
           }
         }
@@ -222,10 +228,10 @@ fn balanced_height(pieces_list: &[Unit], count: i32, first: i32, laid_height: i3
   return height;
 }
 
-fn fragment_columns(context: &Context, styles: &Styles, count: i32, width: i32, gap: i32, content_top: i32, laid_height: i32) -> height: i32 reads(styles), writes(context) {
+fn fragment_columns(context: &Context, events: &[Flow], styles: &Styles, count: i32, width: i32, gap: i32, content_top: i32, laid_height: i32) -> height: i32 reads(events), reads(styles), writes(context) {
   doc "Splits a multi-column context's content, laid out in one column width wide and laid_height tall, into at most count balanced columns: records the column map that moves each column's pieces_list beside the first, and returns the content height, the columns' height.";
   let pieces_list = box_slots_new::<Unit>(capacity: 64_u64);
-  collect_units(context: context, styles: styles, pieces_list: &pieces_list);
+  collect_units(context: context, events: events, styles: styles, pieces_list: &pieces_list);
   let total = pieces_list.inner.len;
   if total == 0_u64 {
     return laid_height;
@@ -257,4 +263,105 @@ fn fragment_columns(context: &Context, styles: &Styles, count: i32, width: i32, 
   let final_piece = ColumnPiece(from: from, to: 2147483647_i32, dx: shift_x, dy: shift_y, bottom: column_bottom);
   let pushed_last = push_item::<ColumnPiece>(cell: &context^.column_map, value: final_piece, ceiling: item_ceiling);
   return height;
+}
+
+fn column_replay_ready(context: &Context, styles: &Styles, frame: FlowFrame, unasked: Bool) -> ready: Bool reads(context), reads(styles) {
+  doc "Admits one dirty paragraph with no changed blocks or child outputs after checking the completed outer preparation inputs. Column balancing still consumes every updated unit.";
+  if context^.restyled_blocks != 0_u32 {
+    return False();
+  }
+  if context^.marked_children != 0_u32 {
+    return False();
+  }
+  if context^.marked_paragraphs != 1_u32 {
+    return False();
+  }
+  return column_inputs_unchanged(context: context, styles: styles, frame: frame, unasked: unasked);
+}
+
+fn column_inputs_unchanged(context: &Context, styles: &Styles, frame: FlowFrame, unasked: Bool) -> ready: Bool reads(context), reads(styles) {
+  doc "Checks the completed outer preparation key, independently of which consumers are dirty. Paragraph replay separately excludes changed blocks and children; block replay separately certifies their closed scope, widths and old/new percentage reads. Neither caller reuses a column map.";
+  if frame.columned {
+  } else {
+    return False();
+  }
+  if unasked {
+  } else {
+    return False();
+  }
+  if context^.flow_inputs.valid {
+  } else {
+    return False();
+  }
+  if context^.boundary_dirty {
+    return False();
+  }
+  if context^.restyled {
+    return False();
+  }
+  if context^.has_out {
+    return False();
+  }
+  if context^.space.shrink {
+    return False();
+  }
+  if context^.intrinsic_known {
+    return False();
+  }
+  if context^.intrinsic_held {
+    return False();
+  }
+  if context^.definite_free {
+  } else {
+    return False();
+  }
+  let own_relative = height_relative(styles: styles, style: context^.style);
+  if own_relative {
+    return False();
+  }
+  let saved = context^.flow_inputs;
+  if same_space(first: context^.space, second: saved.space) {
+  } else {
+    return False();
+  }
+  if context^.width != saved.width {
+    return False();
+  }
+  if saved.frame.columned {
+  } else {
+    return False();
+  }
+  if frame.content_left != saved.frame.content_left {
+    return False();
+  }
+  if frame.content_top != saved.frame.content_top {
+    return False();
+  }
+  if frame.flow_width != saved.frame.flow_width {
+    return False();
+  }
+  if frame.definite != saved.frame.definite {
+    return False();
+  }
+  if frame.column_count != saved.frame.column_count {
+    return False();
+  }
+  if frame.column_width != saved.frame.column_width {
+    return False();
+  }
+  if frame.column_gap != saved.frame.column_gap {
+    return False();
+  }
+  return True();
+}
+
+fn reflow_column_height(context: &Context, events: &[Flow], styles: &Styles, frame: FlowFrame, laid_height: i32) -> height: i32 reads(events), reads(styles), writes(context) {
+  doc "Rebalances all column units after scoped normal-flow replay. The complete column map is rebuilt even when the used column count is one; unchanged outer size never licenses retaining the old map.";
+  clear_column_map(context: context);
+  if events^.len == 0_u64 {
+    let materialized = materialize_flow(context: context);
+    let count = materialized.inner.len;
+    return fragment_columns(context: context, events: &materialized.inner[0_u64..count], styles: styles, count: frame.column_count, width: frame.column_width, gap: frame.column_gap, content_top: frame.content_top, laid_height: laid_height);
+  }
+  return fragment_columns(context: context, events: events, styles: styles, count: frame.column_count, width: frame.column_width, gap: frame.column_gap, content_top: frame.content_top, laid_height: laid_height);
 }

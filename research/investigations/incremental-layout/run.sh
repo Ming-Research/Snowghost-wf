@@ -142,8 +142,8 @@ same() {
 	[ "$#" -gt 0 ] || return 2
 	same_status=0
 	for kind in "$@"; do
-		if ! python3 "$here/scripts/inctime.py" --check "$work/scripts/$page-$kind.edits" "$work/out/$page-$kind.seq.txt" ||
-		   ! python3 "$here/scripts/inctime.py" --check "$work/scripts/$page-$kind.edits" "$work/out/$page-$kind.par.txt"; then
+		if ! python3 "$here/scripts/inctime.py" --check "$work/scripts/$page-$kind.edits" "$work/out/$page-$kind.seq.txt.raw" ||
+		   ! python3 "$here/scripts/inctime.py" --check "$work/scripts/$page-$kind.edits" "$work/out/$page-$kind.par.txt.raw"; then
 			same_status=1
 			continue
 		fi
@@ -189,6 +189,9 @@ inc() {
 		refused=$(grep -c ' inc refused$' "$out" || true)
 		edits=$(grep -c '^edit [0-9]* hash ' "$out" || true)
 		echo "$page $kind ($build): $edits edits, inc same $same, DIFF $differs, refused $refused"
+		paths=$(grep -o 'structure path [0-9]* splice [01] reason [0-9]*' "$out.raw" | awk '{ n[$5 == 1 ? "splice" : "reason " $7]++ } END { for (k in n) printf "%s%s %d", sep, k, n[k]; sep = ", " }' || true)
+		[ -z "$paths" ] || echo "$page $kind ($build): structural paths: $paths"
+		if [ "$differs" -gt 0 ] || [ "$refused" -gt 0 ] || [ "$edits" -eq 0 ]; then inc_status=1; fi
 	done
 	return "$inc_status"
 }

@@ -2,7 +2,39 @@
 
 Newest first. One entry per approved change of the tree: a dated title,
 `Nodes:` naming every node changed, `Owner-approved:` and `Summary:`;
-`skill/SKILL.md` owns the form.
+the design-tree part of the owner-wide agent instructions owns the form.
+
+## 2026-10-13 Map flow-relative margin, padding, inset and border properties to physical sides at parse time
+
+Nodes: pipeline/style
+
+Owner-approved: On the status board on 2026-10-13 the owner chose A on the card asking whether flow-relative margin, padding, inset and border properties are rewritten at parse time into the physical sides under horizontal-tb and ltr as a provisional rule, reopened when writing direction enters the style stage's scope, in Snowghost-wf#83; and chose A on the card approving the two later rewordings of that decision (one reopening condition that leaves vertical writing modes uncovered, and the source link for its measurement) at head 28311fb.
+
+Summary: A flow-relative property of margin, padding, the insets or the border, longhand or shorthand, is parsed into the physical longhands it maps to under the stage's one writing mode and direction (block-start top, inline-end right, block-end bottom, inline-start left), each keeping its declaration's place, importance and rule, so the existing per-longhand selection decides between logical and physical declarations by the same key as Chromium's cascade. With one direction the mapping depends on nothing an element computes, so it adds no dependency between elements and no cascade slot. Keeping logical longhands as their own slots resolved after the level cascade, and mapping them during matching with the element's direction, were rejected: the first stores a second key per slot for no gain while direction is fixed, the second makes matching wait on the parent. The ignored properties put the first wrong box on six of the 21 web-app pages compared with Chromium 141 ([logical properties](../research/investigations/layout/runs/pagewise-logical.txt)); the logical cases now match Chromium on every block box, inline box and text node, and the style cases on every margin, padding, border and inset value.
+
+## 2026-10-13 Anchor floated and out-of-flow boxes in the paragraph text around them
+
+Nodes: pipeline/layout
+
+Owner-approved: On the status board on 2026-10-13 the owner chose A on the card asking whether to approve the new decision that floated and absolutely positioned boxes leave an anchor in the paragraph text around them, Snowghost-wf#77.
+
+Summary: A floated or out-of-flow child context that the box tree walk meets after a paragraph's first piece leaves an Anchor in that paragraph's content as well as its own flow entry, a mark at its text position with no text and no width, because Chromium keeps such a box as an item of the inline content around it. The line the anchor falls on gives an out-of-flow box with auto insets its static position, and gives a float the max-content run its width joins. Recording a text position on the child context was rejected because the walk cannot know it before white-space processing. Ending the paragraph at the child was rejected because it would break the paragraph's lines there. Which line an anchor at a soft wrap belongs to follows Blink's line breaker. The inline-items cases match Chromium on 45 of 46 block-level boxes, the miss being a separately tracked float, and on every inline-level box and text node ([inline items](../research/investigations/layout/runs/inline-items.txt)).
+
+## 2026-10-13 Shape adjacent text runs together and synthesize small capitals as Chromium does
+
+Nodes: pipeline/layout
+
+Owner-approved: On the status board on 2026-10-13 the owner chose A on the card asking whether to approve the two new decisions, shaping adjacent elements' text together and synthesizing small-caps as Chromium does, in Snowghost-wf#76 at head 23108a3.
+
+Summary: Adjacent text runs whose font, letter-spacing and word-spacing match are shaped as one range when no inline box edge with padding, border or margin separates them, as Blink's ShapeText compares only those properties, so kerning across a link and its following punctuation matches Chromium; text preparation's shaping decision now names such ranges. `font-variant: small-caps` uses the face's `smcp` feature when present and otherwise uppercases the letters that change and draws them at 0.7 of the size, rounded, as Blink does; the flow cases probe both rules and apollo11's abbreviation links and linked text now match Chromium ([layout results](../research/investigations/layout/DESIGN.md#layout-results)).
+
+## 2026-10-13 Place preserved tabs, justify lines and hang preserved line-end spaces as Chromium does
+
+Nodes: pipeline/layout
+
+Owner-approved: On the status board on 2026-10-13 the owner chose A on the card asking whether to approve the four new decisions on tabs, justification and hanging line-end spaces in Snowghost-wf#72 at head bfb57ac.
+
+Summary: A preserved tab advances to its next tab stop from where it falls, computed by line building and by the intrinsic-width walk where its position is known; a justified line a soft wrap ends shares its free space equally among its justification opportunities; spaces and tabs `white-space: pre-wrap` keeps at a line's end hang at full width in a fragment of their own; and those spaces add nothing to a min-content width where they hang unconditionally. Each rule follows Chromium 141's line breaker and was confirmed against its layout dumps of the line-fill cases (40/40 block boxes, 10/10 inline boxes, 48/48 text nodes) ([line-fill evidence](../research/investigations/layout/runs/line-fill.txt)).
 
 ## 2026-10-12 Measure the engine binary against a 10 000 000-byte limit
 
@@ -11,6 +43,30 @@ Nodes: scope/binary-size
 Owner-approved: On 2026-10-12 the owner set a hard limit of 10 MB on the engine binary with a gate check, then chose option A on the status board card asking whether the limit is measured as proposed (10 000 000 bytes; the renderer alone while the first release has no shell; the Linux x86-64 build as linked, unstripped; layout_oracle built with --par as the stand-in until an engine binary exists), and commented in Chinese that room must be kept for the JavaScript engine.
 
 Summary: A new node under scope records how the 10 MB limit is measured. It takes the decimal reading, 10 000 000 bytes, the stricter of the two, since the largest build measured uses 44.8 % of it. It covers the renderer alone until a release ships a shell. It judges the Linux x86-64 build, as linked, because that build is 1.91 times the macOS build and stripping would hide 10.7 % of it. Until an engine binary exists it measures layout_oracle built with --par, the largest pipeline build measured. Rejected: 10 MiB, a shell estimate, a macOS or per-platform gate, the stripped size, and a sequential or smaller stand-in. The measurements are in research/investigations/binary-size/README.md. The room the JavaScript engine needs is to be budgeted on its own card when that engine is planned.
+
+## 2026-10-11 Bound the structural restyle of next-sibling `+` chains by their length
+
+Nodes: pipeline/style
+
+Owner-approved: On the status board on 2026-10-11 the owner chose A on the card asking whether to approve Snowghost-wf#65's change to design/pipeline/style.md at head 782f5ef, narrowing the structural restyle of `+` chains by their hop count.
+
+Summary: The structural reverse index now records, for a compound followed only by `+` combinators, how many follow, and an insertion or removal walks that many further element siblings after the next one instead of every later sibling, because a chain of n `+` relates elements at most n siblings apart; reaches from position pseudo-classes such as `:nth-child` stay unbounded. On html5's 60 edits the largest rematch set fell from 548 elements to 2, with identical results across 75 fixtures in both modes and a one-too-few mutation detected ([bounded `+` reach](../research/investigations/structure-edits/DESIGN.md#bounded-next-sibling-suffixes-sg-bl-02-02)).
+
+## 2026-10-09 Prove grid columns invariant, reduce item-owned proposals and publish first baselines
+
+Nodes: pipeline/layout
+
+Owner-approved: On 2026-10-08 the owner chose Q140 B, a grid splice admitted only when the container's column sizes are provably unchanged with the container's track sizing rerun and counted fallback otherwise; on the status board on 2026-10-09 the owner chose item-owned grid proposals with balanced reductions (A), distinct first-baseline publication (A), extending the width proof through an enclosing flex (A), fixing Apollo11's full-layout regression within this branch (B) and investigating the flexible-track maximum chain separately (B).
+
+Summary: Grid splices prove invariant columns through enclosing flex inputs, rerun sizing and placement with current item-owned natural measurements, and count unproved dependencies as refusals. Independent CSS Grid 11.5 proposals reduce per track, while first-baseline consumers receive a distinct context output. Consumed-input equality avoids repeating equivalent final flow layout without discarding height dependencies, and a changed direct height-reader signature renews parent preparation. These rules preserve the algorithm's dependencies and correct baselines while removing Apollo11's duplicate work; the inherited CSS Grid 11.7 maximum chain remains a separate investigation ([Q140 evidence and grounds](../research/investigations/structure-edits/layout-design.md#q140-grid-row-sizing-under-invariant-columns)).
+
+## 2026-10-09 Admit percentage heights whose basis a structural edit cannot change
+
+Nodes: pipeline/layout
+
+Owner-approved: On 2026-10-08 the owner chose Q139 A, that a structural splice may admit a percentage height whose basis the edit cannot change, recording each basis and falling back with a counted reason otherwise; on the status board the owner then chose the direct-reader inventory and compact records for that scope and cost, and on 2026-10-09 chose to accept the remaining root-font cost and track it separately, and approved, in Chinese, correcting the first layout decision so that a child context's inputs are its element and its resolved containing space, including height and definiteness, instead of its element and width.
+
+Summary: The splice keeps height provenance only for boxes that read a percentage height and admits such a reader only when its basis is current, definite, independent of content and outside the edit's growing ancestor chain; each route context counts its own direct readers, and nested contexts stay under unchanged-space translation and flex space-equality relayout. Apollo11's block edits no longer refuse for percentage heights, ecma262 and html5 keep every splice, and the fixtures, Chromium floors, page identity and the full mutation matrix pass. Compact records hold the large pages' memory growth to 1.5 to 1.9 percent; root-font edits stay within the twin's spread except ECMA262 and Apollo sequential, at most 0.3 percent above it, which docs/todo.md tracks ([measurements](../research/investigations/structure-edits/layout-design.md#approved-direct-inventory-and-compact-records)). The first layout decision's grounds now name the resolved containing space, because a child context's percentage heights depend on its containing block's height and definiteness as well as its width.
 
 ## 2026-10-06 Keep style slots stable across structural edits and bound the insertion restyle
 

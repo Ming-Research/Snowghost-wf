@@ -1,0 +1,142 @@
+# Permanent Q139 fixture, Chromium-floor and retained-identity checks.
+name: q139
+on:
+  push:
+    branches: [research/m2-sync-main, main, research/m2-q139]
+  pull_request:
+    paths: ['renderer/**', 'tests/layout/**', 'research/investigations/incremental-layout/**', 'research/investigations/layout/**', '.github/workflows/q139.yml', 'whitefoot.pin']
+  workflow_dispatch:
+concurrency:
+  group: q139-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  percentage-oracle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+      - name: Toolchain and reference browser
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          npm install --prefix build/reference playwright@1.56.1
+          build/reference/node_modules/.bin/playwright install --with-deps chromium
+          echo "PLAYWRIGHT=$GITHUB_WORKSPACE/build/reference/node_modules/playwright" >> "$GITHUB_ENV"
+          node -e 'console.log("CHROMIUM=" + require("./build/reference/node_modules/playwright").chromium.executablePath())' >> "$GITHUB_ENV"
+          make -s toolchain compiler oracle-fonts
+      - name: Small full-layout sample
+        id: drivers
+        run: |
+          set -euo pipefail
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          time (cd renderer && "$wfc" --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_seq)
+          "$CHROMIUM" --version
+          node tests/layout/layout_oracle.mjs dump tests/layout/percentage-height-cases.html > build/percentage.chromium.tsv
+          time build/layout_oracle_seq dump 1 tests/layout/percentage-height-cases.html renderer/style/ua.css > build/percentage.seq.tsv
+          cmp tests/layout/percentage-height-cases.chromium.tsv build/percentage.chromium.tsv
+          node tests/layout/layout_oracle.mjs compare build/percentage.chromium.tsv build/percentage.seq.tsv
+          time (cd renderer && "$wfc" --par --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_par)
+          time WF_WORKERS=4 build/layout_oracle_par dump 1 tests/layout/percentage-height-cases.html renderer/style/ua.css > build/percentage.par.tsv
+          cmp build/percentage.seq.tsv build/percentage.par.tsv
+      - name: Percentage basis refresh after restyles
+        run: |
+          set -euo pipefail
+          s=research/investigations/incremental-layout/scripts
+          for variant in ordinary atomic float; do
+            script="build/percentage-$variant.edits"
+            python3 "$s/percentage-cases.py" build/layout_oracle_seq "$script" --mode "$variant"
+            for mode in seq par; do
+              raw="build/percentage-$variant-$mode.raw"
+              WF_WORKERS=4 "build/layout_oracle_$mode" edit "$script" tests/layout/percentage-height-cases.html renderer/style/ua.css > "$raw"
+              python3 "$s/inctime.py" --check "$script" "$raw"
+            done
+          done
+      - name: Small Q139 splice sample before expanding the matrix
+        id: splice
+        if: ${{ !cancelled() && steps.drivers.conclusion == 'success' }}
+        run: |
+          set -euo pipefail
+          s=research/investigations/incremental-layout/scripts
+          d=build/percentage-splice
+          python3 "$s/percentage-splice.py" build/layout_oracle_seq "$d"
+          node tests/layout/layout_oracle.mjs dump "$d/case.html" > "$d/base.chromium.tsv"
+          node tests/layout/layout_oracle.mjs dump "$d/inserted.html" > "$d/inserted.chromium.tsv"
+          for mode in seq par; do
+            time WF_WORKERS=4 "build/layout_oracle_$mode" edit "$d/case.edits" "$d/case.html" renderer/style/ua.css > "$d/$mode.raw"
+            python3 "$s/inctime.py" --check "$d/case.edits" "$d/$mode.raw"
+            python3 "$s/splice-cases.py" --check-paths "$d/case.edits.paths" "$d/$mode.raw"
+            python3 "$s/percentage-splice.py" "build/layout_oracle_$mode" "$d/$mode" --extract "$d/$mode.raw"
+            node tests/layout/layout_oracle.mjs compare "$d/base.chromium.tsv" "$d/$mode/prefix-0.tsv"
+            node tests/layout/layout_oracle.mjs compare "$d/inserted.chromium.tsv" "$d/$mode/prefix-1.tsv"
+            node tests/layout/layout_oracle.mjs compare "$d/base.chromium.tsv" "$d/$mode/prefix-2.tsv"
+          done
+      - name: Q139 definite, indefinite and lifetime matrix
+        if: ${{ !cancelled() && steps.splice.conclusion == 'success' }}
+        run: |
+          set -euo pipefail
+          s=research/investigations/incremental-layout/scripts
+          failed=0
+          for mode in seq par; do
+            WF_WORKERS=4 python3 "$s/percentage-matrix.py" "build/layout_oracle_$mode" "build/percentage-matrix-$mode" || failed=1
+          done
+          test "$failed" -eq 0
+      - name: Existing layout case floors against Chromium
+        if: ${{ !cancelled() && steps.drivers.conclusion == 'success' }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/oracle/layout build/research/layout
+          pages=()
+          for page in tests/layout/*-cases.html; do
+            name=$(basename "$page" .html)
+            pages+=("$name")
+            node tests/layout/layout_oracle.mjs dump "$page" > "build/oracle/layout/$name.chromium.tsv"
+            build/layout_oracle_seq dump 1 "$page" renderer/style/ua.css > "build/research/layout/$name.seq.tsv"
+            WF_WORKERS=4 build/layout_oracle_par dump 1 "$page" renderer/style/ua.css > "build/research/layout/$name.par.tsv"
+            cmp "build/research/layout/$name.seq.tsv" "build/research/layout/$name.par.tsv"
+          done
+          sh research/investigations/layout/run.sh judge "${pages[@]}"
+      - name: Existing conjunctive certificates with the viewport chain
+        if: ${{ !cancelled() && steps.drivers.conclusion == 'success' }}
+        run: |
+          set -euo pipefail
+          s=research/investigations/incremental-layout/scripts
+          mkdir -p build/percentage-combinations
+          failed=0
+          for kind in positioned positioned-isolated flex transfer edit-cost edit-baseline edit-height edit-cascade; do
+            page=$kind
+            case "$kind" in
+              positioned-isolated) page=positioned ;;
+              edit-cost|edit-cascade) page=transfer ;;
+              edit-baseline|edit-height) page=style ;;
+            esac
+            script="build/percentage-combinations/$kind.edits"
+            python3 "$s/splice-cases.py" build/layout_oracle_seq "$kind" "$script"
+            for chain in original viewport; do
+              variant="build/percentage-combinations/$kind-$chain.edits"
+              if [ "$chain" = viewport ]; then
+                echo 'S html,body{height:100%}' > "$variant"
+                cat "$script" >> "$variant"
+              else
+                cp "$script" "$variant"
+              fi
+              for mode in seq par; do
+                raw="build/percentage-combinations/$kind-$chain-$mode.raw"
+                WF_WORKERS=4 "build/layout_oracle_$mode" edit "$variant" "$s/$page-case.html" renderer/style/ua.css > "$raw" || { failed=1; continue; }
+                python3 "$s/inctime.py" --check "$variant" "$raw" || failed=1
+                python3 "$s/splice-cases.py" --check-paths "$script.paths" "$raw" || failed=1
+              done
+            done
+          done
+          test "$failed" -eq 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: percentage-oracle
+          path: |
+            build/percentage*
+            build/oracle/layout/
+            build/research/layout/

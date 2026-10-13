@@ -1,0 +1,990 @@
+alias Styles = pkg::style::Styles;
+
+struct RangeInherited {
+  doc "One payload's resolved range state: its own node actions, whether its last published transfer made it an applicable placed anchor, and the pending child actions of its strict AVL ancestors. Geometry and semantic displacements add; the topmost pending basis assignment is the latest one.";
+  own: RangeActions;
+  placed: Bool;
+  opens: Bool;
+  geometry: Origin;
+  semantic: i64;
+  basis: i32;
+  basis_set: Bool;
+}
+
+fn identity_actions() -> made: RangeActions pure {
+  doc "The identity action in every channel.";
+  let zero = zero_origin();
+  let no = False();
+  return RangeActions(own_geometry: zero, child_geometry: zero, own_semantic: 0_i64, child_semantic: 0_i64, own_basis: 0_i32, child_basis: 0_i32, own_basis_set: no, child_basis_set: no);
+}
+
+fn origin_identity(value: Origin) -> identity: Bool pure {
+  doc "Whether a local geometry difference changes no coordinate.";
+  let x = value.x == 0_i64;
+  let y = value.y == 0_i64;
+  let dx = value.dx == 0_i64;
+  let dy = value.dy == 0_i64;
+  let normal = band(x, y);
+  let visual = band(dx, dy);
+  return band(normal, visual);
+}
+
+fn child_actions_identity(actions: RangeActions) -> identity: Bool pure {
+  doc "Whether a node has no pending child action to distribute.";
+  let geometry = origin_identity(value: actions.child_geometry);
+  let semantic = actions.child_semantic == 0_i64;
+  let basis = bnot(actions.child_basis_set);
+  let moved = band(geometry, semantic);
+  return band(moved, basis);
+}
+
+fn no_inheritance() -> made: RangeInherited pure {
+  doc "The resolved state of an absent payload or of a context or owner sequence without retained range actions.";
+  let own = identity_actions();
+  let zero = zero_origin();
+  let no = False();
+  return RangeInherited(own: own, placed: no, opens: no, geometry: zero, semantic: 0_i64, basis: 0_i32, basis_set: no);
+}
+
+fn output_bounded(output: SequenceOutput) -> bounded: Bool pure {
+  doc "Whether a transfer has a finite natural floor or float reach, the semantic bounds a displacement can witness.";
+  let floor = output.natural_floor != 9223372036854775807_i64;
+  let reach = output.float_reach != -9223372036854775807_i64;
+  return bor(floor, reach);
+}
+
+fn slot_view(pages: &SlotPages<SequenceNode>, slot: u32, span: u32) -> (links: SequenceCursor, actions: RangeActions, placed: Bool, opens: Bool) reads(pages) {
+  doc "Reads one cell's topology, actions and own applicability through one bounded directory path, without copying either transfer.";
+  let missing = vacant_cursor();
+  let identity = identity_actions();
+  let no = False();
+  if slot >= span {
+    return missing, identity, no, no;
+  }
+  match pages^ {
+    Vacant() => {
+      return missing, identity, no, no;
+    }
+    Page(values: page) => {
+      let at = cvt::<u32, u64>(slot);
+      if at < page^.inner.len {
+        let placed = page^.inner[at].own.placed > 0_u64;
+        let opens = page^.inner[at].own.opens > 0_u64;
+        return page^.inner[at].links, page^.inner[at].actions, placed, opens;
+      }
+      return missing, identity, no, no;
+    }
+    Fork(left: left_page, right: right_page) => {
+      let half = span / 2_u32;
+      if slot < half {
+        let (left_links, left_actions, left_placed, left_opens) = slot_view(pages: &left_page^.inner, slot: slot, span: half);
+        return left_links, left_actions, left_placed, left_opens;
+      }
+      let later = slot - half;
+      let (right_links, right_actions, right_placed, right_opens) = slot_view(pages: &right_page^.inner, slot: later, span: half);
+      return right_links, right_actions, right_placed, right_opens;
+    }
+  }
+}
+
+fn slot_store_actions(pages: &SlotPages<SequenceNode>, slot: u32, span: u32, actions: RangeActions) -> result: unit writes(pages) {
+  doc "Writes one existing cell's actions without touching its topology or transfers.";
+  if slot >= span {
+    return unit;
+  }
+  match pages^ {
+    Vacant() => {
+    }
+    Page(values: page) => {
+      let at = cvt::<u32, u64>(slot);
+      if at < page^.inner.len {
+        set page^.inner[at].actions = actions;
+      }
+    }
+    Fork(left: left_page, right: right_page) => {
+      let half = span / 2_u32;
+      if slot < half {
+        slot_store_actions(pages: &left_page^.inner, slot: slot, span: half, actions: actions);
+      } else {
+        let later = slot - half;
+        slot_store_actions(pages: &right_page^.inner, slot: later, span: half, actions: actions);
+      }
+    }
+  }
+  return unit;
+}
+
+fn slot_geometry(pages: &SlotPages<SequenceNode>, slot: u32, span: u32, own: Bool) -> (parent: u32, applies: Bool, action: Origin) reads(pages) {
+  doc "Reads only the parent and the requested geometry channel. Own geometry requires a live placed member; pending-child geometry requires a live ancestor. Semantic, basis and unrelated topology fields are not query outputs.";
+  let zero = zero_origin();
+  if slot >= span {
+    return no_index, False(), zero;
+  }
+  match pages^ {
+    Vacant() => {
+      return no_index, False(), zero;
+    }
+    Page(values: page) => {
+      let at = cvt::<u32, u64>(slot);
+      if at < page^.inner.len {
+        if page^.inner[at].links.live {
+          if own {
+            let placed = page^.inner[at].own.placed > 0_u64;
+            return page^.inner[at].links.parent, placed, page^.inner[at].actions.own_geometry;
+          }
+          return page^.inner[at].links.parent, True(), page^.inner[at].actions.child_geometry;
+        }
+      }
+      return no_index, False(), zero;
+    }
+    Fork(left: left_page, right: right_page) => {
+      let half = span / 2_u32;
+      if slot < half {
+        let (parent, applies, action) = slot_geometry(pages: &left_page^.inner, slot: slot, span: half, own: own);
+        return parent, applies, action;
+      }
+      let later = slot - half;
+      let (parent, applies, action) = slot_geometry(pages: &right_page^.inner, slot: later, span: half, own: own);
+      return parent, applies, action;
+    }
+  }
+}
+
+fn range_geometry(sequence: &EntrySequence, slot: u32) -> made: Origin reads(sequence.range_actions), reads(sequence.nodes), reads(sequence.span) {
+  doc "Resolves only a placed payload's own and inherited geometry. Strict ancestors retain their previous association, followed by the own action. The absent-parent terminator performs no slot lookup.";
+  if sequence^.range_actions {
+  } else {
+    return zero_origin();
+  }
+  let own_field = True();
+  let (parent, placed, own) = slot_geometry(pages: &sequence^.nodes, slot: slot, span: sequence^.span, own: own_field);
+  if placed {
+  } else {
+    return zero_origin();
+  }
+  let inherited = zero_origin();
+  let cursor = parent;
+  let child_field = False();
+  for (level in 0_u64..64_u64) {
+    if cursor == no_index {
+      break;
+    }
+    let (above, live, pending) = slot_geometry(pages: &sequence^.nodes, slot: cursor, span: sequence^.span, own: child_field);
+    if live {
+    } else {
+      break;
+    }
+    set inherited = origin_accumulate(owner: inherited, local: pending);
+    set cursor = above;
+  }
+  return origin_accumulate(owner: own, local: inherited);
+}
+
+fn owner_geometry(context: &Context, owner: u32, slot: u32) -> made: Origin reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.entries.range_actions), reads(context.blocks.inner) {
+  doc "Resolves the geometry-only query in its immutable owner sequence; inactive contexts, absent slots and inactive owners return the identity.";
+  if context^.range_actions {
+  } else {
+    return zero_origin();
+  }
+  if slot == no_index {
+    return zero_origin();
+  }
+  if owner == no_index {
+    return range_geometry(sequence: &context^.entries, slot: slot);
+  }
+  let at = cvt::<u32, u64>(owner);
+  if at < context^.blocks.inner.len {
+    return range_geometry(sequence: &context^.blocks.inner[at].entries, slot: slot);
+  }
+  return zero_origin();
+}
+
+fn range_inherited(sequence: &EntrySequence, slot: u32) -> made: RangeInherited reads(sequence.range_actions), reads(sequence.nodes), reads(sequence.span) {
+  doc "Skips an owner without retained actions; otherwise collects one stable slot's own actions and its ancestors' pending child actions through the index parent path. Each edge contributes once; the walk is bounded by the AVL height.";
+  if sequence^.range_actions {
+  } else {
+    return no_inheritance();
+  }
+  let (links, own, placed, opens) = slot_view(pages: &sequence^.nodes, slot: slot, span: sequence^.span);
+  let made = no_inheritance();
+  if links.live {
+  } else {
+    return made;
+  }
+  set made.own = own;
+  set made.placed = placed;
+  set made.opens = opens;
+  let cursor = links.parent;
+  for (level in 0_u64..64_u64) {
+    let (above, actions, above_placed, above_opens) = slot_view(pages: &sequence^.nodes, slot: cursor, span: sequence^.span);
+    if above.live {
+    } else {
+      return made;
+    }
+    let geometry = origin_accumulate(owner: made.geometry, local: actions.child_geometry);
+    set made.geometry = geometry;
+    set made.semantic = made.semantic +sat actions.child_semantic;
+    if actions.child_basis_set {
+      set made.basis = actions.child_basis;
+      set made.basis_set = True();
+    }
+    set cursor = above.parent;
+  }
+  return made;
+}
+
+fn owner_inherited(context: &Context, owner: u32, slot: u32) -> made: RangeInherited reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.entries.range_actions), reads(context.blocks.inner) {
+  doc "Resolves a payload's range state only within an owner sequence that may retain actions; an inactive context or owner reads no index path.";
+  if context^.range_actions {
+  } else {
+    return no_inheritance();
+  }
+  if slot == no_index {
+    return no_inheritance();
+  }
+  if owner == no_index {
+    let root_view = range_inherited(sequence: &context^.entries, slot: slot);
+    return root_view;
+  }
+  let at = cvt::<u32, u64>(owner);
+  if at < context^.blocks.inner.len {
+    let block_view = range_inherited(sequence: &context^.blocks.inner[at].entries, slot: slot);
+    return block_view;
+  }
+  return no_inheritance();
+}
+
+fn view_geometry(view: RangeInherited) -> made: Origin pure {
+  doc "The geometry action an applicable placed payload resolves: its own action plus every pending ancestor action. A positioned or lineless payload is not a placed anchor and resolves none.";
+  if view.placed {
+    let made = origin_accumulate(owner: view.own.own_geometry, local: view.geometry);
+    return made;
+  }
+  return zero_origin();
+}
+
+fn view_semantic(view: RangeInherited) -> displacement: i64 pure {
+  doc "The published displacement an Open payload's duplicated offset and boundary still lack.";
+  if view.opens {
+    let made = view.own.own_semantic +sat view.semantic;
+    return made;
+  }
+  return 0_i64;
+}
+
+fn block_local(context: &Context, at: u64) -> made: Origin reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.entries.range_actions), reads(context.blocks.inner) {
+  doc "A block's effective owner-relative origin: its retained base plus its range actions.";
+  if at < context^.blocks.inner.len {
+    let base = Origin(x: context^.blocks.inner[at].x, y: context^.blocks.inner[at].y, dx: context^.blocks.inner[at].dx, dy: context^.blocks.inner[at].dy);
+    if context^.range_actions {
+    } else {
+      return base;
+    }
+    let action = owner_geometry(context: context, owner: context^.blocks.inner[at].parent, slot: context^.blocks.inner[at].entry_slot);
+    return origin_accumulate(owner: base, local: action);
+  }
+  return zero_origin();
+}
+
+fn paragraph_local(context: &Context, at: u64) -> made: Origin reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.entries.range_actions), reads(context.blocks.inner), reads(context.paragraphs.inner) {
+  doc "A paragraph's effective owner-relative origin. Lineless paragraphs are not placed anchors, so their unplaced base resolves no action.";
+  if at < context^.paragraphs.inner.len {
+    let base = Origin(x: context^.paragraphs.inner[at].x, y: context^.paragraphs.inner[at].top, dx: context^.paragraphs.inner[at].dx, dy: context^.paragraphs.inner[at].dy);
+    if context^.range_actions {
+    } else {
+      return base;
+    }
+    let action = owner_geometry(context: context, owner: context^.paragraphs.inner[at].block, slot: context^.paragraphs.inner[at].entry_slot);
+    return origin_accumulate(owner: base, local: action);
+  }
+  return zero_origin();
+}
+
+fn child_local(context: &Context, at: u64) -> made: Origin reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.entries.range_actions), reads(context.blocks.inner), reads(context.children.inner) {
+  doc "A child's effective anchor in its placement frame. Atomic anchors are paragraph-relative and follow their paragraph; viewport and positioned anchors are settled explicitly and resolve no range action.";
+  if at < context^.children.inner.len {
+    let base = context^.children.inner[at].anchor;
+    if context^.range_actions {
+    } else {
+      return base;
+    }
+    if context^.children.inner[at].placement_paragraph != no_index {
+      return base;
+    }
+    if context^.children.inner[at].viewport_origin {
+      return base;
+    }
+    let action = owner_geometry(context: context, owner: context^.children.inner[at].block, slot: context^.children.inner[at].entry_slot);
+    return origin_accumulate(owner: base, local: action);
+  }
+  return zero_origin();
+}
+
+fn block_boundary(context: &Context, at: u64) -> made: SequenceOutput reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.entries.range_actions), reads(context.blocks.inner) {
+  doc "The effective Open transfer of a block: its duplicated boundary plus the semantic displacement it still lacks.";
+  if at < context^.blocks.inner.len {
+    let raw = context^.blocks.inner[at].boundary;
+    if context^.range_actions {
+    } else {
+      return raw;
+    }
+    let view = owner_inherited(context: context, owner: context^.blocks.inner[at].parent, slot: context^.blocks.inner[at].entry_slot);
+    let displacement = view_semantic(view: view);
+    let made = shift_motion(output: raw, delta: displacement);
+    return made;
+  }
+  return empty_output();
+}
+
+fn block_measured(context: &Context, at: u64) -> made: BlockOutput reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.entries.range_actions), reads(context.blocks.inner) {
+  doc "The effective measured output of a block: its offset includes published semantic displacement and its basis height the latest applicable assignment.";
+  if at < context^.blocks.inner.len {
+    let raw = context^.blocks.inner[at].output;
+    if context^.range_actions {
+    } else {
+      return raw;
+    }
+    let view = owner_inherited(context: context, owner: context^.blocks.inner[at].parent, slot: context^.blocks.inner[at].entry_slot);
+    let displacement = view_semantic(view: view);
+    set raw.offset = raw.offset +sat displacement;
+    if view.opens {
+      if view.basis_set {
+        set raw.basis_height = view.basis;
+      } else if view.own.own_basis_set {
+        set raw.basis_height = view.own.own_basis;
+      }
+    }
+    return raw;
+  }
+  return empty_block_output();
+}
+
+fn effective_output(sequence: &EntrySequence, slot: u32, own: Bool, visits: &BoundaryVisits) -> made: SequenceOutput reads(sequence.nodes), reads(sequence.span), reads(sequence.range_actions), writes(visits) {
+  doc "Reads an externally addressed own or total transfer with the semantic displacement its ancestors still hold. A root read collects nothing.";
+  let stored = boundary_output(sequence: sequence, slot: slot, own: own, visits: visits);
+  let view = range_inherited(sequence: sequence, slot: slot);
+  if view.semantic == 0_i64 {
+    return stored;
+  }
+  let made = shift_motion(output: stored, delta: view.semantic);
+  return made;
+}
+
+fn range_receive(sequence: &EntrySequence, slot: u32, geometry: Origin, semantic: i64, basis: i32, basis_set: Bool, visits: &BoundaryVisits) -> result: unit reads(sequence.span), writes(sequence.nodes), writes(visits) {
+  doc "Applies one action to every member of a subtree in O(1): stored own and total transfers absorb the semantic displacement at once, the own channels record what this payload's raw fields lack, and child channels record what the children lack. A channel without a witnessing member keeps the identity action.";
+  if slot == no_index {
+    return unit;
+  }
+  let held = boundary_node(sequence: sequence, slot: slot, visits: visits);
+  if held.live {
+  } else {
+    return unit;
+  }
+  let own_field = True();
+  let total_field = False();
+  let own = boundary_output(sequence: sequence, slot: slot, own: own_field, visits: visits);
+  let total = boundary_output(sequence: sequence, slot: slot, own: total_field, visits: visits);
+  let left = boundary_output(sequence: sequence, slot: held.left, own: total_field, visits: visits);
+  let right = boundary_output(sequence: sequence, slot: held.right, own: total_field, visits: visits);
+  let (links, actions, placed, opens) = slot_view(pages: &sequence^.nodes, slot: slot, span: sequence^.span);
+  let kids_placed = left.placed +sat right.placed;
+  let kids_opens = left.opens +sat right.opens;
+  let left_bounded = output_bounded(output: left);
+  let right_bounded = output_bounded(output: right);
+  let kids_bounded = bor(left_bounded, right_bounded);
+  let kids_open = kids_opens > 0_u64;
+  let kids_semantic = bor(kids_bounded, kids_open);
+  if own.placed > 0_u64 {
+    set actions.own_geometry = origin_accumulate(owner: actions.own_geometry, local: geometry);
+  }
+  if kids_placed > 0_u64 {
+    set actions.child_geometry = origin_accumulate(owner: actions.child_geometry, local: geometry);
+  }
+  if semantic != 0_i64 {
+    let moved_own = shift_motion(output: own, delta: semantic);
+    let moved_total = shift_motion(output: total, delta: semantic);
+    slot_store_output(pages: &sequence^.nodes, slot: slot, span: sequence^.span, output: &moved_own, own: own_field);
+    slot_store_output(pages: &sequence^.nodes, slot: slot, span: sequence^.span, output: &moved_total, own: total_field);
+    if own.opens > 0_u64 {
+      set actions.own_semantic = actions.own_semantic +sat semantic;
+    }
+    if kids_semantic {
+      set actions.child_semantic = actions.child_semantic +sat semantic;
+    }
+  }
+  if basis_set {
+    if own.opens > 0_u64 {
+      set actions.own_basis = basis;
+      set actions.own_basis_set = True();
+    }
+    if kids_open {
+      set actions.child_basis = basis;
+      set actions.child_basis_set = True();
+    }
+  }
+  slot_store_actions(pages: &sequence^.nodes, slot: slot, span: sequence^.span, actions: actions);
+  return unit;
+}
+
+fn range_distribute(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -> result: unit reads(sequence.range_actions), reads(sequence.span), writes(sequence.nodes), writes(visits) {
+  doc "Pushes one node's pending child actions into its two children before its membership or children's stored transfers change. Distribution uses the masks of the members that received the action.";
+  if sequence^.range_actions {
+  } else {
+    return unit;
+  }
+  if slot == no_index {
+    return unit;
+  }
+  let (links, actions, placed, opens) = slot_view(pages: &sequence^.nodes, slot: slot, span: sequence^.span);
+  if links.live {
+  } else {
+    return unit;
+  }
+  let identity = child_actions_identity(actions: actions);
+  if identity {
+    return unit;
+  }
+  range_receive(sequence: sequence, slot: links.left, geometry: actions.child_geometry, semantic: actions.child_semantic, basis: actions.child_basis, basis_set: actions.child_basis_set, visits: visits);
+  range_receive(sequence: sequence, slot: links.right, geometry: actions.child_geometry, semantic: actions.child_semantic, basis: actions.child_basis, basis_set: actions.child_basis_set, visits: visits);
+  let cleared = actions;
+  set cleared.child_geometry = zero_origin();
+  set cleared.child_semantic = 0_i64;
+  set cleared.child_basis = 0_i32;
+  set cleared.child_basis_set = False();
+  slot_store_actions(pages: &sequence^.nodes, slot: slot, span: sequence^.span, actions: cleared);
+  return unit;
+}
+
+fn range_expose(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -> result: unit reads(sequence.range_actions), reads(sequence.span), writes(sequence.nodes), writes(visits) {
+  doc "Distributes pending child actions from the root down to and including one slot, so that slot inherits nothing and its children's stored transfers are relative to it. Only the bounded index path is visited.";
+  if sequence^.range_actions {
+  } else {
+    return unit;
+  }
+  if slot == no_index {
+    return unit;
+  }
+  let (links, actions, placed, opens) = slot_view(pages: &sequence^.nodes, slot: slot, span: sequence^.span);
+  if links.live {
+  } else {
+    return unit;
+  }
+  if links.parent != no_index {
+    range_expose(sequence: sequence, slot: links.parent, visits: visits);
+  }
+  range_distribute(sequence: sequence, slot: slot, visits: visits);
+  return unit;
+}
+
+fn owner_expose(context: &Context, owner: u32, slot: u32) -> result: unit reads(context.range_actions), reads(context.entries.span), reads(context.entries.range_actions), writes(context.entries.nodes), writes(context.blocks.inner), writes(context.boundary_visits) {
+  doc "Exposes one owner slot's index path before a point replacement; a context without retained actions has nothing to distribute.";
+  if context^.range_actions {
+  } else {
+    return unit;
+  }
+  if slot == no_index {
+    return unit;
+  }
+  if owner == no_index {
+    range_expose(sequence: &context^.entries, slot: slot, visits: &context^.boundary_visits);
+    return unit;
+  }
+  let at = cvt::<u32, u64>(owner);
+  if at < context^.blocks.inner.len {
+    range_expose(sequence: &context^.blocks.inner[at].entries, slot: slot, visits: &context^.boundary_visits);
+  }
+  return unit;
+}
+
+fn retire_point_geometry(context: &Context, owner: u32, slot: u32) -> result: unit reads(context.range_actions), reads(context.entries.span), reads(context.entries.range_actions), writes(context.entries.nodes), writes(context.blocks.inner), writes(context.boundary_visits) {
+  doc "Prepares a point geometry replacement: after exposure the point inherits nothing, and its own geometry action is retired because the caller encodes a complete new base in the effective owner frame. Semantic channels are untouched.";
+  if context^.range_actions {
+  } else {
+    return unit;
+  }
+  owner_expose(context: context, owner: owner, slot: slot);
+  let (links, actions, placed, opens) = owner_view(context: context, owner: owner, slot: slot);
+  if links.live {
+  } else {
+    return unit;
+  }
+  set actions.own_geometry = zero_origin();
+  owner_store_actions(context: context, owner: owner, slot: slot, actions: actions);
+  return unit;
+}
+
+fn settle_open_semantics(context: &Context, at: u64) -> result: unit reads(context.range_actions), reads(context.entries.span), reads(context.entries.range_actions), writes(context.entries.nodes), writes(context.blocks.inner), writes(context.boundary_visits) {
+  doc "Makes one Open's duplicated offset, boundary and basis height equal to its effective view before a semantic point publication overwrites them: exposes its path, folds its own semantic displacement and basis assignment into the raw fields, then retires those own channels. Geometry channels are untouched.";
+  if context^.range_actions {
+  } else {
+    return unit;
+  }
+  if at < context^.blocks.inner.len {
+  } else {
+    return unit;
+  }
+  let owner = context^.blocks.inner[at].parent;
+  let slot = context^.blocks.inner[at].entry_slot;
+  owner_expose(context: context, owner: owner, slot: slot);
+  let (links, actions, placed, opens) = owner_view(context: context, owner: owner, slot: slot);
+  if links.live {
+  } else {
+    return unit;
+  }
+  if at < context^.blocks.inner.len {
+    if actions.own_semantic != 0_i64 {
+      set context^.blocks.inner[at].output.offset = context^.blocks.inner[at].output.offset +sat actions.own_semantic;
+      let moved = shift_motion(output: context^.blocks.inner[at].boundary, delta: actions.own_semantic);
+      set context^.blocks.inner[at].boundary = moved;
+    }
+    if actions.own_basis_set {
+      set context^.blocks.inner[at].output.basis_height = actions.own_basis;
+    }
+  }
+  set actions.own_semantic = 0_i64;
+  set actions.own_basis = 0_i32;
+  set actions.own_basis_set = False();
+  owner_store_actions(context: context, owner: owner, slot: slot, actions: actions);
+  return unit;
+}
+
+fn install_range(sequence: &EntrySequence, root: u32, skip: u64, action: RangeAction, visits: &BoundaryVisits) -> made: SequenceOutput reads(sequence.span), writes(sequence.nodes), writes(sequence.range_actions), writes(visits) {
+  doc "Activates this owner before installing an action. The bit is conservative for empty or identity ranges and stays set through point retirement and rewiring; recursive branches only read it and do not share a flag write.";
+  set sequence^.range_actions = True();
+  return install_range_subtree(sequence: sequence, root: root, skip: skip, action: action, visits: visits);
+}
+
+fn install_range_subtree(sequence: &EntrySequence, root: u32, skip: u64, action: RangeAction, visits: &BoundaryVisits) -> made: SequenceOutput reads(sequence.span), reads(sequence.range_actions), writes(sequence.nodes), writes(visits) {
+  doc "Installs one exact action on every direct entry from rank skip onward. Fully covered subtrees receive it in O(1); the boundary path distributes its pending actions before descending and joins left, own and right once in the retained association. Returns the subtree's new stored total.";
+  let total_field = False();
+  let own_field = True();
+  let held = boundary_node(sequence: sequence, slot: root, visits: visits);
+  if held.live {
+  } else {
+    return empty_output();
+  }
+  if skip >= held.total_count {
+    let unchanged = boundary_output(sequence: sequence, slot: root, own: total_field, visits: visits);
+    return unchanged;
+  }
+  if skip == 0_u64 {
+    range_receive(sequence: sequence, slot: root, geometry: action.geometry, semantic: action.semantic, basis: action.basis, basis_set: action.basis_set, visits: visits);
+    let covered = boundary_output(sequence: sequence, slot: root, own: total_field, visits: visits);
+    return covered;
+  }
+  range_distribute(sequence: sequence, slot: root, visits: visits);
+  let left_node = boundary_node(sequence: sequence, slot: held.left, visits: visits);
+  let prefix_count = left_node.total_count;
+  let left = if skip < prefix_count {
+    give install_range_subtree(sequence: sequence, root: held.left, skip: skip, action: action, visits: visits);
+  } else {
+    give boundary_output(sequence: sequence, slot: held.left, own: total_field, visits: visits);
+  }
+  let own = boundary_output(sequence: sequence, slot: root, own: own_field, visits: visits);
+  if skip <= prefix_count {
+    let (links, actions, placed, opens) = slot_view(pages: &sequence^.nodes, slot: root, span: sequence^.span);
+    if own.placed > 0_u64 {
+      set actions.own_geometry = origin_accumulate(owner: actions.own_geometry, local: action.geometry);
+    }
+    if action.semantic != 0_i64 {
+      let moved = shift_motion(output: own, delta: action.semantic);
+      set own = moved;
+      slot_store_output(pages: &sequence^.nodes, slot: root, span: sequence^.span, output: &own, own: own_field);
+      if own.opens > 0_u64 {
+        set actions.own_semantic = actions.own_semantic +sat action.semantic;
+      }
+    }
+    if action.basis_set {
+      if own.opens > 0_u64 {
+        set actions.own_basis = action.basis;
+        set actions.own_basis_set = True();
+      }
+    }
+    slot_store_actions(pages: &sequence^.nodes, slot: root, span: sequence^.span, actions: actions);
+  }
+  let after = prefix_count +sat 1_u64;
+  let right_skip = skip -sat after;
+  let right = install_range_subtree(sequence: sequence, root: held.right, skip: right_skip, action: action, visits: visits);
+  let prefix = join_output(left: &left, right: &own);
+  let total = join_output(left: &prefix, right: &right);
+  slot_store_output(pages: &sequence^.nodes, slot: root, span: sequence^.span, output: &total, own: total_field);
+  return total;
+}
+
+fn range_positioned(sequence: &EntrySequence, root: u32, skip: u64, owner: u32, handles: &Box<Slots<EntryHandle>>, visits: &BoundaryVisits) -> result: unit reads(sequence.nodes), reads(sequence.payloads), reads(sequence.span), writes(handles), writes(visits) {
+  doc "Selects the direct positioned entries from rank skip onward, pruning every subtree whose transfer reaches no positioned child. Positioned anchors are real exception work: they are not placed range members and are settled explicitly.";
+  let held = boundary_node(sequence: sequence, slot: root, visits: visits);
+  if held.live {
+  } else {
+    return unit;
+  }
+  if skip >= held.total_count {
+    return unit;
+  }
+  let total_field = False();
+  let own_field = True();
+  let total = boundary_output(sequence: sequence, slot: root, own: total_field, visits: visits);
+  if total.positioned == 0_u64 {
+    return unit;
+  }
+  let left_node = boundary_node(sequence: sequence, slot: held.left, visits: visits);
+  let prefix_count = left_node.total_count;
+  if skip < prefix_count {
+    range_positioned(sequence: sequence, root: held.left, skip: skip, owner: owner, handles: handles, visits: visits);
+  }
+  if skip <= prefix_count {
+    let missing = Flow::Close(block: no_index);
+    let item = slot_read::<Flow>(pages: &sequence^.payloads, slot: root, span: sequence^.span, missing: missing);
+    match item {
+      Out(..) => {
+        let handle = EntryHandle(owner: owner, slot: root);
+        let kept = push_item::<EntryHandle>(cell: handles, value: handle, ceiling: item_ceiling);
+      }
+      Open(..) => {
+      }
+      Close(..) => {
+      }
+      Text(..) => {
+      }
+      Child(..) => {
+      }
+      Float(..) => {
+      }
+    }
+  }
+  let after = prefix_count +sat 1_u64;
+  let right_skip = skip -sat after;
+  range_positioned(sequence: sequence, root: held.right, skip: right_skip, owner: owner, handles: handles, visits: visits);
+  return unit;
+}
+
+fn owner_view(context: &Context, owner: u32, slot: u32) -> (links: SequenceCursor, actions: RangeActions, placed: Bool, opens: Bool) reads(context.entries.nodes), reads(context.entries.span), reads(context.blocks.inner) {
+  doc "Reads one owner cell's topology, actions and own applicability.";
+  if owner == no_index {
+    let (root_links, root_actions, root_placed, root_opens) = slot_view(pages: &context^.entries.nodes, slot: slot, span: context^.entries.span);
+    return root_links, root_actions, root_placed, root_opens;
+  }
+  let at = cvt::<u32, u64>(owner);
+  if at < context^.blocks.inner.len {
+    let (block_links, block_actions, block_placed, block_opens) = slot_view(pages: &context^.blocks.inner[at].entries.nodes, slot: slot, span: context^.blocks.inner[at].entries.span);
+    return block_links, block_actions, block_placed, block_opens;
+  }
+  let missing = vacant_cursor();
+  let identity = identity_actions();
+  let no = False();
+  return missing, identity, no, no;
+}
+
+fn owner_store_actions(context: &Context, owner: u32, slot: u32, actions: RangeActions) -> result: unit reads(context.entries.span), writes(context.entries.nodes), writes(context.blocks.inner) {
+  doc "Writes one owner cell's actions.";
+  if owner == no_index {
+    slot_store_actions(pages: &context^.entries.nodes, slot: slot, span: context^.entries.span, actions: actions);
+    return unit;
+  }
+  let at = cvt::<u32, u64>(owner);
+  if at < context^.blocks.inner.len {
+    slot_store_actions(pages: &context^.blocks.inner[at].entries.nodes, slot: slot, span: context^.blocks.inner[at].entries.span, actions: actions);
+  }
+  return unit;
+}
+
+fn owner_shift_outputs(context: &Context, owner: u32, slot: u32, semantic: i64) -> result: unit reads(context.entries.span), writes(context.entries.nodes), writes(context.blocks.inner) {
+  doc "Folds an inherited semantic displacement into one cell's stored own and total transfers.";
+  if semantic == 0_i64 {
+    return unit;
+  }
+  let own_field = True();
+  let total_field = False();
+  if owner == no_index {
+    let own = slot_output(pages: &context^.entries.nodes, slot: slot, span: context^.entries.span, own: own_field);
+    let total = slot_output(pages: &context^.entries.nodes, slot: slot, span: context^.entries.span, own: total_field);
+    let moved_own = shift_motion(output: own, delta: semantic);
+    let moved_total = shift_motion(output: total, delta: semantic);
+    slot_store_output(pages: &context^.entries.nodes, slot: slot, span: context^.entries.span, output: &moved_own, own: own_field);
+    slot_store_output(pages: &context^.entries.nodes, slot: slot, span: context^.entries.span, output: &moved_total, own: total_field);
+    return unit;
+  }
+  let at = cvt::<u32, u64>(owner);
+  if at < context^.blocks.inner.len {
+    let own = slot_output(pages: &context^.blocks.inner[at].entries.nodes, slot: slot, span: context^.blocks.inner[at].entries.span, own: own_field);
+    let total = slot_output(pages: &context^.blocks.inner[at].entries.nodes, slot: slot, span: context^.blocks.inner[at].entries.span, own: total_field);
+    let moved_own = shift_motion(output: own, delta: semantic);
+    let moved_total = shift_motion(output: total, delta: semantic);
+    slot_store_output(pages: &context^.blocks.inner[at].entries.nodes, slot: slot, span: context^.blocks.inner[at].entries.span, output: &moved_own, own: own_field);
+    slot_store_output(pages: &context^.blocks.inner[at].entries.nodes, slot: slot, span: context^.blocks.inner[at].entries.span, output: &moved_total, own: total_field);
+  }
+  return unit;
+}
+
+fn fold_payload_actions(context: &Context, item: Flow, geometry: Origin, semantic: i64, basis: i32, basis_set: Bool) -> result: unit writes(context.blocks.inner), writes(context.paragraphs.inner), writes(context.children.inner) {
+  doc "Writes one payload's resolved actions into its retained base and duplicated Open fields. The caller passes identity channels for members that are not applicable.";
+  match item {
+    Open(block: b) => {
+      let at = cvt::<u32, u64>(b);
+      if at < context^.blocks.inner.len {
+        set context^.blocks.inner[at].x = context^.blocks.inner[at].x +sat geometry.x;
+        set context^.blocks.inner[at].y = context^.blocks.inner[at].y +sat geometry.y;
+        set context^.blocks.inner[at].dx = context^.blocks.inner[at].dx +sat geometry.dx;
+        set context^.blocks.inner[at].dy = context^.blocks.inner[at].dy +sat geometry.dy;
+        if semantic != 0_i64 {
+          set context^.blocks.inner[at].output.offset = context^.blocks.inner[at].output.offset +sat semantic;
+          let moved = shift_motion(output: context^.blocks.inner[at].boundary, delta: semantic);
+          set context^.blocks.inner[at].boundary = moved;
+        }
+        if basis_set {
+          set context^.blocks.inner[at].output.basis_height = basis;
+        }
+      }
+    }
+    Text(paragraph: p) => {
+      let at = cvt::<u32, u64>(p);
+      if at < context^.paragraphs.inner.len {
+        set context^.paragraphs.inner[at].x = context^.paragraphs.inner[at].x +sat geometry.x;
+        set context^.paragraphs.inner[at].top = context^.paragraphs.inner[at].top +sat geometry.y;
+        set context^.paragraphs.inner[at].dx = context^.paragraphs.inner[at].dx +sat geometry.dx;
+        set context^.paragraphs.inner[at].dy = context^.paragraphs.inner[at].dy +sat geometry.dy;
+      }
+    }
+    Child(context: c) => {
+      let at = cvt::<u32, u64>(c);
+      if at < context^.children.inner.len {
+        let moved = origin_accumulate(owner: context^.children.inner[at].anchor, local: geometry);
+        set context^.children.inner[at].anchor = moved;
+      }
+    }
+    Float(context: f) => {
+      let at = cvt::<u32, u64>(f);
+      if at < context^.children.inner.len {
+        let moved = origin_accumulate(owner: context^.children.inner[at].anchor, local: geometry);
+        set context^.children.inner[at].anchor = moved;
+      }
+    }
+    Out(..) => {
+    }
+    Close(..) => {
+    }
+  }
+  return unit;
+}
+
+fn normalize_owner(context: &Context, owner: u32, slot: u32, geometry: Origin, semantic: i64, basis: i32, basis_set: Bool) -> result: unit writes(context) {
+  doc "Folds every action of one owner subtree into payload bases, duplicated Open fields and stored transfers in one top-down traversal, carrying pending child actions to each member exactly once, then retires them. Only full bridges call this; the latest basis assignment is the topmost one.";
+  let (links, actions, placed, opens) = owner_view(context: context, owner: owner, slot: slot);
+  if links.live {
+  } else {
+    return unit;
+  }
+  let zero = zero_origin();
+  let own_geometry = if placed {
+    give origin_accumulate(owner: actions.own_geometry, local: geometry);
+  } else {
+    give zero;
+  }
+  let own_semantic = if opens {
+    give actions.own_semantic +sat semantic;
+  } else {
+    give 0_i64;
+  }
+  let own_basis = actions.own_basis;
+  let own_basis_set = band(opens, actions.own_basis_set);
+  if basis_set {
+    if opens {
+      set own_basis = basis;
+      set own_basis_set = True();
+    }
+  }
+  owner_shift_outputs(context: context, owner: owner, slot: slot, semantic: semantic);
+  let item = reference_owner_payload(context: context, owner: owner, slot: slot);
+  fold_payload_actions(context: context, item: item, geometry: own_geometry, semantic: own_semantic, basis: own_basis, basis_set: own_basis_set);
+  let child_geometry = origin_accumulate(owner: geometry, local: actions.child_geometry);
+  let child_semantic = semantic +sat actions.child_semantic;
+  let child_basis = actions.child_basis;
+  let child_basis_set = actions.child_basis_set;
+  if basis_set {
+    set child_basis = basis;
+    set child_basis_set = True();
+  }
+  let identity = identity_actions();
+  owner_store_actions(context: context, owner: owner, slot: slot, actions: identity);
+  normalize_owner(context: context, owner: owner, slot: links.left, geometry: child_geometry, semantic: child_semantic, basis: child_basis, basis_set: child_basis_set);
+  normalize_owner(context: context, owner: owner, slot: links.right, geometry: child_geometry, semantic: child_semantic, basis: child_basis, basis_set: child_basis_set);
+  return unit;
+}
+
+fn normalize_range_actions(context: &Context) -> result: unit writes(context) {
+  doc "The full-bridge normalization: folds every retained action of every owner sequence into the representation the existing dense publishers and restorers read. It is never called by a point or range operation.";
+  if context^.range_actions {
+  } else {
+    return unit;
+  }
+  let zero = zero_origin();
+  let no = False();
+  let root_slot = context^.entries.root;
+  normalize_owner(context: context, owner: no_index, slot: root_slot, geometry: zero, semantic: 0_i64, basis: 0_i32, basis_set: no);
+  set context^.entries.range_actions = False();
+  let blocks = context^.blocks.inner.len;
+  for (b in 0_u64..blocks) {
+    if b < context^.blocks.inner.len {
+      let owner = flow_index(at: b);
+      let root = context^.blocks.inner[b].entries.root;
+      normalize_owner(context: context, owner: owner, slot: root, geometry: zero, semantic: 0_i64, basis: 0_i32, basis_set: no);
+      if b < context^.blocks.inner.len {
+        set context^.blocks.inner[b].entries.range_actions = False();
+      }
+    }
+  }
+  set context^.range_actions = False();
+  return unit;
+}
+
+fn range_check_output(floor: i64) -> made: SequenceOutput pure {
+  doc "An independent check transfer: one placed solid entry with a finite natural floor.";
+  let output = empty_output();
+  set output.count = 1_u64;
+  set output.events = 1_u64;
+  set output.through = False();
+  set output.advance = 10_i64;
+  set output.travel = 100_i64;
+  set output.natural_floor = floor;
+  set output.placed = 1_u64;
+  return output;
+}
+
+fn range_check_point(sequence: &EntrySequence, slot: u32, floor: i64, moved: i64) -> passed: Bool reads(sequence.nodes), reads(sequence.span), reads(sequence.range_actions) {
+  doc "Compares one slot's effective natural floor and resolved vertical action with independently stated constants.";
+  let visits = no_boundary_visits();
+  let own = True();
+  let output = effective_output(sequence: sequence, slot: slot, own: own, visits: &visits);
+  if output.natural_floor != floor {
+    return False();
+  }
+  let view = range_inherited(sequence: sequence, slot: slot);
+  let action = view_geometry(view: view);
+  if action.y != moved {
+    return False();
+  }
+  let geometry = range_geometry(sequence: sequence, slot: slot);
+  let expected_y = geometry.y == moved;
+  let no_x = geometry.x == 0_i64;
+  let no_dx = geometry.dx == 0_i64;
+  let no_dy = geometry.dy == 0_i64;
+  let normal = band(expected_y, no_x);
+  let visual = band(no_dx, no_dy);
+  return band(normal, visual);
+}
+
+fn range_check_slot(slots: &[u32], at: u64) -> slot: u32 reads(slots) {
+  doc "Reads one recorded check slot; an absent record reads the missing index, which fails every comparison.";
+  if at < slots^.len {
+    return slots^[at];
+  }
+  return no_index;
+}
+
+fn range_check() -> passed: Bool pure {
+  doc "Independent constants check range membership: five placed entries with natural floors 1, 11, 21, 31 and 41 receive semantic 7 and vertical geometry 3 from rank 2 onward, so their effective floors become 1, 11, 28, 38 and 48, range reads over ranks 2..5 and 4..5 see 28 and 48, and only the last three resolve y 3, before any later operation distributes the pending actions. Replacing the third entry's own transfer with floor 50 exposes its path first: it reads exactly 50 while its neighbours keep their answers. Appending a sixth entry (floor 100) forces rebalancing; it must inherit nothing while every earlier answer survives. Removing the first entry transplants index links; the remaining answers and the root minimum 11 must hold.";
+  let sequence = new_sequence();
+  let visits = no_boundary_visits();
+  let slots = box_array_filled::<u32>(count: 6_u64, value: no_index);
+  for (at in 0_u64..5_u64) {
+    let wide = cvt::<u64, i64>(at);
+    let tens = wide *sat 10_i64;
+    let floor = tens +sat 1_i64;
+    let paragraph = cvt::<u64, u32>(at);
+    let item = Flow::Text(paragraph: paragraph);
+    let output = range_check_output(floor: floor);
+    let inserted = insert_before(sequence: &sequence, before: no_index, item: item, output: output, visits: &visits);
+    match inserted {
+      Ok(value: slot) => {
+        if at < slots.inner.len {
+          set slots.inner[at] = slot;
+        }
+      }
+      Err(..) => {
+        return False();
+      }
+    }
+  }
+  let slot_count = slots.inner.len;
+  let s0 = range_check_slot(slots: &slots.inner[0_u64..slot_count], at: 0_u64);
+  let s1 = range_check_slot(slots: &slots.inner[0_u64..slot_count], at: 1_u64);
+  let s2 = range_check_slot(slots: &slots.inner[0_u64..slot_count], at: 2_u64);
+  let s3 = range_check_slot(slots: &slots.inner[0_u64..slot_count], at: 3_u64);
+  let s4 = range_check_slot(slots: &slots.inner[0_u64..slot_count], at: 4_u64);
+  let geometry = Origin(x: 0_i64, y: 3_i64, dx: 0_i64, dy: 0_i64);
+  let no = False();
+  let action = RangeAction(geometry: geometry, semantic: 7_i64, basis: 0_i32, basis_set: no);
+  let root = sequence.root;
+  let total = install_range(sequence: &sequence, root: root, skip: 2_u64, action: action, visits: &visits);
+  if total.natural_floor != 1_i64 {
+    return False();
+  }
+  let a = range_check_point(sequence: &sequence, slot: s0, floor: 1_i64, moved: 0_i64);
+  let b = range_check_point(sequence: &sequence, slot: s1, floor: 11_i64, moved: 0_i64);
+  let c = range_check_point(sequence: &sequence, slot: s2, floor: 28_i64, moved: 3_i64);
+  let d = range_check_point(sequence: &sequence, slot: s3, floor: 38_i64, moved: 3_i64);
+  let e = range_check_point(sequence: &sequence, slot: s4, floor: 48_i64, moved: 3_i64);
+  let first_pair = band(a, b);
+  let middle_pair = band(c, d);
+  let installed_pair = band(first_pair, middle_pair);
+  let installed_ok = band(installed_pair, e);
+  if installed_ok {
+  } else {
+    return False();
+  }
+  let suffix_root = sequence.root;
+  let suffix = range_output(sequence: &sequence, root: suffix_root, from: 2_u64, until: 5_u64, visits: &visits);
+  if suffix.natural_floor != 28_i64 {
+    return False();
+  }
+  let tail_root = sequence.root;
+  let tail = range_output(sequence: &sequence, root: tail_root, from: 4_u64, until: 5_u64, visits: &visits);
+  if tail.natural_floor != 48_i64 {
+    return False();
+  }
+  let replaced = range_check_output(floor: 50_i64);
+  boundary_set(sequence: &sequence, slot: s2, output: replaced, visits: &visits);
+  let g = range_check_point(sequence: &sequence, slot: s2, floor: 50_i64, moved: 3_i64);
+  let h = range_check_point(sequence: &sequence, slot: s4, floor: 48_i64, moved: 3_i64);
+  let i = range_check_point(sequence: &sequence, slot: s1, floor: 11_i64, moved: 0_i64);
+  let point_pair = band(g, h);
+  let point_ok = band(point_pair, i);
+  if point_ok {
+  } else {
+    return False();
+  }
+  let added_item = Flow::Text(paragraph: 5_u32);
+  let added_output = range_check_output(floor: 100_i64);
+  let added = insert_before(sequence: &sequence, before: no_index, item: added_item, output: added_output, visits: &visits);
+  let s5 = match added {
+    Ok(value: slot) => {
+      give slot;
+    }
+    Err(..) => {
+      return False();
+    }
+  }
+  let f = range_check_point(sequence: &sequence, slot: s5, floor: 100_i64, moved: 0_i64);
+  let j = range_check_point(sequence: &sequence, slot: s3, floor: 38_i64, moved: 3_i64);
+  let inserted_ok = band(f, j);
+  if inserted_ok {
+  } else {
+    return False();
+  }
+  remove(sequence: &sequence, slot: s0, visits: &visits);
+  let k = range_check_point(sequence: &sequence, slot: s1, floor: 11_i64, moved: 0_i64);
+  let l = range_check_point(sequence: &sequence, slot: s2, floor: 50_i64, moved: 3_i64);
+  let m = range_check_point(sequence: &sequence, slot: s4, floor: 48_i64, moved: 3_i64);
+  let n = range_check_point(sequence: &sequence, slot: s5, floor: 100_i64, moved: 0_i64);
+  let removed_pair = band(k, l);
+  let removed_tail = band(m, n);
+  let removed_ok = band(removed_pair, removed_tail);
+  if removed_ok {
+  } else {
+    return False();
+  }
+  let total_field = False();
+  let final_root = sequence.root;
+  let root_output = boundary_output(sequence: &sequence, slot: final_root, own: total_field, visits: &visits);
+  return root_output.natural_floor == 11_i64;
+}

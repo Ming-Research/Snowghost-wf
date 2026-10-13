@@ -1,0 +1,205 @@
+alias Styles = pkg::style::Styles;
+alias Sizing = pkg::css::values::Sizing;
+alias sizing_value = pkg::css::values::sizing_value;
+alias sizing_auto = pkg::css::values::sizing_auto;
+alias sizing_none = pkg::css::values::sizing_none;
+alias track_length = pkg::css::values::track_length;
+alias track_flex = pkg::css::values::track_flex;
+
+fn grid_empty_row() -> made: GridRowResult pure {
+  let no = False();
+  let space = fresh_space();
+  return GridRowResult(valid: no, space: space, height: 0_i32, margin_top: 0_i32, margin_bottom: 0_i32, first_baseline: 0_i32, has_first_baseline: no);
+}
+
+fn grid_read_row(record: &Option<Box<GridRowResult>>) -> made: GridRowResult reads(record) {
+  match record^ {
+    Some(value: held) => {
+      return held^.inner;
+    }
+    None() => {
+      return grid_empty_row();
+    }
+  }
+}
+
+fn grid_store_row(record: &Option<Box<GridRowResult>>, measured: GridRowResult) -> result: unit writes(record) {
+  match record^ {
+    Some(value: held) => {
+      set held^.inner = measured;
+      return unit;
+    }
+    None() => {
+    }
+  }
+  let held = box_new::<GridRowResult>(value: measured);
+  set record^ = Some<Box<GridRowResult>>(value: move held);
+  return unit;
+}
+
+fn grid_forget(context: &Context) -> result: unit writes(context.grid_row) {
+  doc "Invalidates the item's natural row result before changed content/style is consumed and its marks clear. Contexts not measured as grid items allocate no row record. A column certificate depends on container and direct item styles: those restyle the grid itself and force its sizing pass, while descendant content cannot change a proved contribution.";
+  match context^.grid_row {
+    Some(value: held) => {
+      set held^.inner.valid = False();
+    }
+    None() => {
+    }
+  }
+  return unit;
+}
+
+fn grid_row_contribution(item: &GridItem, measured: GridRowResult) -> result: unit writes(item) {
+  let outer = measured.margin_top +sat measured.margin_bottom;
+  let tall = measured.height +sat outer;
+  set item^.least = tall;
+  set item^.most = tall;
+  set item^.minimum = tall;
+  let inner = if measured.has_first_baseline {
+    give measured.first_baseline;
+  } else {
+    give measured.height;
+  }
+  set item^.ascent = measured.margin_top +sat inner;
+  return unit;
+}
+
+fn grid_sum_work(items: &[GridItem]) -> work: UpdateCounts reads(items) {
+  doc "Balanced addition of independent item layout work; no item writes a shared counter.";
+  let count = items^.len;
+  if count == 0_u64 {
+    return no_updates();
+  }
+  if count == 1_u64 {
+    return items^[0_u64].work;
+  }
+  let middle = count / 2_u64;
+  let first = grid_sum_work(items: &items^[0_u64..middle]);
+  let second = grid_sum_work(items: &items^[middle..count]);
+  return add_counts(first: first, second: second);
+}
+
+fn grid_independent_columns(tracks: &[GridTrack], definite: Bool) -> ready: Bool reads(tracks) {
+  doc "Length minima and maxima consume no item contribution. Flexible maxima qualify only under unchanged definite inline space; intrinsic sizing consumes their item contributions. Balanced conjunction keeps independent tracks unordered.";
+  let count = tracks^.len;
+  if count == 0_u64 {
+    return True();
+  }
+  if count == 1_u64 {
+    let track = tracks^[0_u64];
+    let minimum = track.min_kind == track_length;
+    let length = track.max_kind == track_length;
+    let flexible = track.max_kind == track_flex;
+    let definite_flex = band(definite, flexible);
+    let maximum = bor(length, definite_flex);
+    return band(minimum, maximum);
+  }
+  let middle = count / 2_u64;
+  let first = grid_independent_columns(tracks: &tracks^[0_u64..middle], definite: definite);
+  let second = grid_independent_columns(tracks: &tracks^[middle..count], definite: definite);
+  return band(first, second);
+}
+
+fn grid_independent_limit(size: Sizing) -> ready: Bool pure {
+  if size.kind == sizing_value {
+    return bnot(size.value.has_percent);
+  }
+  let automatic = size.kind == sizing_auto;
+  let absent = size.kind == sizing_none;
+  return bor(automatic, absent);
+}
+
+fn grid_fixed_contribution(child: &Context, styles: &Styles) -> ready: Bool reads(child), reads(styles) {
+  doc "The fixed-width family: intrinsic_sizes uses the same nonpercentage preferred width and content-independent clamps for min/max-content, and grid_measure_column takes its minimum from min-width, zero for scrolling, or that same min-content width. Stable frame/margins complete all three outer contributions. No row-size or ratio transfer is admitted.";
+  let ignored = sizes_ignored(context: child, styles: styles);
+  if ignored {
+    return False();
+  }
+  if child^.ratio_width > 0_i32 {
+    return False();
+  }
+  let sizes = size_of(styles: styles, style: child^.style);
+  if sizes.width.kind != sizing_value {
+    return False();
+  }
+  if sizes.width.value.has_percent {
+    return False();
+  }
+  let minimum = grid_independent_limit(size: sizes.min_width);
+  let maximum = grid_independent_limit(size: sizes.max_width);
+  return band(minimum, maximum);
+}
+
+fn grid_column_item_ready(child: &Context, item: GridItem, tracks: &[GridTrack], definite: Bool, styles: &Styles) -> ready: Bool reads(child), reads(tracks), reads(styles) {
+  if item.active {
+  } else {
+    return True();
+  }
+  let first = grid_index(value: item.column);
+  let span = grid_index(value: item.columns);
+  let end = first +sat span;
+  if first <= end {
+    if end <= tracks^.len {
+      let independent = grid_independent_columns(tracks: &tracks^[first..end], definite: definite);
+      if independent {
+        return True();
+      }
+      return grid_fixed_contribution(child: child, styles: styles);
+    }
+  }
+  return False();
+}
+
+fn grid_column_items_ready(children: &[Context], items: &[GridItem], tracks: &[GridTrack], definite: Bool, styles: &Styles) -> ready: Bool reads(children), reads(items), reads(tracks), reads(styles) {
+  doc "Every item feeding any intrinsic column, including a span, must have fixed contributions. Untouched content alone is no proof against row feedback. Independent items reduce through a balanced conjunction.";
+  let count = children^.len;
+  if count != items^.len {
+    return False();
+  }
+  if count == 0_u64 {
+    return True();
+  }
+  if count == 1_u64 {
+    return grid_column_item_ready(child: &children^[0_u64], item: items^[0_u64], tracks: tracks, definite: definite, styles: styles);
+  }
+  let middle = count / 2_u64;
+  let first = grid_column_items_ready(children: &children^[0_u64..middle], items: &items^[0_u64..middle], tracks: tracks, definite: definite, styles: styles);
+  let second = grid_column_items_ready(children: &children^[middle..count], items: &items^[middle..count], tracks: tracks, definite: definite, styles: styles);
+  return band(first, second);
+}
+
+fn grid_same_layout(child: &Context, styles: &Styles) -> same: Bool reads(child), reads(styles) {
+  doc "Compares the inputs consumed by the materialized item. Exact effective Space equality works for every kind. A non-column flow also keeps its interior when all inline inputs match, its definite content height matches or no flow entry reads that height, and its used border-box height stays equal. The latter preserves positioned descendants' containing geometry. Grid, flex, table and replaced algorithms retain their complete constraints; their content can depend on definiteness beyond a flow's height-reader summary.";
+  let first = child^.laid;
+  let second = child^.space;
+  let same = equivalent_space(styles: styles, style: child^.style, first: first, second: second);
+  if same {
+    return True();
+  }
+  if child^.kind != ctx_flow {
+    return False();
+  }
+  if first.available == laid_never {
+    return False();
+  }
+  let normalized = Space(available: second.available, basis_width: second.basis_width, basis_height: second.basis_height, forced_width: second.forced_width, forced_height: first.forced_height, shrink: second.shrink);
+  let same_inline = equivalent_space(styles: styles, style: child^.style, first: first, second: normalized);
+  if same_inline {
+  } else {
+    return False();
+  }
+  let previous = flow_frame(styles: styles, style: child^.style, space: first, width: child^.width);
+  let frame = flow_frame(styles: styles, style: child^.style, space: second, width: child^.width);
+  if frame.columned {
+    return False();
+  }
+  let same_definite = frame.definite == previous.definite;
+  let same_height = bor(same_definite, child^.definite_free);
+  if same_height {
+  } else {
+    return False();
+  }
+  let content = imax(child^.content_raw, 0_i32);
+  let height = used_height(context: child, styles: styles, content: content);
+  return height == child^.height;
+}

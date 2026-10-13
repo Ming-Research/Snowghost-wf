@@ -1,4 +1,9 @@
+alias height_read_counts = pkg::layout::height_read_counts;
 alias structure_restyle = pkg::style::structure_restyle;
+alias boundary_counts = pkg::layout::boundary_counts;
+alias frontier_counts = pkg::layout::frontier_counts;
+alias boundary_transfer_check = pkg::layout::boundary_transfer_check;
+alias reference_publication_check = pkg::layout::reference_publication_check;
 alias Atom = pkg::base::atom::Atom;
 alias AtomTable = pkg::base::atom::AtomTable;
 alias Attribute = pkg::dom::Attribute;
@@ -55,6 +60,7 @@ alias lay_out = pkg::layout::lay_out;
 alias layout_changes = pkg::style::layout_changes;
 alias styles_changed = pkg::layout::styles_changed;
 alias structure_changed = pkg::layout::structure_changed;
+alias structure_splice = pkg::layout::structure_splice;
 alias structure_counts = pkg::layout::structure_counts;
 alias place_boxes = pkg::layout::place_boxes;
 alias now = std::time::now;
@@ -72,7 +78,15 @@ const fnv_prime: u64 = 1099511628211_u64;
 
 const paragraph_name: Array<u8, 1> = "p";
 
+const wrapper_name: Array<u8, 3> = "div";
+
 const class_name: Array<u8, 5> = "class";
+
+const structure_path_label: Array<u8, 15> = "structure path ";
+
+const splice_mode_label: Array<u8, 8> = " splice ";
+
+const splice_reason_label: Array<u8, 8> = " reason ";
 
 const base_label: Array<u8, 10> = "base hash ";
 
@@ -123,6 +137,22 @@ const paragraphs_label: Array<u8, 12> = " paragraphs ";
 const held_label: Array<u8, 14> = " held_entries ";
 
 const entries_label: Array<u8, 9> = " entries ";
+
+const boundary_entries_label: Array<u8, 18> = " boundary_entries ";
+
+const boundary_blocks_label: Array<u8, 17> = " boundary_blocks ";
+
+const boundary_indexes_label: Array<u8, 18> = " boundary_indexes ";
+
+const boundary_fallbacks_label: Array<u8, 20> = " boundary_fallbacks ";
+
+const boundary_reason_label: Array<u8, 17> = " boundary_reason ";
+
+const frontier_refusals_label: Array<u8, 19> = " frontier_refusals ";
+
+const frontier_reasons_label: Array<u8, 18> = " frontier_reasons ";
+
+const boundary_failure: Array<u8, 31> = "boundary transfer check failed\n";
 
 const full_label: Array<u8, 5> = " full";
 
@@ -577,8 +607,53 @@ fn make_paragraph(page: &Page, parent: NodeId, before: Option<NodeId>, text: &[u
   return Ok<NodeId, DomError>(value: paragraph);
 }
 
+fn make_nested_paragraph(page: &Page, parent: NodeId, before: Option<NodeId>, text: &[u8], depth: u64) -> result: Result<NodeId, DomError> reads(text), writes(page) contract {
+  requires text^.len <= 1073741824_u64;
+} {
+  doc "Creates depth nested div elements around a paragraph as one detached subtree, then inserts its root through the ordinary DOM API. The oracle J PARENT BEFORE DEPTH TEXT command uses this to exercise private subtree construction without generated-content style fallback.";
+  if depth == 0_u64 {
+    let made = propagate make_paragraph(page: page, parent: parent, before: before, text: text);
+    return Ok<NodeId, DomError>(value: made);
+  }
+  let name = match atom_intern(table: &page^.atoms, name: &wrapper_name[0_u64..wrapper_name.len]) {
+    Ok(value: found) => {
+      give found;
+    }
+    Err(..) => {
+      let refused = DomError::TooLarge();
+      return Err<NodeId, DomError>(error: refused);
+    }
+  }
+  let root = parent;
+  let inside = parent;
+  for (level in 0_u64..depth) {
+    let attributes = box_slots_new::<Attribute>(capacity: 0_u64);
+    let no_template = None<NodeId>();
+    let html_space = Namespace::Html();
+    let data = NodeData::Element(namespace: html_space, local_name: name, attributes: move attributes, template_contents: no_template);
+    let made = propagate create_node(document: &page^.document, data: move data);
+    if level == 0_u64 {
+      set root = made;
+    } else {
+      let linked = propagate append_child(document: &page^.document, parent: inside, child: made);
+    }
+    set inside = made;
+  }
+  let ending = None<NodeId>();
+  let paragraph = propagate make_paragraph(page: page, parent: inside, before: ending, text: text);
+  match before {
+    Some(value: reference) => {
+      let placed = propagate insert_before(document: &page^.document, parent: parent, child: root, reference: reference);
+    }
+    None() => {
+      let placed = propagate append_child(document: &page^.document, parent: parent, child: root);
+    }
+  }
+  return Ok<NodeId, DomError>(value: root);
+}
+
 fn structure_neighbours(page: &Page, line: &[u8]) -> (previous: Option<NodeId>, next: Option<NodeId>) reads(page), reads(line) {
-  doc "The children of the edited parent on either side of a B or X line's edit point, read before the edit: X's node's previous and next siblings; B's BEFORE and the child before it, or the parent's last child when BEFORE is -. Both None for any other line or a node the document does not hold.";
+  doc "The children of the edited parent on either side of a B, J or X line's edit point, read before the edit: X's node's previous and next siblings; B/J's BEFORE and the child before it, or the parent's last child when BEFORE is -. Both None for any other line or a node the document does not hold.";
   let nothing = None<NodeId>();
   let length = line^.len;
   if length < 3_u64 {
@@ -607,7 +682,10 @@ fn structure_neighbours(page: &Page, line: &[u8]) -> (previous: Option<NodeId>, 
   if kind == 88_u8 {
     return links.previous_sibling, links.next_sibling;
   }
-  if kind == 66_u8 {
+  let plain_insert = kind == 66_u8;
+  let nested_insert = kind == 74_u8;
+  let insertion = bor(plain_insert, nested_insert);
+  if insertion {
   } else {
     return nothing, nothing;
   }
@@ -639,13 +717,15 @@ fn structure_neighbours(page: &Page, line: &[u8]) -> (previous: Option<NodeId>, 
 }
 
 fn structure_parent(page: &Page, line: &[u8]) -> parent: Option<NodeId> reads(page), reads(line) {
-  doc "The element whose children a B or X line changes, read before the edit: B's PARENT, or the parent X's node has in the live document; None for any other line or a node that has no parent.";
+  doc "The element whose children a B, J or X line changes, read before the edit: B/J's PARENT, or the parent X's node has in the live document; None for any other line or a node that has no parent.";
   let length = line^.len;
   if length < 3_u64 {
     return None<NodeId>();
   }
   let kind = line^[0_u64];
-  let inserting = kind == 66_u8;
+  let plain_insert = kind == 66_u8;
+  let nested_insert = kind == 74_u8;
+  let inserting = bor(plain_insert, nested_insert);
   let removing = kind == 88_u8;
   let structural = bor(inserting, removing);
   if structural {
@@ -677,7 +757,7 @@ fn structure_parent(page: &Page, line: &[u8]) -> parent: Option<NodeId> reads(pa
 }
 
 fn apply_edit(page: &Page, line: &[u8], report: &Box<Slots<u8>>) -> ok: Bool reads(line), writes(page), writes(report) {
-  doc "Applies the edit line spells to the live document: T inserts text, D deletes text, C and K add and remove a class token, B inserts a paragraph (and appends `created NODE` to report), X detaches a node. False when the line does not parse or the operation is refused.";
+  doc "Applies the edit line spells to the live document: T inserts text, D deletes text, C and K add and remove a class token, B inserts a paragraph, J PARENT BEFORE DEPTH TEXT inserts it inside DEPTH nested divs (both append `created NODE` to report), X detaches a node. False when the line does not parse or the operation is refused.";
   let length = line^.len;
   if length < 3_u64 {
     return False();
@@ -752,7 +832,10 @@ fn apply_edit(page: &Page, line: &[u8], report: &Box<Slots<u8>>) -> ok: Bool rea
     let done = edit_class(document: &page^.document, holder: node, class_atom: class_atom, token: &line^[after_node..length], add: adding);
     return done;
   }
-  if kind == 66_u8 {
+  let plain_insert = kind == 66_u8;
+  let nested_insert = kind == 74_u8;
+  let insertion = bor(plain_insert, nested_insert);
+  if insertion {
     if after_node >= length {
       return False();
     }
@@ -783,6 +866,22 @@ fn apply_edit(page: &Page, line: &[u8], report: &Box<Slots<u8>>) -> ok: Bool rea
     }
     let text_gap = field_end(line: line, start: after_node);
     let text_start = text_gap +sat 1_u64;
+    let depth = 0_u64;
+    if nested_insert {
+      let (found, levels, after_depth) = read_number(line: line, start: text_start);
+      if found {
+      } else {
+        return False();
+      }
+      if levels == 0_u64 {
+        return False();
+      }
+      if levels > 32_u64 {
+        return False();
+      }
+      set depth = levels;
+      set text_start = after_depth;
+    }
     if text_start > length {
       return False();
     }
@@ -792,7 +891,7 @@ fn apply_edit(page: &Page, line: &[u8], report: &Box<Slots<u8>>) -> ok: Bool rea
     if size > 1073741824_u64 {
       return False();
     }
-    match make_paragraph(page: page, parent: node, before: before_option, text: &scratch.inner[0_u64..size]) {
+    match make_nested_paragraph(page: page, parent: node, before: before_option, text: &scratch.inner[0_u64..size], depth: depth) {
       Ok(value: made) => {
         put_text(buffer: report, text: &created_label[0_u64..created_label.len]);
         let wide = cvt::<u32, u64>(made.index);
@@ -818,7 +917,7 @@ fn put_failure(report: &Box<Slots<u8>>, number: u64, reason: &[u8]) -> result: u
 }
 
 fn collect_script(page: &Page, environment: Environment, script: &[u8], dumps: &Box<Slots<u64>>, report: &Box<Slots<u8>>) -> ok: Bool reads(script), writes(page), writes(dumps), writes(report) {
-  doc "The first pass over the script: each S line adds its text as an author style sheet, which must come before the first edit, and each P line lists an edit number in dumps. Every other line must be empty or an edit (T, D, C, K, B or X).";
+  doc "The first pass over the script: each S line adds its text as an author style sheet, which must come before the first edit, and each P line lists an edit number in dumps. V requests a full viewport refresh between edits; every other line must be empty or an edit (T, D, C, K, B, J or X).";
   let length = script^.len;
   let at = 0_u64;
   let number = 0_u64;
@@ -870,13 +969,17 @@ fn collect_script(page: &Page, environment: Environment, script: &[u8], dumps: &
         let is_d = kind == 68_u8;
         let is_c = kind == 67_u8;
         let is_k = kind == 75_u8;
-        let is_b = kind == 66_u8;
+        let plain_insert = kind == 66_u8;
+        let nested_insert = kind == 74_u8;
+        let is_b = bor(plain_insert, nested_insert);
         let is_x = kind == 88_u8;
         let first = bor(is_t, is_d);
         let second = bor(is_c, is_k);
         let third = bor(is_b, is_x);
         let early = bor(first, second);
-        let known = bor(early, third);
+        let ordinary = bor(early, third);
+        let resize = kind == 86_u8;
+        let known = bor(ordinary, resize);
         if known {
           set edited = True();
         } else {
@@ -1220,7 +1323,7 @@ fn structure_flags(started: Instant, page: &Page, done: &Restyled, removed: Opti
 }
 
 fn apply_structure_edit(page: &Page, fonts: &FontSet, kept: &Built, parent: NodeId, previous: Option<NodeId>, next: Option<NodeId>, inserted: Option<NodeId>, removed: Option<NodeId>, environment: Environment, viewport: Viewport, timing: Bool, compare: Bool, clock: &Clock, report: &Box<Slots<u8>>, number: u64) -> result: Result<StyleUpdate, u8> reads(fonts), writes(page), writes(kept), writes(clock), writes(report) {
-  doc "Times the stable-slot structural restyle, then translates changed slots to the temporary NodeId flags structure_changed needs. The kept tables and pseudo identities retain every old reference, so both style arguments share the kept result. A full request takes the previous full traversal/state path.";
+  doc "Times the stable-slot structural restyle, tries the private complete-block splice with the stable frontier, translating slots to dense flags only for structure_changed after an explicit fallback. The kept tables and pseudo identities retain every old reference, so both style arguments share the kept result. A full request takes the previous full traversal/state path.";
   let style_started = now(clock: clock);
   let done = match structure_after(started: style_started, page: page, kept: kept, environment: environment, parent: parent, previous: previous, next: next, inserted: inserted, removed: removed) {
     Ok(value: found) => {
@@ -1240,10 +1343,31 @@ fn apply_structure_edit(page: &Page, fonts: &FontSet, kept: &Built, parent: Node
     return Ok<StyleUpdate, u8>(value: rebuilt);
   }
   let started = now(clock: clock);
-  let changed = propagate structure_flags(started: started, page: page, done: &done, removed: removed);
-  let nodes = changed.inner.len;
+  let extended = extend_after(started: started, fonts: fonts, picks: &kept^.picks, styles: &kept^.state.styles, atoms: &page^.atoms);
+  if extended {
+  } else {
+    return Err<StyleUpdate, u8>(error: 1_u8);
+  }
+  let changed_count = done.changed.inner.len;
+  let stable = True();
+  let splice_reason = match structure_splice(layout: &kept^.layout, document: &page^.document, styles: &kept^.state.styles, traversal: &page^.traversal, atoms: &page^.atoms, changed: &done.changed.inner[0_u64..changed_count], parent: parent, before: next, inserted: inserted, removed: removed, references_stable: stable, fonts: fonts, picks: &kept^.picks) {
+    Ok(value: reason) => {
+      give reason;
+    }
+    Err(..) => {
+      give 9_u32;
+    }
+  }
+  put_structure_path(buffer: report, number: number, reason: splice_reason);
   let no = False();
-  let marked = structure_changed(layout: &kept^.layout, document: &page^.document, old: &kept^.state.styles, new: &kept^.state.styles, traversal: &page^.traversal, atoms: &page^.atoms, changed: &changed.inner[0_u64..nodes], parent: parent);
+  let marked = if splice_reason == 0_u32 {
+    give Ok<unit, LayoutError>(value: unit);
+  } else {
+    let changed = propagate structure_flags(started: started, page: page, done: &done, removed: removed);
+    let nodes = changed.inner.len;
+    let rebuilt = structure_changed(layout: &kept^.layout, document: &page^.document, old: &kept^.state.styles, new: &kept^.state.styles, traversal: &page^.traversal, atoms: &page^.atoms, changed: &changed.inner[0_u64..nodes], parent: parent);
+    give rebuilt;
+  }
   let after_delta = stamp(clock: clock, witness: &kept^.layout);
   match marked {
     Ok(..) => {
@@ -1272,6 +1396,7 @@ fn apply_structure_edit(page: &Page, fonts: &FontSet, kept: &Built, parent: Node
 
 fn full_structure_edit(page: &Page, fonts: &FontSet, kept: &Built, prior_style_ns: u64, parent: NodeId, inserted: Option<NodeId>, removed: Option<NodeId>, environment: Environment, viewport: Viewport, timing: Bool, compare: Bool, clock: &Clock, report: &Box<Slots<u8>>, number: u64) -> result: Result<StyleUpdate, u8> reads(fonts), writes(page), writes(kept), writes(clock), writes(report) {
   doc "A B or X edit: builds the traversal and a new style state outside the incremental interval, then times layout_changes against the kept styles and structure_changed for the context parent's children are in, replaces the kept state, and finishes as finish_style_edit does, adding a structure edit line.";
+  put_structure_path(buffer: report, number: number, reason: 4_u32);
   let style_started = now(clock: clock);
   let yes = True();
   let fresh = match styles_after(started: style_started, page: page, structural: yes, environment: environment) {
@@ -1448,8 +1573,26 @@ fn marks_after(started: Instant, layout: &Layout, traversal: &Traversal, changed
   return marked;
 }
 
+fn put_structure_path(buffer: &Box<Slots<u8>>, number: u64, reason: u32) -> result: unit writes(buffer) {
+  doc "Reports every structural attempt before either route can refuse: splice 1 reason 0 means local publication, splice 0 carries an explicit fallback reason.";
+  put_text(buffer: buffer, text: &structure_path_label[0_u64..15_u64]);
+  put_decimal(buffer: buffer, value: number);
+  put_text(buffer: buffer, text: &splice_mode_label[0_u64..8_u64]);
+  let local = if reason == 0_u32 {
+    give 1_u64;
+  } else {
+    give 0_u64;
+  }
+  put_decimal(buffer: buffer, value: local);
+  put_text(buffer: buffer, text: &splice_reason_label[0_u64..8_u64]);
+  let wide = cvt::<u32, u64>(reason);
+  put_decimal(buffer: buffer, value: wide);
+  put_byte(buffer: buffer, value: 10_u8);
+  return unit;
+}
+
 fn put_counts(buffer: &Box<Slots<u8>>, layout: &Layout) -> result: unit reads(layout), writes(buffer) {
-  doc "Appends what the layout's last update did: ` prepared R contexts C paragraphs P held_entries H entries E`.";
+  doc "Appends the established update counts followed by boundary payload-entry, block and index visits, fallback count and refusal reason. Boundary visits exclude reference replay, so a nonzero fallback count disqualifies an ordinary-path locality assertion.";
   let (prepared, contexts, paragraphs, held_entries, entries) = update_counts(layout: layout);
   put_text(buffer: buffer, text: &prepared_label[0_u64..prepared_label.len]);
   put_decimal(buffer: buffer, value: prepared);
@@ -1461,12 +1604,37 @@ fn put_counts(buffer: &Box<Slots<u8>>, layout: &Layout) -> result: unit reads(la
   put_decimal(buffer: buffer, value: held_entries);
   put_text(buffer: buffer, text: &entries_label[0_u64..entries_label.len]);
   put_decimal(buffer: buffer, value: entries);
+  let (physical_entries, physical_blocks, indexes, fallbacks, reason) = boundary_counts(layout: layout);
+  put_text(buffer: buffer, text: &boundary_entries_label[0_u64..boundary_entries_label.len]);
+  put_decimal(buffer: buffer, value: physical_entries);
+  put_text(buffer: buffer, text: &boundary_blocks_label[0_u64..boundary_blocks_label.len]);
+  put_decimal(buffer: buffer, value: physical_blocks);
+  put_text(buffer: buffer, text: &boundary_indexes_label[0_u64..boundary_indexes_label.len]);
+  put_decimal(buffer: buffer, value: indexes);
+  put_text(buffer: buffer, text: &boundary_fallbacks_label[0_u64..boundary_fallbacks_label.len]);
+  put_decimal(buffer: buffer, value: fallbacks);
+  put_text(buffer: buffer, text: &boundary_reason_label[0_u64..boundary_reason_label.len]);
+  let wide_reason = cvt::<u32, u64>(reason);
+  put_decimal(buffer: buffer, value: wide_reason);
+  let (frontier_refusals, frontier_reasons) = frontier_counts(layout: layout);
+  put_text(buffer: buffer, text: &frontier_refusals_label[0_u64..frontier_refusals_label.len]);
+  put_decimal(buffer: buffer, value: frontier_refusals);
+  put_text(buffer: buffer, text: &frontier_reasons_label[0_u64..frontier_reasons_label.len]);
+  let wide_frontier = cvt::<u32, u64>(frontier_reasons);
+  put_decimal(buffer: buffer, value: wide_frontier);
   return unit;
 }
 
 fn run_edits(page: &Page, fonts: &FontSet, environment: Environment, viewport: Viewport, script: &[u8], timing: Bool, compare: Bool, clock: &Clock, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> code: u8 reads(fonts), reads(script), writes(page), writes(clock), writes(out), writes(err), writes(files) waits {
-  doc "Runs the edit script on the live document, applying S lines before building the base. T/D edits update the retained text layout; C/K edits recompute styles, compare layout-relevant values, pick fonts and update the retained layout; B/X edits restyle stable slots and build again the context that holds the changed children (structure_changed), reporting a structure edit line with its counts. Checking compares each successful retained dump, using its own styles, byte for byte with a full rebuild and reports inc same, inc DIFF or inc refused. P requests dumps; a differing retained dump follows inc dump. A refusal or difference resynchronizes to the full build. Timing reports the existing edit I us U and update_counts format; style U excludes the separately reported style_us and includes the delta, font picks, marking and update. A separate style edit line reports delta_us, picks_us and the full layout comparator full_us, which runs only when compare holds and is 0 otherwise, so that no full layout runs between timed edits (mode edittime). No edit kind rebuilds without trying the retained path first. Checking style edit lines expose the retained counts. Refusals remain explicit, even when resynchronized. Returns 0, or 2 after reporting a failing script or pipeline stage.";
+  doc "Runs the edit script on the live document, applying S lines before building the base. T/D edits update the retained text layout; C/K edits recompute styles, compare layout-relevant values, pick fonts and update the retained layout; B/J/X edits restyle stable slots and build again the context that holds the changed children (structure_changed), reporting a structure edit line with its counts. Checking compares each successful retained dump, using its own styles, byte for byte with a full rebuild and compares live height-read inventories and reports inc same, inc DIFF or inc refused. P requests dumps; V WIDTH HEIGHT fully rebuilds at a new viewport between edits, preserving DOM identities and edit numbering. A differing retained dump follows inc dump. A refusal or difference resynchronizes to the full build. Timing reports the existing edit I us U and update_counts format; style U excludes the separately reported style_us and includes the delta, font picks, marking and update. A separate style edit line reports delta_us, picks_us and the full layout comparator full_us, which runs only when compare holds and is 0 otherwise, so that no full layout runs between timed edits (mode edittime). No edit kind rebuilds without trying the retained path first. Checking style edit lines expose the retained counts. Refusals remain explicit, even when resynchronized. Returns 0, or 2 after reporting a failing script or pipeline stage.";
   let report = box_slots_new::<u8>(capacity: 4096_u64);
+  let transfers_valid = boundary_transfer_check();
+  if transfers_valid {
+  } else {
+    put_text(buffer: &report, text: &boundary_failure[0_u64..boundary_failure.len]);
+    let reported = flush(factory: files, output: err, buffer: &report);
+    return 2_u8;
+  }
   let dump = box_slots_new::<u8>(capacity: 65536_u64);
   let other = box_slots_new::<u8>(capacity: 65536_u64);
   let dumps = box_slots_new::<u64>(capacity: 16_u64);
@@ -1485,6 +1653,13 @@ fn run_edits(page: &Page, fonts: &FontSet, environment: Environment, viewport: V
       let code = stage_failure(err: err, files: files, stage: stage);
       return code;
     }
+  }
+  let publication_valid = reference_publication_check(styles: &kept.state.styles);
+  if publication_valid {
+  } else {
+    put_text(buffer: &report, text: &boundary_failure[0_u64..boundary_failure.len]);
+    let publication_reported = flush(factory: files, output: err, buffer: &report);
+    return 2_u8;
   }
   let dumped = dump_layout(page: page, styles: &kept.state.styles, layout: &kept.layout, buffer: &dump);
   if dumped == 0_u8 {
@@ -1517,11 +1692,48 @@ fn run_edits(page: &Page, fonts: &FontSet, environment: Environment, viewport: V
       let skipped_p = kind == 80_u8;
       let skipped = bor(skipped_s, skipped_p);
       if skipped {
+      } else if kind == 86_u8 {
+        let (has_width, width, after_width) = read_number(line: &script^[start..end], start: 2_u64);
+        let (has_height, height, after_height) = read_number(line: &script^[start..end], start: after_width);
+        let dimensions = band(has_width, has_height);
+        if dimensions {
+        } else {
+          return 2_u8;
+        }
+        if width == 0_u64 {
+          return 2_u8;
+        }
+        if height == 0_u64 {
+          return 2_u8;
+        }
+        if width > 16384_u64 {
+          return 2_u8;
+        }
+        if height > 16384_u64 {
+          return 2_u8;
+        }
+        let resized_width = cvt::<u64, f32>(width);
+        let resized_height = cvt::<u64, f32>(height);
+        set viewport = Viewport(width: resized_width, height: resized_height);
+        let preserve = False();
+        let resized = match build_page(page: page, fonts: fonts, environment: environment, viewport: viewport, preserve: preserve) {
+          Ok(value: found) => {
+            give move found;
+          }
+          Err(error: stage) => {
+            let code = stage_failure(err: err, files: files, stage: stage);
+            return code;
+          }
+        }
+        set kept = move resized;
       } else {
         set edits = edits +sat 1_u64;
         let structure = structure_parent(page: page, line: &script^[start..end]);
         let (edit_previous, edit_next) = structure_neighbours(page: page, line: &script^[start..end]);
-        let inserted = if kind == 66_u8 {
+        let plain_insert = kind == 66_u8;
+        let nested_insert = kind == 74_u8;
+        let inserting = bor(plain_insert, nested_insert);
+        let inserted = if inserting {
           give node_id_of(value: page^.document.nodes.inner.len);
         } else {
           give None<NodeId>();
@@ -1675,7 +1887,19 @@ fn run_edits(page: &Page, fonts: &FontSet, environment: Environment, viewport: V
               let identical = same_bytes(first: &dump, second: &other);
               truncate(buffer: &other, length: 0_u64);
               let kept_dumped = kept_stage == 0_u8;
-              give band(identical, kept_dumped);
+              let (kept_contexts, kept_paragraphs) = layout_counts(layout: &kept.layout);
+              let (full_contexts, full_paragraphs) = layout_counts(layout: &rebuilt.layout);
+              let contexts_same = kept_contexts == full_contexts;
+              let paragraphs_same = kept_paragraphs == full_paragraphs;
+              let counts_same = band(contexts_same, paragraphs_same);
+              let (kept_reads, kept_unproved) = height_read_counts(layout: &kept.layout);
+              let (full_reads, full_unproved) = height_read_counts(layout: &rebuilt.layout);
+              let same_reads = kept_reads == full_reads;
+              let same_unproved = kept_unproved == full_unproved;
+              let same_heights = band(same_reads, same_unproved);
+              set counts_same = band(counts_same, same_heights);
+              let dump_same = band(identical, kept_dumped);
+              give band(dump_same, counts_same);
             } else {
               give False();
             }

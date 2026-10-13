@@ -1,4 +1,5 @@
 alias Document = pkg::dom::Document;
+alias FontGroup = pkg::css::values::FontGroup;
 alias FontPicks = pkg::layout::text::FontPicks;
 alias FontSet = pkg::layout::text::FontSet;
 alias Styles = pkg::style::Styles;
@@ -6,6 +7,7 @@ alias TextRun = pkg::layout::text::TextRun;
 alias ShapedText = pkg::layout::text::ShapedText;
 alias reshape_paragraph = pkg::layout::text::reshape_paragraph;
 alias shaped_empty = pkg::layout::text::shaped_empty;
+alias upper_scalar = pkg::layout::text::upper_scalar;
 alias sizing_value = pkg::css::values::sizing_value;
 alias Sizing = pkg::css::values::Sizing;
 
@@ -72,7 +74,8 @@ fn close_run(styles: &Styles, emit: &Emit, paragraph: &Paragraph) -> result: uni
   let word = spacing_px(value: text.word_spacing);
   let from = cvt::<u64, u32>(start);
   let to = cvt::<u64, u32>(end);
-  let run = TextRun(start: from, end: to, font: font, letter_spacing: letter, word_spacing: word, wraps: wraps, word_break: text.word_break, overflow_wrap: text.overflow_wrap);
+  let separate = False();
+  let run = TextRun(start: from, end: to, font: font, letter_spacing: letter, word_spacing: word, wraps: wraps, word_break: text.word_break, overflow_wrap: text.overflow_wrap, joins: separate);
   let pushed = push_item::<TextRun>(cell: &paragraph^.runs, value: run, ceiling: item_ceiling);
   let listed = push_item::<StyleRef>(cell: &paragraph^.run_styles, value: style, ceiling: item_ceiling);
   return unit;
@@ -126,76 +129,8 @@ fn is_letter(value: u32) -> letter: Bool pure {
   return found;
 }
 
-fn to_upper(value: u32) -> mapped: u32 pure {
-  doc "Maps value to upper case: ASCII, Latin-1, the paired Latin Extended-A letters, Greek and Cyrillic basic letters; others unchanged.";
-  let lower_left = value >= 97_u32;
-  let lower_right = value <= 122_u32;
-  let lower = band(lower_left, lower_right);
-  if lower {
-    return value - 32_u32;
-  }
-  let latin_left = value >= 224_u32;
-  let latin_right = value <= 254_u32;
-  let latin = band(latin_left, latin_right);
-  let divide = value == 247_u32;
-  let latin_letter_not = bnot(divide);
-  let latin_letter = band(latin, latin_letter_not);
-  if latin_letter {
-    return value - 32_u32;
-  }
-  if value == 255_u32 {
-    return 376_u32;
-  }
-  let extended_left = value >= 256_u32;
-  let extended_right = value <= 383_u32;
-  let extended = band(extended_left, extended_right);
-  if extended {
-    let odd_bits = iand(value, 1_u32);
-    let odd = odd_bits == 1_u32;
-    let paired_low = value <= 311_u32;
-    let paired_high = value >= 330_u32;
-    let paired = bor(paired_low, paired_high);
-    let even_pairs = band(paired, odd);
-    if even_pairs {
-      return value - 1_u32;
-    }
-    let middle_left = value >= 313_u32;
-    let middle_right = value <= 328_u32;
-    let middle = band(middle_left, middle_right);
-    let even = bnot(odd);
-    let middle_lower = band(middle, even);
-    if middle_lower {
-      return value - 1_u32;
-    }
-    return value;
-  }
-  let greek_left = value >= 945_u32;
-  let greek_right = value <= 969_u32;
-  let greek = band(greek_left, greek_right);
-  let final_sigma = value == 962_u32;
-  if final_sigma {
-    return 931_u32;
-  }
-  if greek {
-    return value - 32_u32;
-  }
-  let cyrillic_left = value >= 1072_u32;
-  let cyrillic_right = value <= 1103_u32;
-  let cyrillic = band(cyrillic_left, cyrillic_right);
-  if cyrillic {
-    return value - 32_u32;
-  }
-  let cyrillic_extra_left = value >= 1104_u32;
-  let cyrillic_extra_right = value <= 1119_u32;
-  let cyrillic_extra = band(cyrillic_extra_left, cyrillic_extra_right);
-  if cyrillic_extra {
-    return value - 80_u32;
-  }
-  return value;
-}
-
 fn to_lower(value: u32) -> mapped: u32 pure {
-  doc "Maps value to lower case over the ranges to_upper covers; others unchanged.";
+  doc "Maps value to lower case over the ranges upper_scalar covers; others unchanged.";
   let upper_left = value >= 65_u32;
   let upper_right = value <= 90_u32;
   let upper = band(upper_left, upper_right);
@@ -294,6 +229,9 @@ fn drop_last_space(emit: &Emit, paragraph: &Paragraph) -> result: unit reads(emi
       Node(at: a, ..) => {
         give cvt::<u32, u64>(a);
       }
+      Anchor(at: a, ..) => {
+        give cvt::<u32, u64>(a);
+      }
     }
     if at >= length {
       return unit;
@@ -358,14 +296,14 @@ fn add_text_scalar(styles: &Styles, emit: &Emit, paragraph: &Paragraph, raw: u32
   let transform = text.text_transform;
   let letter = is_letter(value: value);
   let mapped = if transform == transform_uppercase {
-    give to_upper(value: value);
+    give upper_scalar(value: value);
   } else if transform == transform_lowercase {
     give to_lower(value: value);
   } else if transform == transform_capitalize {
     let first_not = bnot(emit^.after_letter);
     let first = band(letter, first_not);
     if first {
-      give to_upper(value: value);
+      give upper_scalar(value: value);
     } else {
       give value;
     }
@@ -480,6 +418,9 @@ fn mark_at(mark: Mark) -> at: u64 pure {
     Node(at: a, ..) => {
       give cvt::<u32, u64>(a);
     }
+    Anchor(at: a, ..) => {
+      give cvt::<u32, u64>(a);
+    }
   }
   return found;
 }
@@ -507,42 +448,119 @@ fn breaks_shaping(styles: &Styles, mark: Mark) -> breaks: Bool reads(styles) {
     Node(..) => {
       give False();
     }
+    Anchor(..) => {
+      give False();
+    }
   }
   return found;
 }
 
+fn same_families(styles: &Styles, first: FontGroup, second: FontGroup) -> same: Bool reads(styles) {
+  doc "Tells whether two font groups name the same font-family list: the same span of the family table, or spans of equal length whose families have the same names and generic flags, since the style stage gives the same list declared on two elements two spans.";
+  let starts = first.families_start == second.families_start;
+  let ends = first.families_end == second.families_end;
+  let shared = band(starts, ends);
+  if shared {
+    return True();
+  }
+  let first_start = cvt::<u32, u64>(first.families_start);
+  let first_end = cvt::<u32, u64>(first.families_end);
+  let second_start = cvt::<u32, u64>(second.families_start);
+  let second_end = cvt::<u32, u64>(second.families_end);
+  let first_count = first_end -sat first_start;
+  let second_count = second_end -sat second_start;
+  if first_count != second_count {
+    return False();
+  }
+  let table = styles^.families.inner.len;
+  let alike_all = True();
+  for (k in 0_u64..first_count) {
+    let one = first_start +sat k;
+    let two = second_start +sat k;
+    let inside_one = one < table;
+    let inside_two = two < table;
+    let inside = band(inside_one, inside_two);
+    let alike = if inside {
+      let left = styles^.families.inner[one];
+      let right = styles^.families.inner[two];
+      let named = left.name.index == right.name.index;
+      let kind = left.generic == right.generic;
+      let both = band(named, kind);
+      give both;
+    } else {
+      give False();
+    }
+    set alike_all = band(alike_all, alike);
+  }
+  return alike_all;
+}
+
 fn same_shaping(styles: &Styles, first: TextRun, first_style: StyleRef, second: TextRun, second_style: StyleRef) -> same: Bool reads(styles) {
-  doc "Tells whether two adjacent runs shape alike: the same font family, size, weight and style, spacing, wrapping and white-space, so that the reference shapes them as one text across the boundary between their elements.";
+  doc "Tells whether two adjacent runs shape alike, as Blink's ShapeText compares the fonts of adjacent text items: the same font-family list, size, weight, style and font-variant-caps, and the same letter-spacing and word-spacing, which Blink's font description holds. White-space, word-break, overflow-wrap and tab-size are not in the font, so the reference shapes across a boundary where only they differ, and each run keeps its own.";
   let one = font_of(styles: styles, style: first_style);
   let two = font_of(styles: styles, style: second_style);
-  let starts = one.families_start == two.families_start;
-  let ends = one.families_end == two.families_end;
-  let families = band(starts, ends);
+  let families = same_families(styles: styles, first: one, second: two);
   let size = feq(one.size, two.size);
   let weight = feq(one.weight, two.weight);
   let slant = one.style == two.style;
+  let caps = one.variant_caps == two.variant_caps;
   let sized = band(size, weight);
-  let face = band(sized, slant);
+  let styled = band(slant, caps);
+  let face = band(sized, styled);
   let font = band(families, face);
   let letter = feq(first.letter_spacing, second.letter_spacing);
   let word = feq(first.word_spacing, second.word_spacing);
   let spacing = band(letter, word);
-  let wraps = first.wraps == second.wraps;
-  let breaking = first.word_break == second.word_break;
-  let overflow = first.overflow_wrap == second.overflow_wrap;
-  let word_rules = band(breaking, overflow);
-  let wrapping = band(wraps, word_rules);
-  let text_one = text_of(styles: styles, style: first_style);
-  let text_two = text_of(styles: styles, style: second_style);
-  let white = text_one.white_space == text_two.white_space;
-  let layout = band(spacing, wrapping);
-  let style_like = band(font, white);
-  let made = band(layout, style_like);
+  let made = band(font, spacing);
   return made;
 }
 
-fn merge_runs(styles: &Styles, paragraph: &Paragraph) -> result: unit reads(styles), writes(paragraph) {
-  doc "Joins each run into the one before it when the two are contiguous, shape alike and no inline box edge that breaks shaping lies between them, since the reference shapes the text of adjacent inline elements as one when their fonts are alike (kerning and ligatures cross the element boundary).";
+fn first_mark_from(paragraph: &Paragraph, boundary: u64) -> found: u64 reads(paragraph) {
+  doc "The index of the first mark at or after text index boundary, by binary search, since the walk records the marks in text order; the mark count when there is none.";
+  let count = paragraph^.marks.inner.len;
+  let low = 0_u64;
+  let high = count;
+  for (step in 0_u64..64_u64) {
+    if low >= high {
+      break;
+    }
+    let width = high - low;
+    let half = width / 2_u64;
+    let middle = low + half;
+    if middle < count {
+      let mark = paragraph^.marks.inner[middle];
+      let at = mark_at(mark: mark);
+      if at < boundary {
+        set low = middle + 1_u64;
+      } else {
+        set high = middle;
+      }
+    } else {
+      break;
+    }
+  }
+  return low;
+}
+
+fn boundary_breaks(styles: &Styles, paragraph: &Paragraph, boundary: u64) -> broken: Bool reads(styles), reads(paragraph) {
+  doc "Whether an inline box edge at text index boundary breaks shaping there (breaks_shaping).";
+  let marks = paragraph^.marks.inner.len;
+  let first = first_mark_from(paragraph: paragraph, boundary: boundary);
+  let broken = False();
+  for (m in first..marks) {
+    let mark = paragraph^.marks.inner[m];
+    let at = mark_at(mark: mark);
+    if at != boundary {
+      break;
+    }
+    let stops = breaks_shaping(styles: styles, mark: mark);
+    set broken = bor(broken, stops);
+  }
+  return broken;
+}
+
+fn join_runs(styles: &Styles, paragraph: &Paragraph) -> result: unit reads(styles), writes(paragraph) {
+  doc "Marks each run that is shaped as one text with the run before it (its joins): the two are contiguous, shape alike (same_shaping) and no inline box edge that breaks shaping lies between them (boundary_breaks), as the reference shapes the text of adjacent inline elements as one when their fonts are alike, so kerning and ligatures cross the element boundary. Every run keeps its own style, spacing and wrapping, so line layout reads each tab's tab-size from the run holding it, as the reference takes it from the inline box holding the tab (research/investigations/layout/runs/line-fill.txt, observation 8). Each run's decision reads only the two runs and the marks at their boundary, so the first loop decides them independently and the second writes them.";
   let runs = paragraph^.runs.inner.len;
   let styled = paragraph^.run_styles.inner.len;
   let enough = runs > 1_u64;
@@ -552,87 +570,59 @@ fn merge_runs(styles: &Styles, paragraph: &Paragraph) -> result: unit reads(styl
   } else {
     return unit;
   }
-  let capacity = imin(runs, item_ceiling);
-  let joined = box_slots_new::<TextRun>(capacity: capacity);
-  let joined_styles = box_slots_new::<StyleRef>(capacity: capacity);
-  let marks = paragraph^.marks.inner.len;
-  let pointer = 0_u64;
-  for (r in 0_u64..runs) {
-    let run = paragraph^.runs.inner[r];
-    let style = paragraph^.run_styles.inner[r];
-    let kept = joined.inner.len;
-    let merged = False();
-    let last = kept -sat 1_u64;
-    let have_run = last < joined.inner.len;
-    let have_style = last < joined_styles.inner.len;
-    let have = band(have_run, have_style);
+  let unjoined = False();
+  let decided = box_array_filled::<Bool>(count: runs, value: unjoined);
+  for (r in 1_u64..runs) {
+    let before = r - 1_u64;
+    let have_runs = r < paragraph^.runs.inner.len;
+    let have_styles = r < paragraph^.run_styles.inner.len;
+    let have_previous = before < paragraph^.runs.inner.len;
+    let have_previous_style = before < paragraph^.run_styles.inner.len;
+    let have_current = band(have_runs, have_styles);
+    let have_before = band(have_previous, have_previous_style);
+    let have_decided = r < decided.inner.len;
+    let have_both = band(have_current, have_before);
+    let have = band(have_both, have_decided);
     if have {
-      let previous = joined.inner[last];
-      let previous_style = joined_styles.inner[last];
+      let previous = paragraph^.runs.inner[before];
+      let previous_style = paragraph^.run_styles.inner[before];
+      let run = paragraph^.runs.inner[r];
+      let style = paragraph^.run_styles.inner[r];
       let boundary = cvt::<u32, u64>(run.start);
       let adjacent = previous.end == run.start;
       let alike = same_shaping(styles: styles, first: previous, first_style: previous_style, second: run, second_style: style);
       let candidate = band(adjacent, alike);
-      let broken = False();
-      for (step in pointer..marks) {
-        if pointer < marks {
-          let mark = paragraph^.marks.inner[pointer];
-          let at = mark_at(mark: mark);
-          if at < boundary {
-            set pointer = pointer +sat 1_u64;
-          } else if at == boundary {
-            let stops = breaks_shaping(styles: styles, mark: mark);
-            set broken = bor(broken, stops);
-            set pointer = pointer +sat 1_u64;
-          } else {
-            break;
-          }
-        }
-      }
+      let broken = boundary_breaks(styles: styles, paragraph: paragraph, boundary: boundary);
       let free = bnot(broken);
       let joins = band(candidate, free);
-      if joins {
-        if last < joined.inner.len {
-          set joined.inner[last].end = run.end;
-          set merged = True();
-        }
-      }
-    }
-    let separate = bnot(merged);
-    if separate {
-      let pushed = push_item::<TextRun>(cell: &joined, value: run, ceiling: item_ceiling);
-      let pushed_style = push_item::<StyleRef>(cell: &joined_styles, value: style, ceiling: item_ceiling);
+      set decided.inner[r] = joins;
     }
   }
-  set paragraph^.runs = move joined;
-  set paragraph^.run_styles = move joined_styles;
+  for (r in 0_u64..runs) {
+    let held = r < decided.inner.len;
+    let listed = r < paragraph^.runs.inner.len;
+    let both = band(held, listed);
+    if both {
+      set paragraph^.runs.inner[r].joins = decided.inner[r];
+    }
+  }
   return unit;
 }
 
-fn prepare_paragraph(pieces: &[Piece], bytes: &[u8], generated: &[u8], styles: &Styles, fonts: &FontSet, picks: &FontPicks, paragraph: &Paragraph, previous: &ShapedText, previous_text: &[u32]) -> ok: Bool reads(pieces), reads(bytes), reads(generated), reads(styles), reads(fonts), reads(picks), reads(previous), reads(previous_text), writes(paragraph) {
+fn prepare_paragraph(bytes: &[u8], generated: &[u8], styles: &Styles, fonts: &FontSet, picks: &FontPicks, paragraph: &Paragraph, previous: &ShapedText, previous_text: &[u32]) -> ok: Bool reads(bytes), reads(generated), reads(styles), reads(fonts), reads(picks), reads(previous), reads(previous_text), writes(paragraph) {
   doc "Turns the paragraph's pieces into its text, runs, run styles and marks, then shapes its text, keeping the shaping of previous, what preparing previous_text gave (empty for a first preparation), where reshape_paragraph allows; False when shaping refuses it.";
-  let total = pieces^.len;
-  let first = paragraph^.first;
-  let many = paragraph^.count;
-  let ahead = first <= total;
-  if ahead {
-  } else {
-    return False();
-  }
-  let room = total - first;
-  let fits = many <= room;
-  if fits {
-  } else {
-    return False();
-  }
-  let end = first + many;
+  let total = paragraph^.pieces.inner.len;
   let no = False();
   let yes = True();
   let emit = Emit(last_space: no, at_start: yes, after_letter: no, run_style: paragraph^.style, run_start: 0_u64, have_run: no);
   let stored = bytes^.len;
   let made = generated^.len;
-  for (at in first..end) {
-    let piece = pieces^[at];
+  for (at in 0_u64..total) {
+    if at < paragraph^.pieces.inner.len {
+    } else {
+      return False();
+    }
+    let piece = paragraph^.pieces.inner[at];
     match piece {
       Bytes(start: from, end: to, style: owner, node: source) => {
         let low = cvt::<u32, u64>(from);
@@ -686,10 +676,15 @@ fn prepare_paragraph(pieces: &[Piece], bytes: &[u8], generated: &[u8], styles: &
         let mark = Mark::Atomic(at: here, context: child);
         add_mark(paragraph: paragraph, mark: mark);
       }
+      Anchor(context: child, ..) => {
+        let here = text_index(paragraph: paragraph);
+        let mark = Mark::Anchor(at: here, context: child);
+        add_mark(paragraph: paragraph, mark: mark);
+      }
     }
   }
   close_run(styles: styles, emit: &emit, paragraph: paragraph);
-  merge_runs(styles: styles, paragraph: paragraph);
+  join_runs(styles: styles, paragraph: paragraph);
   let length = paragraph^.text.inner.len;
   if length == 0_u64 {
     return True();
@@ -711,16 +706,21 @@ fn prepare_paragraph(pieces: &[Piece], bytes: &[u8], generated: &[u8], styles: &
 
 fn prepare_context(context: &Context, document: &Document, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> ok: Bool reads(document), reads(styles), reads(fonts), reads(picks), writes(context) {
   doc "Prepares every paragraph of context in one counted loop, each iteration writing only its own paragraph, and then every child context, one per iteration of a second counted loop; False when any paragraph's shaping failed.";
+  if context^.retired {
+    return True();
+  }
   let count = context^.paragraphs.inner.len;
-  let total = context^.pieces.inner.len;
   let stored = document^.text.inner.len;
   let made = styles^.generated_text.inner.len;
   let ok = True();
   for (i in 0_u64..count) {
-    let none = shaped_empty();
-    let no_text = array_filled::<u32, 1>(value: 0_u32);
-    let done = prepare_paragraph(pieces: &context^.pieces.inner[0_u64..total], bytes: &document^.text.inner[0_u64..stored], generated: &styles^.generated_text.inner[0_u64..made], styles: styles, fonts: fonts, picks: picks, paragraph: &context^.paragraphs.inner[i], previous: &none, previous_text: &no_text[0_u64..0_u64]);
-    set ok = band(ok, done);
+    if context^.paragraphs.inner[i].retired {
+    } else {
+      let none = shaped_empty();
+      let no_text = array_filled::<u32, 1>(value: 0_u32);
+      let done = prepare_paragraph(bytes: &document^.text.inner[0_u64..stored], generated: &styles^.generated_text.inner[0_u64..made], styles: styles, fonts: fonts, picks: picks, paragraph: &context^.paragraphs.inner[i], previous: &none, previous_text: &no_text[0_u64..0_u64]);
+      set ok = band(ok, done);
+    }
   }
   let children = context^.children.inner.len;
   for (k in 0_u64..children) {

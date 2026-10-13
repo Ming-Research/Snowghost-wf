@@ -1,0 +1,208 @@
+# Hosted acceptance for the released owning-sibling repair. Retire when the
+# M2 edit-cost investigation closes; older cohorts remain in Git history.
+name: bisect-hosted
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/m2-frag-a]
+permissions:
+  contents: read
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[timing]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    continue-on-error: ${{ matrix.optional }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: main
+            source: bb98d4371d0e148775e232e4d2938ddb9aec3be6
+            optional: false
+          - name: maintwin
+            source: bb98d4371d0e148775e232e4d2938ddb9aec3be6
+            optional: false
+          - name: a
+            source: HEAD
+            optional: false
+          - name: atwin
+            source: HEAD
+            optional: false
+          - name: layout
+            source: b0d1b717561b75325f22916a56bf0ccec5e5ed4d
+            optional: true
+          - name: layouttwin
+            source: b0d1b717561b75325f22916a56bf0ccec5e5ed4d
+            optional: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: LLVM 22 and fonts
+        run: |
+          set -euo pipefail
+          sudo sh -c 'printf "%s\n" https://archive.ubuntu.com/ubuntu > /etc/apt/apt-mirrors.txt'
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=30 update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          curl -fsSL --retry 3 -o /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          sudo bash /tmp/llvm.sh 22 >/dev/null
+          sudo ln -sf /usr/bin/clang-22 /usr/bin/clang
+          sudo ln -sf /usr/bin/ld.lld-22 /usr/bin/ld.lld
+          clang --version | head -1
+      - name: Build the exact source with the common release
+        env:
+          SOURCE: ${{ matrix.source }}
+          BUILD_NAME: ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/driver
+          git worktree add -q --detach build/tree "$SOURCE"
+          echo 'release = wf-78223721f77d' > build/timing.pin
+          make -s compiler PIN="$PWD/build/timing.pin"
+          wfc=$(realpath build/whitefoot/wf-78223721f77d/whitefootc)
+          git -C build/tree rev-parse HEAD > build/driver/revision.txt
+          cat build/timing.pin >> build/driver/revision.txt
+          sha256sum "$wfc" >> build/driver/revision.txt
+          clang --version >> build/driver/revision.txt
+          cp build/whitefoot/wf-78223721f77d/whitefoot-release.json build/driver/
+          # Adapt only retired equality syntax in historical comparison sources.
+          git -C build/tree ls-files -z '*.wf' '*.wfm' | xargs -0 -I{} sed -i -E 's/\beeq\(([^,()]+), ([^,()]+)\)/\1 == \2/g; s/\bene\(([^,()]+), ([^,()]+)\)/\1 != \2/g' 'build/tree/{}'
+          git -C build/tree diff HEAD > build/driver/source.diff
+          for mode in seq par; do
+            flag=''
+            if [ "$mode" = par ]; then flag=--par; fi
+            status=0
+            (cd build/tree/renderer && /usr/bin/time -p "$wfc" --cache "$RUNNER_TEMP/wf-cache" --fragments function $flag --graph modules.wfg --entry layout_oracle -o "$GITHUB_WORKSPACE/build/driver/layout_oracle_$mode") > "build/driver/$mode-build.log" 2>&1 || status=$?
+            cat "build/driver/$mode-build.log"
+            echo "$status" > "build/driver/$mode-build.status"
+            if [ "$status" -ne 0 ]; then exit "$status"; fi
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: driver-${{ matrix.name }}
+          path: build/driver/
+  measure:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: driver-*
+          path: build/drivers
+      - name: Require main and candidate, select the optional control pair
+        run: |
+          set -euo pipefail
+          for name in main maintwin a atwin; do
+            for mode in seq par; do
+              test "$(cat build/drivers/driver-$name/$mode-build.status)" = 0
+              test -s build/drivers/driver-$name/layout_oracle_$mode
+            done
+          done
+          names='main maintwin a atwin'
+          if [ -s build/drivers/driver-layout/layout_oracle_par ] && [ -s build/drivers/driver-layouttwin/layout_oracle_par ]; then
+            names="$names layout layouttwin"
+          else
+            echo 'Layout control and twin omitted: exact-source build refused; diagnostics retained in driver artifacts.'
+          fi
+          echo "BUILD_NAMES=$names" >> "$GITHUB_ENV"
+      - name: Fonts
+        run: |
+          set -euo pipefail
+          sudo sh -c 'printf "%s\n" https://archive.ubuntu.com/ubuntu > /etc/apt/apt-mirrors.txt'
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=30 update
+          sudo apt-get install -y --no-install-recommends fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          chmod +x build/drivers/driver-*/layout_oracle_*
+          uname -a | tee build/machine.txt
+          lscpu | tee -a build/machine.txt
+          cat /etc/os-release >> build/machine.txt
+      - name: Shared pages and scripts
+        run: |
+          set -euo pipefail
+          sh research/investigations/concurrency/run.sh fetch || true
+          tar -xzf tests/layout/fixtures/apollo11/inputs.tar.gz -C build/research/concurrency
+          sha256sum -c tests/layout/fixtures/apollo11/inputs.sha256
+          for file in ecma262.html ecma262-ecmarkup.css ecma262-print.css html5.html apollo11.html apollo11-modules.css apollo11-site.css; do
+            test -s "build/research/concurrency/$file"
+          done
+          make -s oracle-fonts
+          cp build/drivers/driver-main/layout_oracle_seq build/layout_oracle_seq
+          sh research/investigations/incremental-layout/run.sh prepare ecma262 html5 apollo11
+          mkdir -p build/evidence
+          sha256sum build/x5/scripts/* build/research/concurrency/*.html renderer/style/ua.css > build/evidence/inputs.sha256
+      - name: Two one-edit samples bound the pilot
+        run: |
+          set -euo pipefail
+          head -n 2 build/x5/scripts/html5-rootfont.edits > build/evidence/rootfont-sample.edits
+          for sample in 1 2; do
+            WF_WORKERS=4 /usr/bin/time -p -o build/evidence/rootfont-sample-$sample.time build/drivers/driver-main/layout_oracle_seq edittime build/evidence/rootfont-sample.edits build/research/concurrency/html5.html renderer/style/ua.css > build/evidence/rootfont-sample-$sample.raw
+            python3 research/investigations/incremental-layout/scripts/inctime.py build/evidence/rootfont-sample.edits build/evidence/rootfont-sample-$sample.raw
+            cat build/evidence/rootfont-sample-$sample.time
+          done
+          python3 - <<'PYEOF'
+          from pathlib import Path
+          values = [float(path.read_text().splitlines()[0].split()[1]) for path in Path('build/evidence').glob('rootfont-sample-*.time')]
+          assert len(values) == 2 and max(values) < 60, values
+          print('one-edit rootfont wall seconds:', values)
+          PYEOF
+      - name: One-round root-font pilot, four edits per cohort and mode
+        run: |
+          set -euo pipefail
+          cp build/x5/scripts/html5-rootfont.edits build/evidence/rootfont-full.edits
+          head -n 5 build/evidence/rootfont-full.edits > build/x5/scripts/html5-rootfont.edits
+          cp build/x5/scripts/html5-rootfont.edits build/evidence/rootfont-pilot.edits
+          for name in $BUILD_NAMES; do
+            cp build/drivers/driver-$name/layout_oracle_* build/
+            for mode in seq par; do
+              rm -rf build/x5/time
+              ALONE=1 WF_WORKERS=4 /usr/bin/time -p -o build/evidence/pilot-$name-$mode.time sh research/investigations/incremental-layout/run.sh time "$mode" html5 rootfont 1 > build/evidence/pilot-$name-$mode.summary
+              cat build/evidence/pilot-$name-$mode.summary
+              cp build/x5/time/*.txt build/evidence/pilot-$name-$mode.raw
+            done
+          done
+          cp build/evidence/rootfont-full.edits build/x5/scripts/html5-rootfont.edits
+          python3 - <<'PYEOF'
+          from pathlib import Path
+          values = [float(path.read_text().splitlines()[0].split()[1]) for path in Path('build/evidence').glob('pilot-*.time')]
+          assert values and max(values) < 60, values
+          print('pilot process wall seconds:', values, '; two full rounds admitted')
+          PYEOF
+      - name: Every X5 cell, interleaved forward and reverse rounds
+        run: |
+          set -euo pipefail
+          for round in 1 2; do
+            names="$BUILD_NAMES"
+            if [ "$round" = 2 ]; then names=$(python3 -c 'import sys; print(" ".join(reversed(sys.argv[1:])))' $BUILD_NAMES); fi
+            for page in ecma262 html5 apollo11; do
+              for kind in word sentence colour fontsize rootfont block; do
+                for mode in seq par; do
+                  for name in $names; do
+                    cp build/drivers/driver-$name/layout_oracle_* build/
+                    rm -rf build/x5/time
+                    ALONE=1 WF_WORKERS=4 /usr/bin/time -p sh research/investigations/incremental-layout/run.sh time "$mode" "$page" "$kind" 1 > build/evidence/$name-$page-$kind-$mode-r$round.summary
+                    cat build/evidence/$name-$page-$kind-$mode-r$round.summary
+                    cp build/x5/time/*.txt build/evidence/$name-$page-$kind-$mode-r$round.raw
+                  done
+                done
+              done
+            done
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: edit-cost-evidence
+          path: |
+            build/machine.txt
+            build/evidence/
+            build/x5/scripts/
+            build/drivers/driver-*/revision.txt
+            build/drivers/driver-*/source.diff
+            build/drivers/driver-*/whitefoot-release.json
+            build/drivers/driver-*/*-build.status
+            build/drivers/driver-*/*-build.log

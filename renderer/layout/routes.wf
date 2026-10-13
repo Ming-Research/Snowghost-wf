@@ -1,0 +1,125 @@
+fn route_table<T: copy>(count: u64, missing: T) -> made: RouteTable<T> pure contract {
+  requires count <= 1073741824_u64;
+} {
+  doc "Allocates one initial power-of-two page, retaining subsequent growth without copying old records.";
+  let span = 4_u32;
+  for (level in 0_u64..28_u64) {
+    let wide = cvt::<u32, u64>(span);
+    if wide >= count {
+      break;
+    }
+    set span = span +sat span;
+  }
+  let pages = SlotPages<T>::Vacant();
+  if count > 0_u64 {
+    let size = cvt::<u32, u64>(span);
+    let values = box_array_filled::<T>(count: size, value: missing);
+    set pages = SlotPages<T>::Page(values: move values);
+  }
+  let made = RouteTable<T>(pages: move pages, len: count, span: span, missing: missing);
+  return move made;
+}
+
+fn route_read<T: copy>(table: &RouteTable<T>, at: u64) -> value: T reads(table) {
+  doc "Reads a stable directory slot or its explicit missing value; no slot is reused.";
+  if at >= table^.len {
+    return table^.missing;
+  }
+  if at >= 1073741824_u64 {
+    return table^.missing;
+  }
+  let slot = cvt::<u64, u32>(at);
+  let value = slot_read::<T>(pages: &table^.pages, slot: slot, span: table^.span, missing: table^.missing);
+  return value;
+}
+
+fn route_write<T: copy>(table: &RouteTable<T>, at: u64, value: T) -> result: unit writes(table) {
+  doc "Publishes one preflighted record, allocating only its new directory path. The ceiling is checked before any splice publication.";
+  if at >= 1073741824_u64 {
+    return unit;
+  }
+  let slot = cvt::<u64, u32>(at);
+  for (level in 0_u64..28_u64) {
+    if slot < table^.span {
+      break;
+    }
+    let old = SlotPages<T>::Vacant();
+    swap(first: &old, second: &table^.pages);
+    let empty = SlotPages<T>::Vacant();
+    let left = box_new::<SlotPages<T>>(value: move old);
+    let right = box_new::<SlotPages<T>>(value: move empty);
+    set table^.pages = SlotPages<T>::Fork(left: move left, right: move right);
+    set table^.span = table^.span +sat table^.span;
+  }
+  slot_write::<T>(pages: &table^.pages, slot: slot, span: table^.span, value: value, missing: table^.missing);
+  let length = at +sat 1_u64;
+  let high = imax(table^.len, length);
+  set table^.len = high;
+  return unit;
+}
+
+fn route_push<T: copy>(table: &RouteTable<T>, value: T) -> result: Result<unit, LayoutError> writes(table) {
+  doc "Appends one directory record, refusing the storage ceiling before writing.";
+  let at = table^.len;
+  if at >= item_ceiling {
+    return too_large::<unit>();
+  }
+  route_write::<T>(table: table, at: at, value: value);
+  return Ok<unit, LayoutError>(value: unit);
+}
+
+fn absent_text_unit() -> made: TextUnit pure {
+  doc "A tombstoned or unrecorded text source.";
+  return TextUnit(serial: no_index, piece: 0_u32, count: 0_u32, paragraph: no_index);
+}
+
+fn absent_context_path() -> made: ContextPath pure {
+  doc "A tombstoned context directory record.";
+  let no = False();
+  return ContextPath(live: no, parent: no_index, child: no_index);
+}
+
+fn absent_style_route() -> made: StyleRoute pure {
+  doc "An unrecorded style use.";
+  let no = False();
+  return StyleRoute(serial: no_index, structural: no, block: no_index, paragraph: no_index, owner: no, next: no_index);
+}
+
+fn copy_route_pages<T: copy>(pages: &SlotPages<T>, span: u32, destination: &[T]) -> result: unit reads(pages), writes(destination) {
+  doc "Copies a directory interval into already initialized final storage. Disjoint directory halves and page cells need no per-record lookup or publication.";
+  let count = destination^.len;
+  match pages^ {
+    Vacant() => {
+    }
+    Page(values: page) => {
+      for (at in 0_u64..count) {
+        if at < page^.inner.len {
+          set destination^[at] = page^.inner[at];
+        }
+      }
+    }
+    Fork(left: left_page, right: right_page) => {
+      let half = span / 2_u32;
+      let width = cvt::<u32, u64>(half);
+      let middle = imin(count, width);
+      copy_route_pages::<T>(pages: &left_page^.inner, span: half, destination: &destination^[0_u64..middle]);
+      copy_route_pages::<T>(pages: &right_page^.inner, span: half, destination: &destination^[middle..count]);
+    }
+  }
+  return unit;
+}
+
+fn copy_route_table<T: copy>(source: &RouteTable<T>, destination: &RouteTable<T>) -> result: unit reads(source), writes(destination.pages) {
+  doc "Bulk-copies the published source prefix into a fresh initial page; missing and unallocated source slots retain the identical destination default.";
+  match destination^.pages {
+    Page(values: page) => {
+      let count = imin(source^.len, page^.inner.len);
+      copy_route_pages::<T>(pages: &source^.pages, span: source^.span, destination: &page^.inner[0_u64..count]);
+    }
+    Vacant() => {
+    }
+    Fork(..) => {
+    }
+  }
+  return unit;
+}

@@ -21,7 +21,7 @@
 // ends, one header line, then one line per element, then one line per
 // generated pseudo-element:
 //
-//   index<TAB>name<TAB>display<TAB>position<TAB>...<TAB>break-inside<TAB>unicode-bidi
+//   index<TAB>name<TAB>display<TAB>position<TAB>...<TAB>tab-size<TAB>font-variant-caps
 //   INDEX<TAB>LOCALNAME<TAB>VALUE<TAB>...<TAB>VALUE
 //
 // - Elements are in document order: a preorder walk of the document's
@@ -29,7 +29,7 @@
 //   document.querySelectorAll('*'). INDEX counts from 0; LOCALNAME is the
 //   element's local name as the DOM gives it (case preserved, so SVG's
 //   linearGradient stays as written), without a namespace.
-// - The value columns are the 97 longhands of PROPERTIES below, in that
+// - The value columns are the 99 longhands of PROPERTIES below, in that
 //   order, each the computed value as
 //   element.computedStyleMap().get(property).toString() serializes it in
 //   Chromium 141 (lengths resolved to px except percentages, colors
@@ -127,7 +127,7 @@ const PROPERTIES = [
   'content', 'counter-reset', 'counter-increment', 'counter-set', 'quotes',
   'list-style-position', 'overflow-wrap', 'word-break',
   'column-count', 'column-width', 'column-fill', 'break-inside',
-  'unicode-bidi',
+  'unicode-bidi', 'tab-size', 'font-variant-caps',
 ];
 
 // The properties whose getComputedStyle value is a resolved value that

@@ -1,0 +1,523 @@
+alias Styles = pkg::style::Styles;
+
+fn shift_motion(output: SequenceOutput, delta: i64) -> made: SequenceOutput pure {
+  doc "Translates owner-relative observed bounds, preserving the empty-range sentinels.";
+  let made = output;
+  if output.natural_floor != 9223372036854775807_i64 {
+    set made.natural_floor = output.natural_floor +sat delta;
+  }
+  if output.float_reach != -9223372036854775807_i64 {
+    set made.float_reach = output.float_reach +sat delta;
+  }
+  return made;
+}
+
+fn entry_motion(context: &Context, item: Flow, styles: &Styles) -> made: SequenceOutput reads(context), reads(styles) {
+  doc "Reads one event using the current context frame; a full publication shares that same frame across its independent events.";
+  let frame = flow_frame(styles: styles, style: context^.style, space: context^.space, width: context^.width);
+  return entry_motion_at(context: context, item: item, styles: styles, content_top: frame.content_top);
+}
+
+fn entry_motion_at(context: &Context, item: Flow, styles: &Styles, content_top: i32) -> made: SequenceOutput reads(context), reads(styles) {
+  doc "Reads one reference event's natural position and float margin endpoints into its owner's normal coordinate space. Float arithmetic charges offsets from the natural cursor, invariant under uniform translation. Full publication calls this only after the stacking pass has refreshed naturals.";
+  let output = empty_output();
+  let owner = no_index;
+  let floating = no_index;
+  match item {
+    Open(block: b) => {
+      let at = cvt::<u32, u64>(b);
+      if at < context^.blocks.inner.len {
+        set owner = context^.blocks.inner[at].parent;
+      }
+    }
+    Text(paragraph: p) => {
+      let at = cvt::<u32, u64>(p);
+      if at < context^.paragraphs.inner.len {
+        set owner = context^.paragraphs.inner[at].block;
+        let atomics = context^.paragraphs.inner[at].atomics.inner.len;
+        for (atomic_at in 0_u64..atomics) {
+          let atomic_item = context^.paragraphs.inner[at].atomics.inner[atomic_at];
+          let child_at = cvt::<u32, u64>(atomic_item.context);
+          let travel = atomic_motion_travel(context: context, at: child_at, atomic_item: atomic_item);
+          set output.travel = output.travel +sat travel;
+          if child_at < context^.children.inner.len {
+            let heights = own_height_summary(context: &context^.children.inner[child_at], styles: styles);
+            set output.heights = join_height_summary(first: output.heights, second: heights);
+          }
+        }
+      }
+    }
+    Child(context: c) => {
+      let at = cvt::<u32, u64>(c);
+      if at < context^.children.inner.len {
+        set owner = context^.children.inner[at].block;
+      }
+    }
+    Float(context: f) => {
+      let at = cvt::<u32, u64>(f);
+      if at < context^.children.inner.len {
+        set owner = context^.children.inner[at].block;
+        set floating = f;
+        set output.heights = own_height_summary(context: &context^.children.inner[at], styles: styles);
+      }
+    }
+    Out(context: positioned_child) => {
+      let out_at = cvt::<u32, u64>(positioned_child);
+      if out_at < context^.children.inner.len {
+        let travel = child_motion_travel(context: context, at: out_at);
+        set output.travel = travel;
+      }
+      return output;
+    }
+    Close(..) => {
+      return output;
+    }
+  }
+  let origin = block_origin(context: context, block: owner);
+  let top = cvt::<i32, i64>(content_top);
+  let absolute_natural = 0_i64;
+  let natural_known = False();
+  let natural = reference_natural(context: context, item: item);
+  if natural != 2147483647_i32 {
+    let wide = cvt::<i32, i64>(natural);
+    let absolute = wide +sat top;
+    set absolute_natural = absolute;
+    set natural_known = True();
+    set output.natural_floor = absolute -sat origin.y;
+  }
+  let float_at = cvt::<u32, u64>(floating);
+  if float_at < context^.children.inner.len {
+    let child = &context^.children.inner[float_at];
+    let resolved = child_origin(context: context, at: float_at);
+    let normal = resolved.y;
+    let visual = normal +sat resolved.dy;
+    let height = cvt::<i32, i64>(child^.height);
+    let margin_top = cvt::<i32, i64>(child^.margin_top);
+    let margin_bottom = cvt::<i32, i64>(child^.margin_bottom);
+    let first = normal -sat margin_top;
+    let bottom = normal +sat height;
+    let outer = bottom +sat margin_bottom;
+    let reach = imax(first, outer);
+    set output.float_reach = reach -sat origin.y;
+    let offset = normal -sat absolute_natural;
+    let relative = visual -sat normal;
+    let offset_travel = travel_absolute(value: offset);
+    let relative_travel = travel_absolute(value: relative);
+    let height_travel = travel_absolute(value: height);
+    let top_travel = travel_absolute(value: margin_top);
+    let bottom_travel = travel_absolute(value: margin_bottom);
+    let positions = offset_travel +sat relative_travel;
+    let box_travel = positions +sat height_travel;
+    let margins = top_travel +sat bottom_travel;
+    set output.travel = box_travel +sat margins;
+    set output.motion_known = natural_known;
+  }
+  return output;
+}
+
+fn inherited_float_reach(context: &Context, owner: u32, visits: &BoundaryVisits) -> reach: i64 reads(context.blocks.inner), reads(context.entries), reads(context.local_geometry), reads(context.reference_phase), reads(context.range_actions), writes(visits) {
+  doc "Collects only prefix reductions on the enclosing owner chain. Their floats are unchanged by an edit inside the owner; coordinates are lifted through normal block origins.";
+  let cursor = owner;
+  let reach = -9223372036854775807_i64;
+  let limit = context^.blocks.inner.len +sat 1_u64;
+  for (level in 0_u64..limit) {
+    if cursor == no_index {
+      return reach;
+    }
+    let at = cvt::<u32, u64>(cursor);
+    if at < context^.blocks.inner.len {
+    } else {
+      return 9223372036854775807_i64;
+    }
+    let parent = context^.blocks.inner[at].parent;
+    let slot = context^.blocks.inner[at].entry_slot;
+    let prefix = owner_prefix(context: context, owner: parent, slot: slot, visits: visits);
+    let origin = block_origin(context: context, block: parent);
+    let lifted = shift_motion(output: prefix, delta: origin.y);
+    set reach = imax(reach, lifted.float_reach);
+    set cursor = parent;
+  }
+  return 9223372036854775807_i64;
+}
+
+fn owner_prefix(context: &Context, owner: u32, slot: u32, visits: &BoundaryVisits) -> made: SequenceOutput reads(context.blocks.inner), reads(context.entries), writes(visits) {
+  doc "Reads the metadata prefix before one stable entry in its owning sequence.";
+  if owner == no_index {
+    let rank = boundary_rank(sequence: &context^.entries, slot: slot, visits: visits);
+    let prefix = range_output(sequence: &context^.entries, root: context^.entries.root, from: 0_u64, until: rank, visits: visits);
+    return prefix;
+  }
+  let at = cvt::<u32, u64>(owner);
+  if at < context^.blocks.inner.len {
+    let sequence = &context^.blocks.inner[at].entries;
+    let rank = boundary_rank(sequence: sequence, slot: slot, visits: visits);
+    let prefix = range_output(sequence: sequence, root: sequence^.root, from: 0_u64, until: rank, visits: visits);
+    return prefix;
+  }
+  let invalid = empty_output();
+  set invalid.motion_known = False();
+  return invalid;
+}
+
+fn motion_above(reach: i64, floor: i64, delta: i64) -> safe: Bool pure {
+  doc "Requires unchanged earlier floats to end before every old and new natural suffix position, including negative-margin re-entry.";
+  if reach == -9223372036854775807_i64 {
+    return True();
+  }
+  if floor == 9223372036854775807_i64 {
+    return True();
+  }
+  if reach > floor {
+    return False();
+  }
+  let proposed = floor +sat delta;
+  let safe = reach <= proposed;
+  return safe;
+}
+
+fn splice_payload_y(context: &Context, item: Flow) -> y: i64 reads(context) {
+  doc "The direct entry's normal origin in its owning sequence, used to rebase a privately built entry's motion bounds.";
+  match item {
+    Open(block: b) => {
+      let at = cvt::<u32, u64>(b);
+      if at < context^.blocks.inner.len {
+        return context^.blocks.inner[at].y;
+      }
+    }
+    Text(paragraph: p) => {
+      let at = cvt::<u32, u64>(p);
+      if at < context^.paragraphs.inner.len {
+        return context^.paragraphs.inner[at].top;
+      }
+    }
+    Child(context: c) => {
+      let at = cvt::<u32, u64>(c);
+      if at < context^.children.inner.len {
+        return context^.children.inner[at].anchor.y;
+      }
+    }
+    Float(..) => {
+    }
+    Out(..) => {
+    }
+    Close(..) => {
+    }
+  }
+  return 0_i64;
+}
+
+fn stationary_float_reach(context: &Context, owner: u32, prefix: SequenceOutput, visits: &BoundaryVisits) -> reach: i64 reads(context.blocks.inner), reads(context.entries), reads(context.local_geometry), reads(context.reference_phase), reads(context.range_actions), writes(visits) {
+  doc "Combines the seam's direct prefix with prefixes before its owner ancestors. Moved float exports inside a changed ancestor never enter this stationary reach.";
+  let inherited = inherited_float_reach(context: context, owner: owner, visits: visits);
+  let origin = block_origin(context: context, block: owner);
+  let lifted_prefix = shift_motion(output: prefix, delta: origin.y);
+  let reach = imax(inherited, lifted_prefix.float_reach);
+  return reach;
+}
+
+fn owner_stationary_reach(context: &Context, owner: u32, slot: u32, visits: &BoundaryVisits) -> reach: i64 reads(context.blocks.inner), reads(context.entries), reads(context.local_geometry), reads(context.reference_phase), reads(context.range_actions), writes(visits) {
+  doc "Computes stationary reach before a changed Text or independent Child entry; neither exports floats into this flow context.";
+  let prefix = owner_prefix(context: context, owner: owner, slot: slot, visits: visits);
+  let reach = stationary_float_reach(context: context, owner: owner, prefix: prefix, visits: visits);
+  return reach;
+}
+
+fn motion_range_ready(context: &Context, owner: u32, fixed_reach: i64, suffix: SequenceOutput, proposed: SequenceOutput) -> ready: Bool reads(context.blocks.inner), reads(context.local_geometry), reads(context.reference_phase), reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.entries.range_actions) {
+  doc "Certifies both suffix minima against the seam's stationary float reach. Existing suffix floats and flow share one certified translation, preserving their relative exclusion interactions.";
+  let known = band(suffix.motion_known, proposed.motion_known);
+  if known {
+  } else {
+    return False();
+  }
+  let origin = block_origin(context: context, block: owner);
+  let old = shift_motion(output: suffix, delta: origin.y);
+  let fresh = shift_motion(output: proposed, delta: origin.y);
+  let floor = imin(old.natural_floor, fresh.natural_floor);
+  let ready = motion_above(reach: fixed_reach, floor: floor, delta: 0_i64);
+  return ready;
+}
+
+fn sequence_motion_ready(context: &Context, sequence: &EntrySequence, owner: u32, slot: u32, delta: i64, fixed_reach: i64, visits: &BoundaryVisits) -> ready: Bool reads(context.blocks.inner), reads(context.local_geometry), reads(context.reference_phase), reads(sequence), reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.entries.range_actions), writes(visits) {
+  doc "Checks the suffix after a changed entry against the original seam's stationary reach, excluding the changed entry's moved float exports.";
+  let rank = boundary_rank(sequence: sequence, slot: slot, visits: visits);
+  let after = rank +sat 1_u64;
+  let root = boundary_node(sequence: sequence, slot: sequence^.root, visits: visits);
+  let suffix = range_output(sequence: sequence, root: sequence^.root, from: after, until: root.total_count, visits: visits);
+  let proposed = shift_motion(output: suffix, delta: delta);
+  let ready = motion_range_ready(context: context, owner: owner, fixed_reach: fixed_reach, suffix: suffix, proposed: proposed);
+  return ready;
+}
+
+fn owner_motion_ready(context: &Context, owner: u32, slot: u32, delta: i64, fixed_reach: i64, visits: &BoundaryVisits) -> ready: Bool reads(context.blocks.inner), reads(context.entries), reads(context.local_geometry), reads(context.reference_phase), reads(context.range_actions), writes(visits) {
+  doc "Routes one owner-local suffix certificate without materializing its entries.";
+  if owner == no_index {
+    let ready = sequence_motion_ready(context: context, sequence: &context^.entries, owner: owner, slot: slot, delta: delta, fixed_reach: fixed_reach, visits: visits);
+    return ready;
+  }
+  let at = cvt::<u32, u64>(owner);
+  if at < context^.blocks.inner.len {
+    let ready = sequence_motion_ready(context: context, sequence: &context^.blocks.inner[at].entries, owner: owner, slot: slot, delta: delta, fixed_reach: fixed_reach, visits: visits);
+    return ready;
+  }
+  return False();
+}
+
+fn outward_motion_ready(context: &Context, owner: u32, delta: i32, fixed_reach: i64, styles: &Styles, visits: &BoundaryVisits) -> ready: Bool reads(context.blocks.inner), reads(context.entries), reads(context.local_geometry), reads(context.reference_phase), reads(context.style), reads(context.space), reads(context.width), reads(context.flow_end), reads(styles), reads(context.range_actions), writes(visits) {
+  doc "Checks each direct suffix outside the changed owner and the context's float-containing flow end. At a fixed-height absorber, old and proposed exported float reach must remain before every stationary outer natural minimum and the final flow end. No inserted or removed float export is admitted by the caller, so old reach plus positive displacement bounds both retained float sets. Only the block ancestor chain is ordered.";
+  let cursor = owner;
+  let obstacle = fixed_reach;
+  let change = cvt::<i32, i64>(delta);
+  let limit = context^.blocks.inner.len +sat 1_u64;
+  for (level in 0_u64..limit) {
+    if cursor == no_index {
+      let total_field = False();
+      let total = boundary_output(sequence: &context^.entries, slot: context^.entries.root, own: total_field, visits: visits);
+      let frame = flow_frame(styles: styles, style: context^.style, space: context^.space, width: context^.width);
+      let top = cvt::<i32, i64>(frame.content_top);
+      let ending = cvt::<i32, i64>(context^.flow_end);
+      let floor = top +sat ending;
+      let reach = imax(total.float_reach, obstacle);
+      let ready = motion_above(reach: reach, floor: floor, delta: change);
+      return ready;
+    }
+    let at = cvt::<u32, u64>(cursor);
+    if at < context^.blocks.inner.len {
+    } else {
+      return False();
+    }
+    set visits^.blocks = visits^.blocks +sat 1_u64;
+    let parent = context^.blocks.inner[at].parent;
+    if context^.blocks.inner[at].output.fixed_height {
+      if change != 0_i64 {
+        let output = context^.blocks.inner[at].boundary;
+        if output.floats > 0_u64 {
+          if output.motion_known {
+          } else {
+            return False();
+          }
+          let origin = block_origin(context: context, block: parent);
+          let positive = imax(change, 0_i64);
+          let moved_reach = output.float_reach +sat positive;
+          let reach = origin.y +sat moved_reach;
+          let extra = travel_absolute(value: change);
+          let budget = output.travel +sat extra;
+          let bounded = transfer_fits(origin: origin.y, travel: budget);
+          if bounded {
+          } else {
+            return False();
+          }
+          set obstacle = imax(obstacle, reach);
+        }
+      }
+      set change = 0_i64;
+    }
+    let slot = context^.blocks.inner[at].entry_slot;
+    let ready = owner_motion_ready(context: context, owner: parent, slot: slot, delta: change, fixed_reach: obstacle, visits: visits);
+    if ready {
+    } else {
+      return False();
+    }
+    set cursor = parent;
+  }
+  return False();
+}
+
+fn child_motion_travel(context: &Context, at: u64) -> travel: i64 reads(context) {
+  doc "Charges a positioned or atomic anchor's local normal and visual excursions plus its height, so a translated saturated anchor cannot enter the exact-arithmetic path.";
+  if at < context^.children.inner.len {
+    let owner = block_origin(context: context, block: context^.children.inner[at].block);
+    let travel = child_motion_travel_with_owner(context: context, at: at, owner: owner);
+    return travel;
+  }
+  return 0_i64;
+}
+
+fn child_motion_travel_with_owner(context: &Context, at: u64, owner: Origin) -> travel: i64 reads(context) {
+  doc "Charges child motion against an already resolved parent block origin. The caller must keep that parent frame unchanged through this read; positioned child settlement writes only the child, and preceding zero-delta certificate publication changes summaries without moving any parent origin. Hybrid placement still resolves through the reference reader.";
+  if at < context^.children.inner.len {
+    let child = &context^.children.inner[at];
+    let source = cvt::<u32, u64>(child^.placement_paragraph);
+    let resolved = if context^.local_geometry {
+      let placement_owner = if child^.viewport_origin {
+        let viewport_owner = zero_origin();
+        give viewport_owner;
+      } else if source < context^.paragraphs.inner.len {
+        let paragraph_offset = paragraph_local(context: context, at: source);
+        give origin_accumulate(owner: owner, local: paragraph_offset);
+      } else {
+        give owner;
+      }
+      let anchor = child_local(context: context, at: at);
+      let placed = origin_accumulate(owner: placement_owner, local: anchor);
+      give placed;
+    } else {
+      let reference = child_origin(context: context, at: at);
+      give reference;
+    }
+    let normal = resolved.y;
+    let visual = normal +sat resolved.dy;
+    let height = cvt::<i32, i64>(child^.height);
+    let local = normal -sat owner.y;
+    let relative = visual -sat normal;
+    let normal_travel = travel_absolute(value: local);
+    let visual_travel = travel_absolute(value: relative);
+    let height_travel = travel_absolute(value: height);
+    let positions = normal_travel +sat visual_travel;
+    let travel = positions +sat height_travel;
+    return travel;
+  }
+  return 0_i64;
+}
+
+fn splice_width_stable(context: &Context, styles: &Styles) -> ready: Bool reads(context), reads(styles) {
+  doc "An owner spliced before flex recomputation must keep its current width independently of changed intrinsic content. Forced or specified widths and ordinary fill-available widths satisfy this condition.";
+  if context^.space.forced_width >= 0_i32 {
+    return True();
+  }
+  let no = False();
+  let keyword = width_keyword(styles: styles, style: context^.style, ignored: no);
+  if keyword >= 0_i32 {
+    return False();
+  }
+  let border = border_edges(styles: styles, style: context^.style);
+  let padding = padding_edges(styles: styles, style: context^.style, basis: context^.space.basis_width);
+  let horizontal_border = horizontal(edges: border);
+  let horizontal_padding = horizontal(edges: padding);
+  let frame = horizontal_border +sat horizontal_padding;
+  let specified = specified_width(styles: styles, style: context^.style, basis: context^.space.basis_width, frame: frame);
+  if specified >= 0_i32 {
+    return True();
+  }
+  let fills = bnot(context^.space.shrink);
+  return fills;
+}
+
+fn actual_flow_ready(context: &Context, child: u64, before: Before, fixed_reach: i64, styles: &Styles, visits: &BoundaryVisits) -> ready: Bool reads(context), reads(styles), writes(visits) {
+  doc "Checks local outward transfer against a child's actual recomputed output, including unchanged margin struts, float clearance and the old/new arithmetic budget.";
+  if child < context^.children.inner.len {
+  } else {
+    return False();
+  }
+  let in_flow = splice_child_entry(context: context, child: child, visits: visits);
+  if in_flow {
+  } else {
+    return False();
+  }
+  let has_baseline = before.has_baseline == context^.children.inner[child].has_baseline;
+  if has_baseline {
+  } else {
+    return False();
+  }
+  if before.width != context^.children.inner[child].width {
+    return False();
+  }
+  if before.margin_left != context^.children.inner[child].margin_left {
+    return False();
+  }
+  if before.margin_right != context^.children.inner[child].margin_right {
+    return False();
+  }
+  if before.margin_top != context^.children.inner[child].margin_top {
+    return False();
+  }
+  if before.margin_bottom != context^.children.inner[child].margin_bottom {
+    return False();
+  }
+  let parent = context^.children.inner[child].block;
+  let slot = context^.children.inner[child].entry_slot;
+  let delta = context^.children.inner[child].height -sat before.height;
+  let output = context_entry_output(child: &context^.children.inner[child], styles: styles);
+  let ready = changed_entry_ready(context: context, owner: parent, slot: slot, output: output, delta: delta, fixed_reach: fixed_reach, styles: styles, visits: visits);
+  return ready;
+}
+
+fn changed_entry_ready(context: &Context, owner: u32, slot: u32, output: SequenceOutput, delta: i32, fixed_reach: i64, styles: &Styles, visits: &BoundaryVisits) -> ready: Bool reads(context.height_proof), reads(context.height_input), reads(context.slot), reads(context.retired), reads(context.blocks.inner), reads(context.entries), reads(context.local_geometry), reads(context.reference_phase), reads(context.range_actions), reads(context.style), reads(context.space), reads(context.width), reads(context.flow_end), reads(styles), reads(context.natural), reads(context.kind), writes(visits) {
+  doc "Certifies the actual output of one changed in-flow entry using only its ancestor path and cached direct-suffix bounds. Growth, unchanged margins, float clearance and the old/new arithmetic budget are shared by text updates and child-context propagation.";
+  let path = splice_block_path(context: context, styles: styles, owner: owner, delta: delta, visits: visits);
+  if path {
+  } else {
+    return False();
+  }
+  let change = cvt::<i32, i64>(delta);
+  let immediate = owner_motion_ready(context: context, owner: owner, slot: slot, delta: change, fixed_reach: fixed_reach, visits: visits);
+  if immediate {
+  } else {
+    return False();
+  }
+  let motion = outward_motion_ready(context: context, owner: owner, delta: delta, fixed_reach: fixed_reach, styles: styles, visits: visits);
+  if motion {
+  } else {
+    return False();
+  }
+  let proposed = preview_boundary(context: context, owner: owner, slot: slot, output: output, visits: visits);
+  let total_field = False();
+  let old = boundary_output(sequence: &context^.entries, slot: context^.entries.root, own: total_field, visits: visits);
+  let edges = splice_edges_equal(first: old, second: proposed);
+  if edges {
+  } else {
+    return False();
+  }
+  let frame = flow_frame(styles: styles, style: context^.style, space: context^.space, width: context^.width);
+  let origin = cvt::<i32, i64>(frame.content_top);
+  let budget = old.travel +sat proposed.travel;
+  let ready = transfer_fits(origin: origin, travel: budget);
+  return ready;
+}
+
+fn splice_child_entry(context: &Context, child: u64, visits: &BoundaryVisits) -> ready: Bool reads(context.blocks), reads(context.children), reads(context.entries), writes(visits) {
+  doc "A flow parent can propagate only an independent in-flow child, never an atomic paragraph object, float or out-of-flow anchor. The stable live entry must name that same child slot.";
+  if child < context^.children.inner.len {
+  } else {
+    return False();
+  }
+  let slot = context^.children.inner[child].entry_slot;
+  if slot == no_index {
+    return False();
+  }
+  let owner = context^.children.inner[child].block;
+  let item = if owner == no_index {
+    give splice_payload(sequence: &context^.entries, slot: slot, visits: visits);
+  } else {
+    let at = cvt::<u32, u64>(owner);
+    if at < context^.blocks.inner.len {
+      give splice_payload(sequence: &context^.blocks.inner[at].entries, slot: slot, visits: visits);
+    } else {
+      give Flow::Close(block: no_index);
+    }
+  }
+  match item {
+    Child(context: held_child) => {
+      let at = cvt::<u32, u64>(held_child);
+      let same = at == child;
+      return same;
+    }
+    Open(..) => {
+    }
+    Close(..) => {
+    }
+    Text(..) => {
+    }
+    Float(..) => {
+    }
+    Out(..) => {
+    }
+  }
+  return False();
+}
+
+fn atomic_motion_travel(context: &Context, at: u64, atomic_item: Atomic) -> travel: i64 reads(context.children.inner) {
+  doc "Charges paragraph-relative atomic offsets and height. These remain invariant under paragraph translation, including when a negative atomic margin was initially cancelled by preceding flow height; the flow certificate separately bounds the paragraph origin.";
+  if at < context^.children.inner.len {
+    let normal = cvt::<i32, i64>(atomic_item.normal_y);
+    let visual = cvt::<i32, i64>(atomic_item.y);
+    let height = cvt::<i32, i64>(context^.children.inner[at].height);
+    let relative = visual -sat normal;
+    let normal_travel = travel_absolute(value: normal);
+    let visual_travel = travel_absolute(value: relative);
+    let height_travel = travel_absolute(value: height);
+    let positions = normal_travel +sat visual_travel;
+    let travel = positions +sat height_travel;
+    return travel;
+  }
+  return 0_i64;
+}
