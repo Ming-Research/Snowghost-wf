@@ -32,8 +32,13 @@
 #                                   same as the rebuilt one; differences,
 #                                   refusals and incomplete runs fail
 #   run.sh transforms DRIVER       checks the focused translation fixture's
-#                                   transform, unrelated style, text and
-#                                   border-box-basis edits against full rebuilds
+#                                   transform, unrelated style, text,
+#                                   border-box-basis, percentage-basis (a text
+#                                   edit that changes the height a translateY
+#                                   percentage resolves against) and overflow
+#                                   (a class toggle on the ancestor of a
+#                                   translated box, which turns trapping on
+#                                   and off) edits against full rebuilds
 #   run.sh time BUILD PAGE KIND [RUNS]
 #                                   times text_changed + update per edit
 #                                   with the driver's incremental mode, RUNS
@@ -267,6 +272,9 @@ transforms() {
 	child=$(awk '$1 == "E" && $6 == 6 { print $2; n++ } END { if (n != 1) exit 1 }' "$work/transforms/nodes.txt")
 	paragraph=$(awk '$1 == "E" && $6 == 7 { print $2; n++ } END { if (n != 1) exit 1 }' "$work/transforms/nodes.txt")
 	float=$(awk '$1 == "E" && $6 == 9 { print $2; n++ } END { if (n != 1) exit 1 }' "$work/transforms/nodes.txt")
+	clipper=$(awk '$1 == "E" && $6 == 12 { print $2; n++ } END { if (n != 1) exit 1 }' "$work/transforms/nodes.txt")
+	shift_paragraph=$(awk '$1 == "E" && $6 == 14 { print $2; n++ } END { if (n != 1) exit 1 }' "$work/transforms/nodes.txt")
+	shift_text=$(awk -v parent="$shift_paragraph" '$1 == "T" && $3 == parent { print $2; n++ } END { if (n != 1) exit 1 }' "$work/transforms/nodes.txt")
 	text=$(awk -v parent="$paragraph" '$1 == "T" && $3 == parent { print $2; n++ } END { if (n != 1) exit 1 }' "$work/transforms/nodes.txt")
 	cat >"$work/transforms/case.edits" <<EOF
 C $outer size
@@ -284,6 +292,10 @@ C $float changed
 K $float changed
 C $child changed
 K $child changed
+C $clipper clip
+K $clipper clip
+T $shift_text 0 Added words that wrap more lines
+D $shift_text 0 32
 EOF
 	"$transform_driver" edit "$work/transforms/case.edits" "$fixture" "$ua" >"$work/transforms/case.raw"
 	python3 "$here/scripts/inctime.py" --check "$work/transforms/case.edits" "$work/transforms/case.raw"

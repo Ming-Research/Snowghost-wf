@@ -261,8 +261,7 @@ integer layout units. The dump uses its existing coordinate serialization.
 For example, `(0.1px, 0.2px)` becomes `(0.09375px, 0.203125px)`; this loses
 sub-layout-unit positions, as the owner chose, without changing flow sizes.
 
-Scroll overflow includes transformed rectangles, rather than keeping the
-first draft's untransformed height. A translated box and its descendants
+Scroll overflow includes transformed rectangles. A translated box and its descendants
 contribute only their translated rectangles, as relatively positioned boxes
 do ([CSS Transforms 1](https://www.w3.org/TR/css-transforms-1/#transform-rendering));
 the untransformed position stays covered by the flow parent's own box. Chromium
@@ -279,18 +278,15 @@ against Chromium 141, and byte-identical retained/full output after
 transform, size and unrelated edits. There is no fixture-specific comparator
 or index exemption. A moved sibling, missing transformed scroll overflow,
 overflow leaking through a nested scroll container, or stale/doubled offset
-rejects the implementation. Compilation, sequential/parallel equality and
-those runtime checks must run in CI; no runtime result is claimed by this
-draft.
+rejects the implementation. The layout case floors, the sequential and
+`--par` dump comparison, the scroll height check and its falsifier, and the
+retained-layout edit script all run in `.github/workflows/q139.yml`.
 
-### Translation cases and pending validation
+### Translation cases
 
 `tests/layout/transform-cases.html` contains the cases below. Each delta is
-relative to the untransformed flow rectangle, in CSS pixels. These are
-expectations derived from the fixture, not measurements: the preceding code
-does not recognize either longhand, so it contributes zero translation in
-every case. The new implementation computes the listed offsets; CI must
-confirm its actual output.
+relative to the untransformed flow rectangle, in CSS pixels, and each was
+confirmed against Chromium 141 (results below).
 
 | Case | Expected result and fault detected |
 | --- | --- |
@@ -312,82 +308,54 @@ confirm its actual output.
 | Fractional translation | `(0.09375,0.203125)` after nearest LayoutUnit rounding; judged with the ordinary comparator's tolerances. |
 | Transformed overflow | `(0,2000)` extends document scroll height without enlarging its flow parent. |
 | Nested scroll container | Its child's `(0,2000)` rectangle enlarges inner overflow, but cannot enlarge the document beyond the outer container's own box. |
-| Relative overflow under an upward-translated ancestor | Parent `(0,-6000)` and child relative top 6000px show that untransformed descendant rectangles do not extend root overflow: Chromium 141 reports 3300, not the 7780 the untransformed child would give. |
+| Relative overflow under an upward-translated ancestor | Parent `(0,-6000)` and child relative top 6000px show that untransformed descendant rectangles do not extend root overflow: Chromium 141 reports 3300, not the 7780 the original plus translated extents would give. |
 | One-argument transform | `(7,0)`. Detects a missing y default. |
 | One-argument property | `(6,0)`. |
 | Invalid translate arity | Earlier valid `(8,9)` survives the invalid three-argument translate. |
 | Invalid z percentage | Earlier valid `(8,9)` survives translate3d with percentage z. |
 
 The case page excludes unsupported transform lists, which deliberately
-differ from Chromium. It is judged through the same ordinary comparison
-and floor mechanism as every other case page; there are no known transform
-mismatches absorbed by its floor. The fixture has 23 sections and 60 elements:
-55 block boxes, one inline box and four elements without boxes, with one
-rendered text node. Its floor is **55 block boxes, 1 inline box and 1 text
-node**, replacing the first draft's 53/1/1 floor after removing two
-unsupported-list sections and adding the contained-overflow and
-relative-overflow sections.
-Existing case floors remain unchanged. The uncontained translation extends
-the expected document H from the natural 1840px to 3300px; the later
-scroll-container child's translated bottom is 3690px, which must not leak
-through that container to document H. These numbers remain statically
-derived, not measured. The final relative-overflow witness introduces the
-unresolved root-propagation comparison below; its H is not exempted from
-ordinary comparison or absorbed by any floor.
+differ from Chromium. It is judged through the same comparison and floor
+mechanism as every other case page. The fixture has 23 sections and 60
+elements: 55 block boxes, one inline box and four elements without boxes,
+with one rendered text node. Its floor is **55 block boxes, 1 inline box and
+1 text node**.
 
-The ordinary comparator now judges document H within 1px on every page,
-and the ordinary floor harness requires that match even when a case page
-has permitted rectangle mismatches. Its CI falsifier changes only an
-ordinary oracle dump's H by 2px and requires the same ordinary comparator
-to reject it. Inline and text absolute positions remain reported rather
-than judged, as in the existing comparator; this fixture does not introduce
-any special position assertion or tighter fractional-coordinate tolerance.
+Results, measured in CI at head b9af1b7 against Chromium 141: 55/55 block
+boxes and 56/56 absolute positions match exactly, and the document scroll
+height is 3300 in both Chromium and Snowghost. The relative-overflow case
+shows that Chromium counts a translated box only at its translated position:
+counting the original extents too would give 7780. The nested scroll
+container's child, whose translated bottom is 3690px, does not leak through
+its container to the document height. Sequential and 4-worker dumps are
+byte-identical. The comparison also reports the document height of every
+case page; the `transform-cases` floor additionally requires it within 1 px
+of Chromium's (`case_height_judged` in `run.sh`), because that page's
+translations exist to move overflow. The other case pages differ by a few
+pixels (columns 790 against 786, grid 8068 against 8071, tables 6669 against
+6665), which are separate defects reported but not judged. A falsifier in
+`q139.yml` raises the height of a copy of the `transform-cases` dump by 2 px
+and requires `run.sh judge` to reject it.
 
-The retained-layout fixture runs 15 style and text operations, including
+Scroll height is now rounded as floor(bottom + 0.5) instead of truncated,
+and a rendered scroll container traps its content's overflow. Across every
+case page in the q139 workflow (base run 38368152731 against branch run
+38372815795) the scroll heights are identical except `table-cases`, which
+moved from 6664 to 6665 against Chromium's 6669, one pixel closer. No page
+got worse.
+
+The retained-layout fixture runs 19 style and text operations (class toggles
+and text insertions and deletions of the edit grammar):
 changing translation, resizing a percentage reference box, changing only
 colour, inserting and deleting text, entering and leaving an unsupported
-list, and changing translated floats and nested children. The existing edit
-checker requires every retained dump to equal a full rebuild byte for byte;
-the harness also compares sequential and parallel output. The layout
-investigation and the M2 oracle workflow retain these checks. The M2
-workflow's standalone current fixture step uses the ordinary Chromium
-comparison and floors; the existing historical compatibility step retains
-its previous branch filter and checks. There is no translation-specific
-historical comparison command.
-
-### Root overflow propagation witness
-
-The remaining question is whether the flat union of every descendant's
-original and fully translated global rectangle reproduces Chromium 141's
-container-level overflow propagation. The candidate output reader currently
-uses that union, stops at rendered clipping ancestors, and reduces each
-independent rectangle's root contribution. The completed flow geometry and
-the published rectangles are separate, so this question concerns H alone.
-
-A source-derived witness is an overflow-visible parent of fixed height
-20px translated upwards by 6000px, with a 20px child relatively positioned
-6000px down. The final section of the case page contains exactly that
-arrangement. The candidate retains the child's original global bottom
-7780px, so its inferred H is 7780px. Chromium's current
-[overflow calculator](https://raw.githubusercontent.com/chromium/chromium/main/third_party/blink/renderer/core/layout/scrollable_overflow_calculator.cc)
-unions a parent's local border and child overflow before projecting the
-parent's transform; outer inflow bounds preserve the parent's ordinary flow
-size, rather than each descendant's former global position. That source
-therefore suggests H remains 3300px, set by the earlier positive-translation
-case. This is an inference from current upstream source, not a Chromium 141
-measurement. The ordinary comparator will reject either missing positive
-overflow or the candidate's suspected overestimate; no expected result is
-rewritten to accommodate it.
-
-The disputed behavior must be measured with the fixture in Chromium 141
-before claiming scroll-overflow completion. If the inferred discrepancy
-holds, overflow must aggregate at container boundaries before ancestor
-projection; retaining global original descendant bounds is insufficient.
-Wholly unreachable negative-horizontal overflow raises the same aggregation
-question, so a leaf-only horizontal cutoff would not be a justified repair.
-The current dump exposes only document H; it does not expose an individual
-container scrollHeight query. This unresolved project geometry question is
-not evidence of a Whitefoot language or compiler gap.
+list, changing translated floats and nested children, a text edit that
+changes the height of a box translated by a percentage, and an `overflow`
+toggle on the ancestor of a translated box, which turns trapping on and off.
+The edit checker requires every retained dump to equal a full rebuild byte
+for byte, and `incremental-layout/run.sh transforms` gives retained equal to
+full for every edit with both the sequential and the `--par` build, whose
+outputs are also compared. These checks run in `q139.yml` only; the
+M2 workflow does not run them.
 
 ## The stage's shape, before the interface choices
 
@@ -712,7 +680,7 @@ by class and cause (each deferred as an item on the status board):
 - **apollo11, 14 block-level boxes:** 11 language names in Arabic script
   (right-to-left text, as above); the search icon, which `transform`
   moves (outside the scope of that measurement; translation is now included
-  in the scope above, with new validation pending); and two absolutely positioned boxes whose static
+  in the scope above); and two absolutely positioned boxes whose static
   position lies inside a line, which the stage puts at the block's start.
 - **apollo11, 45 inline boxes and 37 text nodes:** the right-to-left
   language names; twelve `abbr` links in `font-variant: small-caps`,
