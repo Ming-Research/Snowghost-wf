@@ -34,7 +34,9 @@
 //   not it is rendered; PARENT is the INDEX of its parent element; RECTS are
 //   the getClientRects() of a Range selecting its contents, one per line
 //   fragment.
-// - One H line: the document element's scrollHeight.
+// - One H line, the last: the document element's scrollHeight. A file
+//   that lacks it, repeats it, has a non-finite number there or does not
+//   end in a newline is an incomplete dump, an input error.
 // - Numbers are written as JavaScript writes them (Chromium's are
 //   multiples of 1/64, which it writes exactly); a Snowghost driver writes
 //   the shortest decimal that reads back as its value.
@@ -63,7 +65,7 @@
 // measure below 100% its eight most frequent mismatch classes with their
 // counts and one example. Exit status: 0 when the three judged measures
 // each match at least 99.0%; 1 when one does not; 2 on a usage or input
-// error; 3 when the files' structure differs.
+// error (an incomplete or malformed dump included); 3 when the files' structure differs.
 //
 // CHROMIUM and PLAYWRIGHT override the browser binary and the playwright
 // module's path.
@@ -227,8 +229,10 @@ function read(path) {
   const elements = [];
   const texts = new Map();
   let height = null;
+  let heightLines = 0;
+  if (!text.endsWith('\n')) usage(`${path}: incomplete dump: the last line is not terminated`);
   const lines = text.split('\n');
-  if (lines[lines.length - 1] === '') lines.pop();
+  lines.pop();
   lines.forEach((line, n) => {
     const where = `${path}:${n + 1}`;
     const fields = line.split('\t');
@@ -241,11 +245,17 @@ function read(path) {
     } else if (fields[0] === 'T' && fields.length === 4) {
       texts.set(Number(fields[1]), { parent: Number(fields[2]), rects: parseRects(fields[3], where) });
     } else if (fields[0] === 'H' && fields.length === 2) {
+      if (fields[1] === '' || !Number.isFinite(Number(fields[1]))) usage(`${where}: malformed height ${fields[1]}`);
       height = Number(fields[1]);
+      heightLines++;
+      if (n !== lines.length - 1) usage(`${where}: malformed dump: lines follow the height line`);
     } else {
       usage(`${where}: unknown line`);
     }
   });
+  if (heightLines !== 1) {
+    usage(`${path}: ${heightLines === 0 ? 'incomplete dump: missing the final height line' : 'malformed dump: more than one height line'}`);
+  }
   return { elements, texts, height };
 }
 

@@ -38,6 +38,35 @@ jobs:
           echo "PLAYWRIGHT=$GITHUB_WORKSPACE/build/reference/node_modules/playwright" >> "$GITHUB_ENV"
           node -e 'console.log("CHROMIUM=" + require("./build/reference/node_modules/playwright").chromium.executablePath())' >> "$GITHUB_ENV"
           make -s toolchain compiler oracle-fonts
+      - name: The shared comparator rejects an incomplete dump
+        run: |
+          set -euo pipefail
+          mkdir -p build/incomplete
+          cd build/incomplete
+          node ../../tests/layout/layout_oracle.mjs dump ../../tests/layout/grid-final-space-cases.html > full.tsv
+          python3 - <<'PY'
+          data = open('full.tsv', encoding='utf8').read()
+          lines = data.split('\n')
+          third_element = [i for i, l in enumerate(lines) if l.startswith('E\t')][2]
+          open('after-element.tsv', 'w', encoding='utf8').write('\n'.join(lines[:third_element + 1]) + '\n')
+          first_text = next(l for l in lines if l.startswith('T\t'))
+          cut = data.index(first_text) + len(first_text) // 2
+          open('mid-text.tsv', 'w', encoding='utf8').write(data[:cut])
+          PY
+          # The old reader compared these to the complete dump and exited 3
+          # (structure differs); only the input-error status 2 with the
+          # incomplete-dump message passes.
+          for name in after-element mid-text; do
+            status=0
+            node ../../tests/layout/layout_oracle.mjs compare full.tsv "$name.tsv" > "$name.out" 2> "$name.err" || status=$?
+            [ "$status" = 2 ] || { echo "$name: exit $status, want 2"; cat "$name.out" "$name.err"; exit 1; }
+            grep -q "^layout_oracle: $name.tsv: incomplete dump" "$name.err" || { echo "$name: wrong message"; cat "$name.err"; exit 1; }
+            [ ! -s "$name.out" ] || { echo "$name: compared anyway"; cat "$name.out"; exit 1; }
+          done
+          # The complete dump compares as before: exit 0, every box exact.
+          node ../../tests/layout/layout_oracle.mjs compare full.tsv full.tsv | tee complete.out
+          grep -Eq '^block-level boxes: ([0-9]+)/\1 100\.00% within 1px, 100\.00% exact$' complete.out
+          grep -Eq '^scroll height \(reported\): chromium ([0-9.]+), snowghost \1$' complete.out
       - name: Build the candidate drivers
         run: |
           set -euo pipefail
