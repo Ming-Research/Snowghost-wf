@@ -15,6 +15,9 @@
 #   run.sh judge [PAGE...]      judges the dumps already in build/research/
 #                               layout against Chromium's, as check does,
 #                               without building or dumping
+#   run.sh math-edit DRIVER [LABEL]
+#                               checks length-math fixture restyles with an
+#                               already built driver against fresh builds
 #   run.sh time [PAGE [REPS]]   builds both drivers and times the stage's
 #                               parts on every page, or on PAGE (criterion 2)
 #
@@ -126,6 +129,9 @@ case_floors() {
 	grid-final-space-cases) echo "26 0 8" ;;
 	inline-items-cases) echo "50 23 66" ;;
 	line-fill-cases) echo "40 10 48" ;;
+	# New length-math coverage requires every box; this is a requirement,
+	# not a pre-support measured baseline (see DESIGN.md).
+	length-math-cases) echo "62 0 0" ;;
 	table-cases) echo "694 29 306" ;;
 	*) echo "" ;;
 	esac
@@ -185,6 +191,17 @@ judge_page() {
 	esac
 }
 
+math_edits() {
+	mkdir -p "$out"
+	math_driver=$1
+	math_label=${2:-seq}
+	math_script="$out/length-math.$math_label.edits"
+	math_raw="$out/length-math.$math_label.raw"
+	python3 tests/layout/length_math_edits.py "$math_driver" "$math_script" || return "$?"
+	"$math_driver" edit "$math_script" tests/layout/length-math-cases.html "$ua" >"$math_raw" || return "$?"
+	python3 research/investigations/incremental-layout/scripts/inctime.py --check "$math_script" "$math_raw"
+}
+
 check() {
 	build
 	status=0
@@ -199,6 +216,10 @@ check() {
 			status=1
 		fi
 		judge_page "$page" || status=1
+		if [ "$page" = length-math-cases ]; then
+			math_edits build/layout_oracle seq || status=1
+			WF_WORKERS=4 math_edits build/layout_oracle_par par || status=1
+		fi
 	done
 	echo "parallelism ledger ($out/ledger.txt):"
 	grep -E '^PAR split +layout\.' "$out/ledger.txt" || true
@@ -266,6 +287,14 @@ time_parts() {
 }
 
 case ${1:-} in
+math-edit)
+	shift
+	if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
+		echo "usage: run.sh math-edit DRIVER [LABEL]" >&2
+		exit 2
+	fi
+	math_edits "$@"
+	;;
 check)
 	shift
 	check "$@"
@@ -283,7 +312,7 @@ time)
 	time_parts "$@"
 	;;
 *)
-	echo "usage: run.sh check [PAGE...] | judge [PAGE...] | time [PAGE [REPS]]" >&2
+	echo "usage: run.sh check [PAGE...] | judge [PAGE...] | math-edit DRIVER [LABEL] | time [PAGE [REPS]]" >&2
 	exit 2
 	;;
 esac

@@ -632,3 +632,119 @@ rulings):
   item incrementing `list-item`; a separate pass would be a second chain
   in document order over the same elements. `design/pipeline/layout.md`
   states it, and `design/pipeline/style.md` no longer holds Q52's node.
+
+## Length comparison functions
+
+The implementation is pending a language-proof decision. The pinned
+Whitefoot specification excludes type invariants on generic structs, while
+the proposed `LengthMath<L>` needs to preserve root and operand-index
+bounds across calls. The [minimal witnesses](length-math-witnesses/README.md)
+isolate that restriction and a concrete-wrapper control for CI. Neither has
+been compiled. No runtime guard or sequential evaluation pass has been
+substituted for the missing proof, and the renderer still rejects the new
+comparison functions. The vocabulary change is a proposal pending the
+owner's existing design card; this section records prepared tests, not
+implemented support.
+
+`tests/layout/length-math-cases.html` isolates the length representation
+change for `min()`, `max()` and `clamp()`. The comparison is the existing
+Chromium layout oracle, at its 1280 by 720 viewport, against both driver
+builds. Every fixture has empty block content except a fixed-height child,
+so font rasterization and text shaping cannot hide a length failure. The
+font-size case exposes the computed size through an `em`-sized block.
+
+The following expectations are CSS arithmetic and property-rule
+predictions, not measurements. Before this change, the parser recognizes
+`calc()` and its limited `round()` form but rejects comparison functions,
+including a comparison nested inside `calc()`. Valid declarations below
+therefore fall back to their initial or earlier values. The negative
+grammar cases already keep their earlier values and guard against an
+overpermissive new parser. Chromium dumps and implementation results must
+be obtained in CI; no local renderer or browser run established these
+numbers.
+
+| Case | Expected result and what it guards | Before support, inferred from the parser |
+|---|---|---|
+| Grid, width 1280px | `1fr min(1680px,100%) 1fr` gives tracks 0, 1280, 0; the full-span child is 1280px wide. Percentage comparison arms must use the actual grid basis. | Template rejected; the explicit child placements use implicit auto tracks. |
+| Grid, width 2000px | Tracks 160, 1680, 160; the full-span child is 2000px wide. Crossing the selected arm leaves positive free space for both flexible tracks. | Template rejected; the middle track has no 1680px cap. |
+| Clamp, containers 300/800/1400px | Widths 200/400/600px select respectively the lower, preferred and upper arms. | Auto widths 300/800/1400px. |
+| Padding | `max(1rem,5vw)` resolves to 64px on each edge; the 10px content has a 138px outer width and height. | Padding remains zero; outer size 10px. |
+| Font size | `clamp(1rem,2vw + 1px,3rem)` computes to 26.6px before layout-unit conversion. An argument accepts a calculation without nested `calc()`. | Font size inherits 16px. |
+| Three-argument min/max | Widths 20/70px; the third argument wins in both cases. | Auto width, 1280px. |
+| Sum around min | In a 100px container, `calc(min(10px,5%) + 2px)` gives 7px. | Auto width, 100px. |
+| Nested comparisons/calculations | `max(20px,min(calc(50% + 10px),clamp(5px,50px,80px)))` gives 50px in a 100px container. | Auto width, 100px. |
+| Reversed clamp bounds | `clamp(80px,10px,20px)` gives 80px; the lower bound wins even when it exceeds the upper bound. | Auto width, 1280px. |
+| Percentage height | `min(100px,50%)` gives 60px under a definite 120px parent and auto/30px under an indefinite parent. | Auto/30px under both parents. |
+| Percentage cancellation in comparison | `calc(min(100% - 100%,0px) + 1px)` gives 1px under a definite parent, auto/30px under an indefinite parent. A zero coefficient must preserve percentage presence. | Comparison rejected; auto/30px under both parents. |
+| Percentage cancellation in affine calc | `calc(100% - 100% + 1px)` has the same 1px versus auto/30px distinction. Metadata must survive the existing affine path too. | The coefficient-only representation loses the percentage after cancellation; an indefinite parent incorrectly gives 1px. |
+| Scalar arithmetic | `calc(min(80px,50%) * 2 / 5)` gives 20px in a 100px container. | Auto width, 100px. |
+| Negative computed result | `min(-10px,-20px)` is valid math, then width's nonnegative range clamps the result to zero. | Comparison rejected; auto width, 1280px. |
+| Empty min, wrong clamp arity, mixed number/length, missing `+` whitespace, trailing comma | Each invalid declaration leaves its earlier 37px width intact. | Same 37px fallback. |
+| Percentage in a length-only property | `border-left-width:max(1px,10%)` is invalid; the earlier 3px border remains, so the 10px content has a 13px outer width. | Same 3px border fallback. |
+| One-argument min/max | Widths 23/29px. | Auto width, 1280px. |
+| Math inside track functions | A 120px grid uses math in `minmax()`, `fit-content()` and `repeat()`: tracks 30/15/60px. Nested track breadths must share the ordinary length representation. | Template rejected; implicit auto track sizing applies. |
+
+The new floor is **62 block boxes, zero inline boxes and zero text nodes**:
+all 60 `div` elements plus `html` and `body`. This is a prospective
+full-match requirement rather than a measured pre-support floor; existing
+case-page floors are unchanged. A missing or incorrect result must fail
+the oracle comparison or this floor. `make oracle-layout-dump` discovers
+the new page through its existing glob. The layout investigation's
+`run.sh check` discovers it the same way and additionally runs its retained
+edits on the sequential and parallel drivers.
+
+`tests/layout/length_math_edits.py` reuses X5's node-list parser and edit
+checker. It derives node identifiers from the compiled driver's fixture
+listing, verifies the full element order, then generates 44 class restyles
+and four viewport refreshes. The class edits change grid/width bases across
+comparison arms, switch definite and indefinite height parents including
+both cancellation forms, change root-font inputs including unselected
+arms, and replace length expressions to exercise content-based style-group
+equality. Viewport refreshes visit 1280, 200, 4000 and 1280px, so the
+font-size clamp visits its preferred, lower and upper arms. Each prefix
+requests the existing driver's dump comparison against a fresh build;
+`inctime.py --check` rejects a missing edit, a refusal or any byte difference.
+The driver performs a full viewport refresh for `V`; subsequent class
+edits test retained state at that viewport, not an incremental viewport
+API that the harness does not provide.
+
+For an already built CI driver, run:
+
+```sh
+sh research/investigations/layout/run.sh math-edit build/layout_oracle seq
+WF_WORKERS=4 sh research/investigations/layout/run.sh math-edit build/layout_oracle_par par
+```
+
+This uses established edit comparison machinery. Its correctness and
+failure detection were not re-demonstrated locally; CI must validate the
+fixture, floor and generated edits before support is reported as working.
+
+The existing M2 oracle workflow also needs to distinguish intended length
+changes from unrelated full-build regressions. Its historical-base case
+loop exempts only this new fixture from byte identity against the old
+parser: it obtains fresh Chromium geometry, requires the historical
+control to fail comparison with status 1, and requires the current
+sequential dump to pass the same oracle. Sequential/parallel byte identity
+remains mandatory. A separate step invokes `math-edit` on both already
+built drivers. These are CI requirements, not observed passing results;
+the workflow's triggers and branch selection remain unchanged.
+
+### Table consumer boundary
+
+[CSS Tables 3's percentage contributions](https://drafts.csswg.org/css-tables-3/#computing-cell-measures)
+use computed percentage widths. Its
+[fixed-layout distribution rule](https://drafts.csswg.org/css-tables-3/#changes-to-width-distribution-in-fixed-mode)
+also describes a percentage-plus-pixel sum, but does not establish how
+Chromium handles a nonlinear comparison. Under the task's authorized
+fallback, an unresolved non-affine percentage expression will count as
+`auto` for column percentage sizing. This is an intended implementation
+rule, not a measured Chromium result or an implemented change.
+
+The current `width_parts` helper also serves table row and row-group
+heights. Those calls must be separated from column coefficient extraction;
+the column-only fallback must not silently determine row height behavior.
+The remaining consumer audit covers inherited font size, root-font
+dependency tracking in every arm, style-group hashing and equality,
+track-list keys, style-oracle serialization, grid's indefinite bases and
+height-reader masks. These changes remain unimplemented while the arena
+proof decision is pending.
