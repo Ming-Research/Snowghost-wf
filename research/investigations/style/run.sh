@@ -283,8 +283,8 @@ profile_table() {
 # profiled path's (tally_count). A generic function's instance is named
 # style.match_all$instance$SUFFIX in the ledger.
 ledger_check() {
-	instances=$(grep -oE 'style\.match_all(\$instance\$[^ ]*)? ' "$1" | sort -u | wc -l | tr -d ' ')
-	split=$(grep -E 'PAR split +style\.match_all(\$instance\$[^ ]*)? ' "$1" | grep -v declined | grep -oE 'style\.match_all(\$instance\$[^ ]*)? ' | sort -u | wc -l | tr -d ' ')
+	instances=$(grep -oE 'style\.match_all(\$instance\$[0-9a-f]+)? ' "$1" | sort -u | wc -l | tr -d ' ')
+	split=$(grep -E 'PAR split +style\.match_all(\$instance\$[0-9a-f]+)? ' "$1" | grep -v declined | grep -oE 'style\.match_all(\$instance\$[0-9a-f]+)? ' | sort -u | wc -l | tr -d ' ')
 	if [ "$instances" -ge 2 ] && [ "$split" = "$instances" ]; then
 		echo "ledger: all $instances instances of match_all split"
 		return 0
@@ -378,7 +378,7 @@ falsify() {
 	dir=$(faulty zero 's/^count matched_sum .*/count matched_sum 0/' "profile-$page-*.txt")
 	expect zero 'counters out of order' counter_check "$dir" "$page"
 	# The ledger: one instance's split declined, and only one instance named.
-	first=$(grep -E 'PAR split +style\.match_all(\$instance\$[^ ]*)? ' "$out/ledger.txt" | grep -v declined | grep -oE 'style\.match_all(\$instance\$[^ ]*)? ' | sort -u | head -1)
+	first=$(grep -E 'PAR split +style\.match_all(\$instance\$[0-9a-f]+)? ' "$out/ledger.txt" | grep -v declined | grep -oE 'style\.match_all(\$instance\$[0-9a-f]+)? ' | sort -u | head -1)
 	grep -vF "$first" "$out/ledger.txt" >"$out/falsify-ledger-declined.txt"
 	grep -F "$first" "$out/ledger.txt" | sed 's/$/  declined (falsifier)/' >>"$out/falsify-ledger-declined.txt"
 	expect declined 'does not split every instance' ledger_check "$out/falsify-ledger-declined.txt"
