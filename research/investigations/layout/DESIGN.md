@@ -123,6 +123,17 @@ margin collapsing; block formatting context roots; floats and `clear`;
 relative, absolute and fixed positioning with static positions; `sticky`
 laid out in flow, where it stays at scroll position zero.
 
+**Translation output.** The owner's translation-only scope includes
+`translate()`, `translateX()`, `translateY()`, `translate3d()` (z ignored),
+combinations of these functions, and the individual `translate` property.
+Lengths and percentages remain separate until output resolves percentages
+against the element's own untransformed border-box width or height. A
+translation moves its element's rectangles and its descendants' rectangles;
+nested translations add. Translated boxes contribute to scrollable overflow.
+It changes no flow placement, parent size or float exclusion. The combined
+element offset rounds to the nearest LayoutUnit. See [Translation output](#translation-output)
+for the implementation dependencies and validation boundary.
+
 **Inline layout.** CSS Text 3 white-space processing and `text-transform`;
 font matching and per-character fallback; shaping with `pkg::font`; line
 breaking with `pkg::text::line_break` under `word-break: normal` and
@@ -183,12 +194,196 @@ presentational hints of `width`, `height` and the table attributes.
 **Out of scope,** each counted where the pages use it: writing modes,
 `direction: rtl` and bidirectional reordering; multi-column layout
 beyond the limited form Q59 brought in (no `column-span`, orphans, widows
-or `column-fill: balance-all`); `transform` (which moves
-`getBoundingClientRect`); form controls' inner layout, and the intrinsic
+or `column-fill: balance-all`); transform lists containing any function
+other than the translations above, including rotation, scale, skew, matrix
+and perspective (the complete list is left unapplied, including any
+translation in that list; it is not approximated); form controls' inner layout, and the intrinsic
 sizes of controls other than single-line text inputs, checkboxes and radio
 buttons; SVG's inner layout (the `svg` element is a
 replaced box); iframes; ruby; hyphenation; fragmentation; `contain` and
 container queries; `zoom`; quirks mode.
+
+## Translation output
+
+The question is where to apply translation without adding dependencies to
+flow layout or stale state to incremental layout. The owner selected the
+translation-only scope; this implementation's output placement is proposed.
+
+| Candidate | Inputs and true dependencies | Additional work or state |
+| --- | --- | --- |
+| Mutate fragments in a post-layout tree pass | Completed border boxes, current styles, then each ancestor's offset before its descendants | Writes all moved fragments; retained fragments need an untransformed source or removal of the previous offset on every edit. |
+| Store offsets in fragments | The element's completed border box and current style; accumulated offsets also need ancestors | Adds retained state and refresh obligations for transform, size and ancestor edits. |
+| Resolve translations when publishing geometry (chosen) | Current document ancestry, current computed styles, and completed untransformed border boxes | Independent per-element offset computation followed by independent per-rectangle ancestry reads; only each ancestry walk is ordered. |
+
+The chosen output path reads each element's border size through the existing
+stable layout routes, without a shared mutable rectangle index. It applies
+translation after normal placement and column mapping. The transient offset
+table is rebuilt for each output, with disjoint entries in a counted loop;
+it is not a cache. Each rectangle's write is independent. Full and retained
+layout call the same output function with their current document and styles,
+so changing a transform, changing its percentage basis, or editing unrelated
+content introduces no separate transformed-geometry invalidation rule.
+
+Computed translation keeps `none`, an x/y length-percentage pair, or an
+unsupported list. The `transform` and `translate` values live with computed
+sizes and offsets, independently computed for each element. Pure
+translations commute, so a translation list adds its length and percentage
+terms before the size is known. Unsupported functions remain opaque; their
+arguments are outside the parser's validation claim, and their presence
+suppresses the element's whole local translation, including the individual
+`translate` property. Supported ancestors still move that element and its
+descendants. This does not implement transform-created containing blocks
+or stacking contexts.
+
+For example, this complete page keeps the second box at `(0, 20)` while
+moving the first from the old output's `(0, 0)` to `(10, 20)`:
+
+```html
+<!doctype html>
+<html><head><style>
+body { margin: 0 }
+div { width: 80px; height: 20px }
+</style></head><body>
+<div style="transform: translate(10px, 20px)"></div>
+<div></div>
+</body></html>
+```
+
+Flow-change comparisons exclude the two translation values even though
+computed-style interning includes them. A transform-only restyle therefore
+publishes new computed values without marking flow layout; the next output
+reads them directly. Other edits still use the existing layout invalidation.
+
+Output resolves the length and percentage parts against the untransformed
+border size, combines the element's two translation values and rounds once
+to the nearest `LayoutUnit` (1/64 px). Ancestor offsets then accumulate in
+integer layout units. The dump uses its existing coordinate serialization.
+For example, `(0.1px, 0.2px)` becomes `(0.09375px, 0.203125px)`; this loses
+sub-layout-unit positions, as the owner chose, without changing flow sizes.
+
+Scroll overflow includes transformed rectangles, rather than keeping the
+first draft's untransformed height. Translation may extend overflow but must
+not shrink it: the overflow area includes bounds before and after the
+transform ([CSS Transforms 1](https://www.w3.org/TR/css-transforms-1/#transform-rendering)).
+A nested scroll container traps its content's overflow; only exposed
+overflow propagates to outer containers
+([CSS Overflow 3](https://www.w3.org/TR/css-overflow-3/#scrollable)).
+These output dependencies do not change a parent's flow size.
+
+The acceptance checks use the ordinary layout comparator and case floors
+against Chromium 141, and byte-identical retained/full output after
+transform, size and unrelated edits. There is no fixture-specific comparator
+or index exemption. A moved sibling, missing transformed scroll overflow,
+overflow leaking through a nested scroll container, or stale/doubled offset
+rejects the implementation. Compilation, sequential/parallel equality and
+those runtime checks must run in CI; no runtime result is claimed by this
+draft.
+
+### Translation cases and pending validation
+
+`tests/layout/transform-cases.html` contains the cases below. Each delta is
+relative to the untransformed flow rectangle, in CSS pixels. These are
+expectations derived from the fixture, not measurements: the preceding code
+does not recognize either longhand, so it contributes zero translation in
+every case. The new implementation computes the listed offsets; CI must
+confirm its actual output.
+
+| Case | Expected result and fault detected |
+| --- | --- |
+| Vertical centering | `top:50%` is 40px; `translateY(-50%)` subtracts 10px from the 20px own height, giving local y=30px. Detects the wrong percentage basis. |
+| Pixel translation | `(10,20)`. Detects ignoring either axis. |
+| Border-box percentage | `(23,0)` from 25% of 92px including padding and border. Detects content-box or containing-block bases. |
+| Three-dimensional translation | `(5,6)`, ignoring z=7px. |
+| Individual property | `(4,8)`. |
+| Nested translations | Parent `(10,20)` and child `(13,24)` in total. Detects lost or doubled ancestors. |
+| Following sibling | Translated box `(10,20)`, following box `(0,0)`. Detects changed flow placement. |
+| Translated float | Float `(10,6)`; adjacent exclusion still starts at x=80px and clearance stays at local y=40px. |
+| Translation list | `(35,12)` from all four supported functions. Detects retaining only one function. |
+| Property plus list | `(14,28)`. Detects failing to combine the two longhands. |
+| Mixed calc terms | `(30,8)`. Detects losing a length or percentage term. |
+| Font-relative lengths | `(10,8)` from 1em and 0.5rem. |
+| Inline, text and block descendants | Every descendant inherits `(10,20)`. Detects moving only the owner's box. |
+| Individual percentages | `(20,-10)`. |
+| None | `(0,0)`. |
+| Fractional translation | `(0.09375,0.203125)` after nearest LayoutUnit rounding; judged with the ordinary comparator's tolerances. |
+| Transformed overflow | `(0,2000)` extends document scroll height without enlarging its flow parent. |
+| Nested scroll container | Its child's `(0,2000)` rectangle enlarges inner overflow, but cannot enlarge the document beyond the outer container's own box. |
+| Relative overflow under an upward-translated ancestor | Parent `(0,-6000)` and child relative top 6000px expose whether retaining every original global descendant rectangle overstates root overflow; Chromium 141's ordinary H comparison decides this pending question. |
+| One-argument transform | `(7,0)`. Detects a missing y default. |
+| One-argument property | `(6,0)`. |
+| Invalid translate arity | Earlier valid `(8,9)` survives the invalid three-argument translate. |
+| Invalid z percentage | Earlier valid `(8,9)` survives translate3d with percentage z. |
+
+The case page excludes unsupported transform lists, which deliberately
+differ from Chromium. It is judged through the same ordinary comparison
+and floor mechanism as every other case page; there are no known transform
+mismatches absorbed by its floor. The fixture has 23 sections and 60 elements:
+55 block boxes, one inline box and four elements without boxes, with one
+rendered text node. Its floor is **55 block boxes, 1 inline box and 1 text
+node**, replacing the first draft's 53/1/1 floor after removing two
+unsupported-list sections and adding the contained-overflow and
+relative-overflow sections.
+Existing case floors remain unchanged. The uncontained translation extends
+the expected document H from the natural 1840px to 3300px; the later
+scroll-container child's translated bottom is 3690px, which must not leak
+through that container to document H. These numbers remain statically
+derived, not measured. The final relative-overflow witness introduces the
+unresolved root-propagation comparison below; its H is not exempted from
+ordinary comparison or absorbed by any floor.
+
+The ordinary comparator now judges document H within 1px on every page,
+and the ordinary floor harness requires that match even when a case page
+has permitted rectangle mismatches. Its CI falsifier changes only an
+ordinary oracle dump's H by 2px and requires the same ordinary comparator
+to reject it. Inline and text absolute positions remain reported rather
+than judged, as in the existing comparator; this fixture does not introduce
+any special position assertion or tighter fractional-coordinate tolerance.
+
+The retained-layout fixture runs 15 style and text operations, including
+changing translation, resizing a percentage reference box, changing only
+colour, inserting and deleting text, entering and leaving an unsupported
+list, and changing translated floats and nested children. The existing edit
+checker requires every retained dump to equal a full rebuild byte for byte;
+the harness also compares sequential and parallel output. The layout
+investigation and the M2 oracle workflow retain these checks. The M2
+workflow's standalone current fixture step uses the ordinary Chromium
+comparison and floors; the existing historical compatibility step retains
+its previous branch filter and checks. There is no translation-specific
+historical comparison command.
+
+### Root overflow propagation witness
+
+The remaining question is whether the flat union of every descendant's
+original and fully translated global rectangle reproduces Chromium 141's
+container-level overflow propagation. The candidate output reader currently
+uses that union, stops at rendered clipping ancestors, and reduces each
+independent rectangle's root contribution. The completed flow geometry and
+the published rectangles are separate, so this question concerns H alone.
+
+A source-derived witness is an overflow-visible parent of fixed height
+20px translated upwards by 6000px, with a 20px child relatively positioned
+6000px down. The final section of the case page contains exactly that
+arrangement. The candidate retains the child's original global bottom
+7780px, so its inferred H is 7780px. Chromium's current
+[overflow calculator](https://raw.githubusercontent.com/chromium/chromium/main/third_party/blink/renderer/core/layout/scrollable_overflow_calculator.cc)
+unions a parent's local border and child overflow before projecting the
+parent's transform; outer inflow bounds preserve the parent's ordinary flow
+size, rather than each descendant's former global position. That source
+therefore suggests H remains 3300px, set by the earlier positive-translation
+case. This is an inference from current upstream source, not a Chromium 141
+measurement. The ordinary comparator will reject either missing positive
+overflow or the candidate's suspected overestimate; no expected result is
+rewritten to accommodate it.
+
+The disputed behavior must be measured with the fixture in Chromium 141
+before claiming scroll-overflow completion. If the inferred discrepancy
+holds, overflow must aggregate at container boundaries before ancestor
+projection; retaining global original descendant bounds is insufficient.
+Wholly unreachable negative-horizontal overflow raises the same aggregation
+question, so a leaf-only horizontal cutoff would not be a justified repair.
+The current dump exposes only document H; it does not expose an individual
+container scrollHeight query. This unresolved project geometry question is
+not evidence of a Whitefoot language or compiler gap.
 
 ## The stage's shape, before the interface choices
 
@@ -235,18 +430,23 @@ are. Inline elements are most elements: 128,809 of ecma262's 179,471,
 the share of exact matches (1/64 px) and of matches within 1 px, and the
 most frequent mismatches with an example element.
 
+Document scroll height is judged within 1px on every page. This makes a
+missing transformed-overflow contribution fail the ordinary comparison;
+case floors cannot absorb a scroll-height mismatch.
+
 ## Criteria
 
-Recorded before any code; the owner ruled on them on 2026-10-01 (Owner
-rulings):
+The original criteria were recorded before any code; the owner ruled on
+them on 2026-10-01 (Owner rulings). The translation correction adds the
+ordinary scroll-height comparison to correctness:
 
 1. **Correctness.** On each real page, at least 99 percent of the
    block-level boxes match Chromium within 1 px in width, height and
    position relative to their parent's box; at least 99 percent of the
    inline elements and rendered text nodes have Chromium's number of
    fragments, each fragment's width within 1 px; and each class of mismatch
-   is listed with its cause. Elements in out-of-scope features
-   count in the denominators.
+   is listed with its cause. The document's scroll height matches Chromium
+   within 1px. Elements in out-of-scope features count in the denominators.
 2. **Speed.** The layout stage, from computed styles to the dumped boxes,
    runs at least 2 times faster at four workers than in the sequential build
    on ecma262 and html5, the pages with enough work to measure, and is
@@ -507,7 +707,8 @@ by class and cause (each deferred as an item on the status board):
   named character references U+226F and U+2282 with U+20D2).
 - **apollo11, 14 block-level boxes:** 11 language names in Arabic script
   (right-to-left text, as above); the search icon, which `transform`
-  moves (out of scope); and two absolutely positioned boxes whose static
+  moves (outside the scope of that measurement; translation is now included
+  in the scope above, with new validation pending); and two absolutely positioned boxes whose static
   position lies inside a line, which the stage puts at the block's start.
 - **apollo11, 45 inline boxes and 37 text nodes:** the right-to-left
   language names; twelve `abbr` links in `font-variant: small-caps`,

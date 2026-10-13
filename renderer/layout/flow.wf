@@ -3785,10 +3785,36 @@ fn place_fragment(context: &Context, fragment: Fragment, x: i32, y: i32, map: &[
   return unit;
 }
 
-fn place_boxes(layout: &Layout) -> placed: Box<Slots<PlacedRect>> reads(layout) {
-  doc "Publishes owner-relative normal origins and separate visual displacements through place_context, accumulating blocks before the column map and preserving the reference fragment order and viewport-fixed exception.";
+fn output_scroll_bottom(bottoms: &[f32]) -> bottom: f32 reads(bottoms) {
+  doc "Reduces independent root-scroll contributions through balanced halves after each output rectangle computed its own contribution. The reduction introduces no ordering between rectangle publications.";
+  let count = bottoms^.len;
+  if count == 0_u64 {
+    return 0.0_f32;
+  }
+  if count == 1_u64 {
+    return bottoms^[0_u64];
+  }
+  let middle = count / 2_u64;
+  let left = output_scroll_bottom(bottoms: &bottoms^[0_u64..middle]);
+  let right = output_scroll_bottom(bottoms: &bottoms^[middle..count]);
+  return fmax(left, right);
+}
+
+fn place_boxes(layout: &Layout, document: &Document, styles: &Styles) -> (placed: Box<Slots<PlacedRect>>, bottom: f32) reads(layout), reads(document), reads(styles) {
+  doc "Publishes owner-relative normal origins and separate visual displacements through place_context, accumulating blocks before the column map and preserving the reference fragment order and viewport-fixed exception, then resolves current translation-only styles against the untransformed border boxes and moves only the output rectangles.";
   let out = box_slots_new::<PlacedRect>(capacity: 1024_u64);
   let none = box_slots_new::<ColumnPiece>(capacity: 0_u64);
   place_context(context: &layout^.root, x: layout^.root.x, y: layout^.root.y, map: &none.inner[0_u64..0_u64], map_y: 0_i32, out: &out);
-  return move out;
+  let count = out.inner.len;
+  let offsets = output_geometry(layout: layout, document: document, styles: styles);
+  let nodes = offsets.inner.len;
+  let bottoms = box_array_filled::<f32>(count: count, value: 0.0_f32);
+  for (at in 0_u64..count) {
+    let rectangle = out.inner[at];
+    let translated = translated_rectangle(document: document, offsets: &offsets.inner[0_u64..nodes], rectangle: rectangle);
+    set bottoms.inner[at] = rectangle_scroll_bottom(document: document, geometry: &offsets.inner[0_u64..nodes], rectangle: rectangle, translated: translated);
+    set out.inner[at] = translated;
+  }
+  let bottom = output_scroll_bottom(bottoms: &bottoms.inner[0_u64..count]);
+  return move out, bottom;
 }
