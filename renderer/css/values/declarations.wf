@@ -8,7 +8,7 @@ alias ComponentList = pkg::css::syntax::ComponentList;
 alias Span = pkg::css::syntax::Span;
 alias ComponentRange = pkg::css::rules::ComponentRange;
 
-const shorthand_names: Array<u8, 366> = "margin padding border border-top border-right border-bottom border-left border-width border-style border-color font background overflow list-style text-decoration inset flex flex-flow gap place-items place-content place-self grid-template grid grid-area grid-row grid-column grid-gap columns page-break-inside -webkit-columns -webkit-column-break-inside font-variant";
+const shorthand_names: Array<u8, 665> = "margin padding border border-top border-right border-bottom border-left border-width border-style border-color font background overflow list-style text-decoration inset flex flex-flow gap place-items place-content place-self grid-template grid grid-area grid-row grid-column grid-gap columns page-break-inside -webkit-columns -webkit-column-break-inside font-variant margin-inline margin-block padding-inline padding-block inset-inline inset-block border-inline-width border-block-width border-inline-style border-block-style border-inline-color border-block-color border-inline border-block border-inline-start border-inline-end border-block-start border-block-end";
 
 const wide_words: Array<u8, 41> = "initial inherit unset revert revert-layer";
 
@@ -91,6 +91,14 @@ const sh_columns: u8 = 27_u8;
 const sh_break_inside: u8 = 28_u8;
 
 const sh_font_variant: u8 = 29_u8;
+
+const sh_margin_inline: u8 = 30_u8;
+
+const sh_border_block_color: u8 = 41_u8;
+
+const sh_border_inline: u8 = 42_u8;
+
+const sh_border_block: u8 = 43_u8;
 
 enum ItemValue {
   Value(value: Declared);
@@ -183,7 +191,7 @@ fn to_u32(value: u64) -> narrowed: u32 pure {
 }
 
 fn shorthand_code(name: &[u8]) -> found: Option<u8> reads(name) {
-  doc "The number of the shorthand named name, ASCII case-insensitively, or None; grid-gap is gap, -webkit-columns is columns, page-break-inside and -webkit-column-break-inside are the one-longhand shorthand that sets break-inside from auto or avoid, and font-variant is the one-longhand shorthand that sets font-variant-caps.";
+  doc "The number of the shorthand named name, ASCII case-insensitively, or None; grid-gap is gap, -webkit-columns is columns, page-break-inside and -webkit-column-break-inside are the one-longhand shorthand that sets break-inside from auto or avoid, and font-variant is the one-longhand shorthand that sets font-variant-caps. The flow-relative shorthands follow, numbered from sh_margin_inline in the order of their names, the pairs of margin, padding, the insets and the border's width, style and color, inline before block, then border-inline and border-block; border-inline-start, border-inline-end, border-block-start and border-block-end are border-left, border-right, border-top and border-bottom, which they set under the stage's one writing mode and direction, horizontal-tb and ltr.";
   let n = shorthand_names.len;
   let index = find_word(list: &shorthand_names[0_u64..n], text: name);
   match index {
@@ -206,6 +214,26 @@ fn shorthand_code(name: &[u8]) -> found: Option<u8> reads(name) {
       if i == 32_u64 {
         return Some<u8>(value: sh_font_variant);
       }
+      let flow_from = i >= 33_u64;
+      let flow_to = i <= 46_u64;
+      let flow = band(flow_from, flow_to);
+      if flow {
+        let shifted = i - 3_u64;
+        let code = cvt::<u64, u8>(shifted);
+        return Some<u8>(value: code);
+      }
+      if i == 47_u64 {
+        return Some<u8>(value: sh_border_left);
+      }
+      if i == 48_u64 {
+        return Some<u8>(value: sh_border_right);
+      }
+      if i == 49_u64 {
+        return Some<u8>(value: sh_border_top);
+      }
+      if i == 50_u64 {
+        return Some<u8>(value: sh_border_bottom);
+      }
       let small = i < 27_u64;
       if small {
         let code = cvt::<u64, u8>(i);
@@ -223,6 +251,16 @@ fn member_count(shorthand: u8) -> count: u64 pure {
   doc "The number of longhands the shorthand sets; 1 for a longhand by itself.";
   if shorthand == sh_border {
     return 12_u64;
+  }
+  let flow_pair = is_flow_pair(shorthand: shorthand);
+  if flow_pair {
+    return 2_u64;
+  }
+  let flow_inline = shorthand == sh_border_inline;
+  let flow_block = shorthand == sh_border_block;
+  let flow_border = bor(flow_inline, flow_block);
+  if flow_border {
+    return 6_u64;
   }
   let sides_from = shorthand >= sh_border_top;
   let sides_to = shorthand <= sh_border_left;
@@ -282,6 +320,66 @@ fn member_count(shorthand: u8) -> count: u64 pure {
   return 1_u64;
 }
 
+fn is_flow_pair(shorthand: u8) -> pair: Bool pure {
+  doc "True for the flow-relative pair shorthands, margin-inline to border-block-color, which set a start and an end side from one or two values.";
+  let from = shorthand >= sh_margin_inline;
+  let to = shorthand <= sh_border_block_color;
+  let both = band(from, to);
+  return both;
+}
+
+fn flow_side(on_inline: Bool, k: u64) -> side: u64 pure {
+  doc "The physical side, 0 top, 1 right, 2 bottom and 3 left, of member k of a flow-relative pair, 0 the start and 1 the end, under the stage's one writing mode and direction, horizontal-tb and ltr: inline-start is left, inline-end right, block-start top and block-end bottom.";
+  let start = k == 0_u64;
+  if on_inline {
+    if start {
+      return 3_u64;
+    }
+    return 1_u64;
+  }
+  if start {
+    return 0_u64;
+  }
+  return 2_u64;
+}
+
+fn flow_member(shorthand: u8, k: u64) -> member: u8 pure {
+  doc "The longhand number k of a flow-relative shorthand: for a pair, the start side's longhand and then the end side's, the pair's group being half its distance from sh_margin_inline and an even distance meaning the inline axis; for border-inline and border-block, the width, style and color of the start side and of the end side.";
+  if shorthand == sh_border_inline {
+    let group = k / 2_u64;
+    let which = k % 2_u64;
+    let yes = True();
+    let side = flow_side(on_inline: yes, k: which);
+    let border_group = group +sat 3_u64;
+    let base = logical_group_base(group: border_group);
+    let made = offset(base: base, k: side);
+    return made;
+  }
+  if shorthand == sh_border_block {
+    let group = k / 2_u64;
+    let which = k % 2_u64;
+    let no = False();
+    let side = flow_side(on_inline: no, k: which);
+    let border_group = group +sat 3_u64;
+    let base = logical_group_base(group: border_group);
+    let made = offset(base: base, k: side);
+    return made;
+  }
+  let pair = is_flow_pair(shorthand: shorthand);
+  if pair {
+    let distance = shorthand -sat sh_margin_inline;
+    let wide = cvt::<u8, u64>(distance);
+    let group = wide / 2_u64;
+    let axis = wide % 2_u64;
+    let on_inline = axis == 0_u64;
+    let side = flow_side(on_inline: on_inline, k: k);
+    let base = logical_group_base(group: group);
+    let made = offset(base: base, k: side);
+    return made;
+  }
+  return 0_u8;
+}
+
 fn offset(base: u8, k: u64) -> longhand: u8 pure {
   doc "base plus k, for k below 4.";
   let small = k < 4_u64;
@@ -295,6 +393,15 @@ fn offset(base: u8, k: u64) -> longhand: u8 pure {
 
 fn member(shorthand: u8, longhand: u8, k: u64) -> member: u8 pure {
   doc "The longhand number k of the shorthand; longhand itself when shorthand names none.";
+  let flow_pair = is_flow_pair(shorthand: shorthand);
+  let flow_inline = shorthand == sh_border_inline;
+  let flow_block = shorthand == sh_border_block;
+  let flow_border = bor(flow_inline, flow_block);
+  let flow = bor(flow_pair, flow_border);
+  if flow {
+    let made = flow_member(shorthand: shorthand, k: k);
+    return made;
+  }
   if shorthand == sh_margin {
     let made = offset(base: lh_margin_top, k: k);
     return made;
@@ -972,10 +1079,10 @@ fn expand_box(values: &ComponentList, start: u64, end: u64, shorthand: u8, exp: 
   return True();
 }
 
-fn expand_border(values: &ComponentList, start: u64, end: u64, first_side: u64, side_count: u64, exp: &Expansion) -> valid: Bool reads(values), writes(exp) contract {
+fn expand_border(values: &ComponentList, start: u64, end: u64, first_side: u64, side_count: u64, side_step: u64, exp: &Expansion) -> valid: Bool reads(values), writes(exp) contract {
   requires end <= values^.components.inner.len;
 } {
-  doc "Expands a width, a style and a color in any order, each at most once and each defaulting to its initial value, onto side_count sides from first_side.";
+  doc "Expands a width, a style and a color in any order, each at most once and each defaulting to its initial value, onto side_count sides, side_step apart, from first_side: one side for border-top and the others, all four for border, and two opposite sides for border-inline and border-block.";
   let width = px_value(px: 3.0_f32);
   let style = Declared::Keyword(keyword: 0_u8);
   let color = Declared::CurrentColor();
@@ -1045,15 +1152,63 @@ fn expand_border(values: &ComponentList, start: u64, end: u64, first_side: u64, 
   } else {
     return False();
   }
+  let side = first_side;
   for (k in 0_u64..side_count) {
-    let side = first_side +sat k;
     let w = offset(base: lh_border_top_width, k: side);
     let s = offset(base: lh_border_top_style, k: side);
     let c = offset(base: lh_border_top_color, k: side);
     put_value(exp: exp, longhand: w, value: width);
     put_value(exp: exp, longhand: s, value: style);
     put_value(exp: exp, longhand: c, value: color);
+    set side = side +sat side_step;
   }
+  return True();
+}
+
+fn expand_pair(values: &ComponentList, start: u64, end: u64, shorthand: u8, exp: &Expansion) -> valid: Bool reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Expands one or two values of a flow-relative pair shorthand, margin-inline to border-block-color: the first value sets the start side's longhand and the second, or the first again when there is one, the end side's.";
+  let start_long = member(shorthand: shorthand, longhand: 0_u8, k: 0_u64);
+  let end_long = member(shorthand: shorthand, longhand: 0_u8, k: 1_u64);
+  let d0 = Declared::Keyword(keyword: 0_u8);
+  let d1 = Declared::Keyword(keyword: 0_u8);
+  let count = 0_u64;
+  let cursor = start;
+  for (step in 0_u64..3_u64) {
+    let at = skip_space(values: values, at: cursor, limit: end);
+    if at >= end {
+      break;
+    }
+    if count >= 2_u64 {
+      return False();
+    }
+    let next = sibling_after(values: values, at: at, limit: end);
+    let parsed = single_value(values: values, at: at, limit: next, longhand: start_long);
+    match parsed {
+      Some(value: v) => {
+        if count == 0_u64 {
+          set d0 = v;
+        } else {
+          set d1 = v;
+        }
+      }
+      None() => {
+        return False();
+      }
+    }
+    set count = count + 1_u64;
+    set cursor = next;
+  }
+  if count == 0_u64 {
+    return False();
+  }
+  put_value(exp: exp, longhand: start_long, value: d0);
+  if count == 1_u64 {
+    put_value(exp: exp, longhand: end_long, value: d0);
+    return True();
+  }
+  put_value(exp: exp, longhand: end_long, value: d1);
   return True();
 }
 
@@ -1665,8 +1820,21 @@ fn expand(values: &ComponentList, start: u64, end: u64, shorthand: u8, longhand:
       }
     }
   }
+  let logical_pair = is_flow_pair(shorthand: shorthand);
+  if logical_pair {
+    let made = expand_pair(values: values, start: s, end: e, shorthand: shorthand, exp: exp);
+    return made;
+  }
+  if shorthand == sh_border_inline {
+    let made = expand_border(values: values, start: s, end: e, first_side: 1_u64, side_count: 2_u64, side_step: 2_u64, exp: exp);
+    return made;
+  }
+  if shorthand == sh_border_block {
+    let made = expand_border(values: values, start: s, end: e, first_side: 0_u64, side_count: 2_u64, side_step: 2_u64, exp: exp);
+    return made;
+  }
   if shorthand == sh_border {
-    let made = expand_border(values: values, start: s, end: e, first_side: 0_u64, side_count: 4_u64, exp: exp);
+    let made = expand_border(values: values, start: s, end: e, first_side: 0_u64, side_count: 4_u64, side_step: 1_u64, exp: exp);
     return made;
   }
   let sides_from = shorthand >= sh_border_top;
@@ -1675,7 +1843,7 @@ fn expand(values: &ComponentList, start: u64, end: u64, shorthand: u8, longhand:
   if side {
     let index = shorthand - sh_border_top;
     let wide = cvt::<u8, u64>(index);
-    let made = expand_border(values: values, start: s, end: e, first_side: wide, side_count: 1_u64, exp: exp);
+    let made = expand_border(values: values, start: s, end: e, first_side: wide, side_count: 1_u64, side_step: 1_u64, exp: exp);
     return made;
   }
   if shorthand == sh_font {

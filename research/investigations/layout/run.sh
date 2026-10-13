@@ -126,6 +126,7 @@ case_floors() {
 	grid-final-space-cases) echo "26 0 8" ;;
 	inline-items-cases) echo "50 23 66" ;;
 	line-fill-cases) echo "40 10 48" ;;
+	logical-cases) echo "56 3 3" ;;
 	table-cases) echo "694 29 306" ;;
 	transform-cases) echo "55 1 1" ;;
 	*) echo "" ;;
