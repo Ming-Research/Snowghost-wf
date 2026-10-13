@@ -935,8 +935,8 @@ the limits.
    the prototype driver calls it for every rule and element. `scan-param.sh`
    times it, interleaved, with this source (base), with
    `scan-without-positions.patch` applied (noparam: the parameter removed
-   from the eight matcher functions between `selector_matches` and the leaf
-   tests) and with base's binary again (twin). The parameter is a cause when
+   from the ten matcher functions between `selector_matches` and the leaf
+   tests, the eight of the chain and the two `:nth-child` scanners) and with base's binary again (twin). The parameter is a cause when
    noparam's least stage time is at most 0.93 of base's (half the 14 percent
    recorded in `concurrency/DESIGN.md`) and the twin's is within 0.97 and
    1.03 of base's; it is not when noparam is within the twin's spread. A
@@ -951,13 +951,32 @@ must still say split. `match_elements_profiled` repeats `match_with`'s steps
 with a clock reading between them and is not called by the stage; the dump
 of the path through it (`profdump`) must equal `dump`'s and origin/main's
 byte for byte, with a changed user-agent sheet as the control that the
-comparison can fail.
+comparison can fail. (This is how the first run counted; the run-time test
+it needed cost up to 3 percent of `match`, and
+[Counting without a run-time test](#counting-without-a-run-time-test)
+replaces it.)
 
 **Limits.** The workflow `style-build-timing` runs on a hosted runner, so its
 times attribute time to steps and are not precise timings; the 14900K runs
 the precise ones. A step run alone (`alone.*`) is timed after the stage, on
 the same input, as a check on whether a standalone time can stand for the
 step inside the stage (question 3).
+
+**Why a clock reading brackets its step.** At the pinned compiler's
+[specification](https://github.com/Ming-Research/Whitefoot/blob/d837678c69057a7ca79be8fa0bd1598af51647b6/spec/kernel-spec.md)
+(v0.129, Whitefoot commit d837678c6905), two adjacent
+statements may run overlapped whenever neither writes a place the other
+reads or writes, a `let`'s binding counting as a write and a statement's
+argument expressions as part of it ([PAR-1]), and two host operations are
+ordered only through state both reach ([HOST-1]). `now` writes only its
+clock, so a clock reading has no order with work that shares no state with
+it. Each step is therefore called with the reading that starts its interval
+as an argument (the `*_after` wrappers), and the reading that ends it is
+taken by a function that reads the step's results (the `stamp_*`
+functions): the step reads the first reading's binding, and the second
+reading reads the step's, so neither pair may overlap; an optimization may
+reorder a call that writes only where the same effect-path proofs allow it
+([EFF-3]).
 
 ### Results
 
@@ -1020,7 +1039,8 @@ offered item is 57.8, 31.2 and 65.4 ns. The most any node is offered is 84,
 (`overhead`, least of five rounds of `match`, new over origin/main's
 driver, with a second copy of origin/main's as twin) is 1.004 and 1.000 on
 ecma262, 1.030 and 1.023 on html5, 1.022 and 1.011 on apollo11 (seq and
-four workers); the twin differs from origin/main's by at most 1.1 percent.
+four workers); the twin differs from origin/main's by at most 1.2 percent
+(html5, four workers, 0.1740 against 0.1720 s).
 
 **Question 1: interning against 15 percent of the four-worker stage.**
 `intern` is 20.0 percent (ecma262, spread 1.03), 21.1 percent (html5, 1.07)
@@ -1037,10 +1057,23 @@ here.
 and 75.1 percent of `seq` (43.1, 52.2 and 68.8 at `par4`), and
 `match.loop` is 73, 86 and 73 percent of it. The pseudo-element flags are the
 second step inside it (9.7, 5.9 and 18.7 percent of `seq`). The earlier
-estimates from whole-mode differences were 47, 73 and 87 percent (read in
-the order ecma262, html5, apollo11); only the ecma262 share reproduces
-here, and the other two are lower by 14 and 12 points; I did not reconcile
-them. What the counters add: ecma262 offers
+shares, 47, 73 and 87 percent (ecma262, html5, apollo11), are four-worker
+shares from whole-mode differences at d0e70c6
+([criterion 2](#criterion-2-speed): 0.300 of 0.632 s, 0.366 of 0.504 s and
+0.179 of 0.205 s); against this run's four-worker shares (43.1, 52.2 and
+68.8) ecma262 is 4 points lower and html5 and apollo11 21 and 18 points
+lower. They are not expected to agree: d0e70c6 precedes the per-alternative
+rule index and the ancestor filter, which the filter's design decision
+records as saving a third of html5's and apollo11's whole stage
+(`design/pipeline/style.md`, the filter's decision), and ecma262 is the page
+whose filter admits 88 percent of the offered items (below), so it gained
+least; and that run's machine scaled matching 3.6 to 3.9 times from one
+worker to four, against about 2 times here, which raises the share of the parts that do not scale,
+interning above all. A cut of a third of the stage taken from matching alone
+would put html5 and apollo11 at about 60 and 80 percent (an estimate from
+that assumption, not a measurement). Disposition: explained by the code and
+machine differences; no same-code comparison was run, and none is needed,
+since every decision here uses this run's shares. What the counters add: ecma262 offers
 few items (31.7 per node) and the filter keeps nearly all of them, so
 the index, not the filter, bounds its tests; html5 and apollo11 offer 2.5
 times as many items per node and the filter drops 40 to 44 percent of them
@@ -1066,10 +1099,12 @@ the earlier premise that a standalone pass is a lower bound was wrong here.
 The remaining scaling losses are in `reset` (1.6x on html5) and `intern`.
 
 **Question 4: does the positions parameter make the scanning entry slower?**
-Yes, by the criterion. Shape A of the prototype driver, stage time over five
+Yes, on both pages, by the prior criterion. Shape A of the prototype driver, stage time over five
 interleaved rounds, noparam over base: ecma262 0.845 (least) and 0.860
 (median), with the twin at 1.014; apollo11 0.924 and 0.925, twin 1.000. Both
-are at most 0.93 and the twin is within 0.97 to 1.03 on both. On ecma262
+are at most 0.93 and the twin is within 0.97 to 1.03 on both, so the
+criterion decides both; apollo11's margin is 0.6 points (0.924 against
+0.93), so its size, not its verdict, needs the 14900K. On ecma262
 every noparam round (1.86 to 1.96 s) is below every base round (2.20 to
 2.24 s). Removing the parameter makes shape A's scan 18 percent faster on
 ecma262 (more than the 14 percent recorded in `concurrency/DESIGN.md`) and 8
@@ -1101,18 +1136,16 @@ with them) is not determined.
    part of it costs 8 to 18 percent, and measure the stage again
    (sg-bl-02-28).
 5. The counters cost up to 3 percent of `match` when they count nothing
-   (html5, sequential). They should stay out of the stage: keep a counting
-   copy of `match_all` for the profiled path, or drop the counters once
-   the investigation is done.
+   (html5, sequential), through a run-time test in `test_rule`. Done: the
+   matcher now takes the counting function as a compile-time parameter
+   ([Counting without a run-time test](#counting-without-a-run-time-test)).
 
 **Per board item.**
 
 - sg-bl-02-28 (the 14 percent slower scan entry on ecma262): the positions
-  parameter is a cause; removing it recovers more than the recorded 14
-  percent in shape A on ecma262 and 8 percent on apollo11. Decided on
-  hosted noise for ecma262 (0.845 against a twin at 1.014); apollo11's
-  0.924 is 0.6 points inside the 0.93 bound and is not decided by this run.
-  Not shown: the effect on the real stage, and the mechanism.
+  parameter is a cause on both pages (question 4); removing it recovers
+  more than the recorded 14 percent in shape A on ecma262 and 8 percent on
+  apollo11. Not shown: the effect on the real stage, and the mechanism.
 - sg-bl-02-29 (partition interning above 15 percent of the four-worker
   time): the rule fires on ecma262 (20.0 percent) and html5 (21.1 percent)
   and does not on apollo11 (12.9 percent). The failures hold on hosted
@@ -1136,15 +1169,92 @@ on hosted noise: question 1 on ecma262 and html5, question 4 on ecma262, and
 the identity and counter checks, which are exact. No decision waits on the
 14900K. Three conclusions are not settled by this run and need it only if
 they must be stated precisely: apollo11 on question 1 (a machine that scales
-four workers by 4x changes the shares), apollo11 on question 4 (0.924
-against 0.93), and the empty-table cost of the counters (1 to 3 percent is
-near this run's resolution). One 14900K run would settle all three:
+four workers by 4x changes the shares), the size of apollo11's gain on
+question 4 (0.924, 0.6 points inside the 0.93 bound), and the cost of the
+counters when they count nothing. One 14900K run would settle all three:
 `run.sh profile ecma262 html5 apollo11`, `RUNS_OVERHEAD=15 run.sh overhead`
 and `ROUNDS=15 scan-param.sh time ecma262 apollo11` from this workflow with
 `runs-on: [self-hosted, 14900k]` on the work branch (the 14900K is idle-checked
 and announced to the other sessions first). The temporary workflow
 `style-build-timing` can be removed when the owner does not want those
-three; it must be removed before the branch is ready either way.
+three; it must be removed before the branch is ready either way. These
+commands repeat only from the work branch's history: once the workflow is
+removed, a repeat restores it from that history, and once this source is on
+main, `overhead` and `profile`'s comparison with `BASE_DRIVERS` compare a
+build with itself, so they are one-shot measurements of this change (the
+header of `run.sh` says so too).
+
+### Counting without a run-time test
+
+**Question.** Can the matcher count for the profiled path and still cost the
+stage nothing? The first run counted through a run-time test in `test_rule`
+(count when the node's counter table holds three words), which cost up to 3
+percent of `match` when it counted nothing (`overhead`, html5 sequential).
+
+**Change.** The functions from `match_all` down to `test_rule`, and
+`has_pseudo`, take a function-kind parameter `tally`, which `test_rule`
+calls with the node's counters and slot 0 for each item offered, 1 when the
+filter admits it and 2 when it matches. A function-kind parameter is a
+compile-time parameter: each instance is checked and compiled for the
+function bound to it, and a call through it is a direct call to that
+function, with no value, adapter or dispatch at run time ([FN-3], [FN-5] in
+the specification cited above). The stage and the incremental paths bind
+`tally_none`, which does nothing, and pass an empty table; only
+`match_elements_profiled` binds `tally_count`. What is left in the stage's
+instances is an empty table passed down the calls and the length checks
+`match_all` makes once.
+
+**Criterion, fixed before the rerun.** In `overhead`, on every page and
+worker count, `match` of this source over origin/main's is at most 1.012
+(the twin's largest deviation in the first run) or at most the twin's own
+ratio to origin/main's in the same run, whichever is larger;
+the dumps equal MODE `dump`'s and origin/main's as before; the ledger
+splits both instances of `match_all`; and the nine count lines of every page
+equal the first run's (run 38306217375), since the increments are the same.
+A ratio above that bound on any page means the remaining argument still
+costs, and the empty table goes too (a separate stage-only `match_all`).
+
+**Checks of the checks.** `run.sh falsify` runs the counter and ledger
+checks on copies of a profile run's files with one deliberate fault each
+(one run counting differently, one histogram differing, admitted above
+offered, matched above admitted, nothing matched, one instance of
+`match_all` declined, one instance missing) and fails unless each check
+fails with its message.
+
+**Results.** Not yet run.
+
+### Dispositions
+
+These are the open points this investigation measured; the status board
+holds the items.
+
+- **Interning's provisional bound** (`design/vocabulary.md`, the computed
+  style's groups: provisional "until interning alone is timed"). Timed
+  alone here: 20.0, 21.1 and 12.9 percent of the four-worker stage, so the
+  15 percent bound fails on ecma262 and html5. The node is not changed by
+  this investigation: the follow-up interning work (the board item
+  sg-bl-02-29, partitioning interning, on branch `research/style-intern-par`,
+  PR #75) finds what in interning is sequential and changes the node, with
+  the owner's approval, from what it measures.
+- **The sibling positions walk** (`design/pipeline/style.md`, the positions
+  table: "reopened when the walk's own cost is measured"). Measured here:
+  `match.positions` is 1.6, 1.7 and 0.7 percent of the sequential stage and
+  2.7, 2.7 and 1.3 percent of the four-worker stage (16.5, 9.9 and 0.91 ms
+  sequential). The reopening condition is met; the work is deferred, not
+  dropped (the board item sg-bl-02-31): counting each parent's children in
+  parallel can recover at most those 2.7 percent at four workers, against
+  20 percent for interning and 43 to 69 percent for matching, so it waits
+  until those two are done. The decision itself is unchanged.
+- **The depth check** (the board item sg-bl-02-23, removing the second
+  part's separate depth-check pass). `alone.depth_check` is 0.80, 0.51 and
+  0.044 ms, 0.1 percent of the sequential stage or less, below this run's
+  spread and smaller than the twin's spread the item's third completion
+  condition requires a gain to exceed. Its time is no reason to do it;
+  its remaining reason is that the pass re-proves facts the traversal
+  already established, which is a question of what Whitefoot can carry
+  across an interface.
+- **The earlier matching shares** (47, 73 and 87 percent): explained under
+  question 2 by code and machine differences; closed.
 
 ## Interning in parallel
 

@@ -49,6 +49,16 @@
 #                               with BASE_DRIVERS as for compare, requires the
 #                               dumps and distinct counts of the drivers in
 #                               DIR to equal the earlier build's
+#   run.sh falsify [PAGE]       after profile, shows that its counter and
+#                               ledger checks fail on deliberately wrong
+#                               copies of PAGE's files (apollo11 by default)
+#
+# profile, overhead and falsify serve the step-timing investigation of
+# DESIGN.md and are one-shot: overhead compares this source with an earlier
+# build (BASE_DRIVERS, origin/main's in the temporary workflow
+# style-build-timing), which becomes a comparison of a build with itself once
+# this source is on main, and profile's comparison with BASE_DRIVERS likewise.
+# They are kept to repeat the investigation at the commit it records.
 #
 # PAGE is one of ecma262, html5 and apollo11, the real pages of the
 # concurrency investigation, or cases, tests/css/style-cases.html (checked,
@@ -75,8 +85,10 @@
 # stage's total, then the matcher's counters, and writes the raw lines to
 # build/research/style/profile-*.txt and the table to profile-table.txt. It
 # exits with 1 when a dump differs, the identity control fails to differ, the
-# ledger does not split match_all, a counter is out of order (matched above
-# admitted, admitted above offered) or two runs of one page count differently.
+# ledger does not split both instances of match_all (the stage's, which does
+# not count, and the profiled path's), a counter is out of order (matched
+# above admitted, admitted above offered, or none matched) or two runs of one
+# page count differently.
 #
 # PAGES replaces the directory of the real pages and their sheets,
 # build/research/concurrency by default; a worktree whose build directory
@@ -309,6 +321,115 @@ profile_table() {
 	}' "$out/profile-all.txt"
 }
 
+# Exits with 1 unless the ledger FILE splits the loop of every instance of
+# match_all, and names at least two: the stage's (tally_none) and the
+# profiled path's (tally_count). A generic function's instance is named
+# style.match_all$instance$SUFFIX in the ledger.
+ledger_check() {
+	instances=$(grep -oE 'style\.match_all(\$instance\$[0-9a-f]+)? ' "$1" | sort -u | wc -l | tr -d ' ')
+	split=$(grep -E 'PAR split +style\.match_all(\$instance\$[0-9a-f]+)? ' "$1" | grep -v declined | grep -oE 'style\.match_all(\$instance\$[0-9a-f]+)? ' | sort -u | wc -l | tr -d ' ')
+	if [ "$instances" -ge 2 ] && [ "$split" = "$instances" ]; then
+		echo "ledger: all $instances instances of match_all split"
+		return 0
+	fi
+	echo "run.sh: the ledger does not split every instance of match_all ($split of $instances, at least 2 expected); its lines naming match_all:" >&2
+	grep 'match_all' "$1" >&2 || true
+	return 1
+}
+
+# Exits with 1 unless the profile files DIR/profile-PAGE-*.txt count alike in
+# every build, worker count and run (9 distinct count lines, the repetitions
+# aside, and 2 histogram lines), and the counts of the first sequential run
+# are in order: offered >= admitted >= matched > 0.
+counter_check() {
+	profiles=$1
+	page=$2
+	counted=0
+	distinct=$(grep -h '^count ' "$profiles"/profile-"$page"-*.txt | grep -v '^count reps ' | sort -u | wc -l | tr -d ' ')
+	if [ "$distinct" != 9 ]; then
+		echo "run.sh: $page: counters differ between runs ($distinct distinct lines, not 9)" >&2
+		counted=1
+	fi
+	hists=$(grep -h '^hist ' "$profiles"/profile-"$page"-*.txt | sort -u | wc -l | tr -d ' ')
+	if [ "$hists" != 2 ]; then
+		echo "run.sh: $page: histograms differ between runs" >&2
+		counted=1
+	fi
+	offered=$(sed -n 's/^count candidates_sum //p' "$profiles/profile-$page-seq-1.txt")
+	admitted=$(sed -n 's/^count admitted_sum //p' "$profiles/profile-$page-seq-1.txt")
+	matched=$(sed -n 's/^count matched_sum //p' "$profiles/profile-$page-seq-1.txt")
+	if [ "$offered" -ge "$admitted" ] && [ "$admitted" -ge "$matched" ] && [ "$matched" -gt 0 ]; then
+		echo "$page: counters in order, offered $offered >= admitted $admitted >= matched $matched > 0"
+	else
+		echo "run.sh: $page: counters out of order: offered $offered admitted $admitted matched $matched" >&2
+		counted=1
+	fi
+	return $counted
+}
+
+# The falsifiers of ledger_check and counter_check, run after `run.sh
+# profile` has profiled PAGE (apollo11 by default): both checks must pass on
+# that run's files, and each must fail, with the message of its fault, on a
+# copy with one deliberate fault: one run counting differently, one histogram
+# differing, admitted above offered, matched above admitted, nothing matched,
+# one instance of match_all declined, and only one instance in the ledger.
+falsify() {
+	page=${1:-apollo11}
+	if ! counter_check "$out" "$page" || ! ledger_check "$out/ledger.txt"; then
+		echo "run.sh: falsify: the checks fail on the unmodified files of $page; run run.sh profile $page first" >&2
+		return 1
+	fi
+	result=0
+	# expect CASE PATTERN COMMAND...: COMMAND must exit with 1 and print PATTERN.
+	expect() {
+		name=$1
+		pattern=$2
+		shift 2
+		if "$@" >"$out/falsify-$name.txt" 2>&1; then
+			echo "run.sh: falsify: $name passed; the check cannot see this fault" >&2
+			result=1
+		elif grep -q "$pattern" "$out/falsify-$name.txt"; then
+			echo "falsify: $name fails as it should: $(grep "$pattern" "$out/falsify-$name.txt" | head -1)"
+		else
+			echo "run.sh: falsify: $name failed without its message:" >&2
+			cat "$out/falsify-$name.txt" >&2
+			result=1
+		fi
+	}
+	# faulty CASE SED_SCRIPT FILE_GLOB: a copy of the profile files with the
+	# sed script applied to the files the glob names.
+	faulty() {
+		dir=$out/falsify/$1
+		rm -rf "$dir"
+		mkdir -p "$dir"
+		cp "$out"/profile-"$page"-*.txt "$dir/"
+		for file in "$dir"/$3; do
+			sed -i "$2" "$file"
+		done
+		echo "$dir"
+	}
+	dir=$(faulty runs 's/^\(count candidates_sum [0-9]*\)$/\11/' "profile-$page-par4-2.txt")
+	expect runs 'counters differ between runs' counter_check "$dir" "$page"
+	dir=$(faulty hist 's/^\(hist admitted [0-9]*\)/\19/' "profile-$page-par1-1.txt")
+	expect hist 'histograms differ between runs' counter_check "$dir" "$page"
+	offered=$(sed -n 's/^count candidates_sum //p' "$out/profile-$page-seq-1.txt")
+	admitted=$(sed -n 's/^count admitted_sum //p' "$out/profile-$page-seq-1.txt")
+	dir=$(faulty admitted "s/^count admitted_sum .*/count admitted_sum $((offered + 1))/" "profile-$page-*.txt")
+	expect admitted 'counters out of order' counter_check "$dir" "$page"
+	dir=$(faulty matched "s/^count matched_sum .*/count matched_sum $((admitted + 1))/" "profile-$page-*.txt")
+	expect matched 'counters out of order' counter_check "$dir" "$page"
+	dir=$(faulty zero 's/^count matched_sum .*/count matched_sum 0/' "profile-$page-*.txt")
+	expect zero 'counters out of order' counter_check "$dir" "$page"
+	# The ledger: one instance's split declined, and only one instance named.
+	first=$(grep -E 'PAR split +style\.match_all(\$instance\$[0-9a-f]+)? ' "$out/ledger.txt" | grep -v declined | grep -oE 'style\.match_all(\$instance\$[0-9a-f]+)? ' | sort -u | head -1)
+	grep -vF "$first" "$out/ledger.txt" >"$out/falsify-ledger-declined.txt"
+	grep -F "$first" "$out/ledger.txt" | sed 's/$/  declined (falsifier)/' >>"$out/falsify-ledger-declined.txt"
+	expect declined 'does not split every instance' ledger_check "$out/falsify-ledger-declined.txt"
+	grep -F "$first" "$out/ledger.txt" >"$out/falsify-ledger-one.txt"
+	expect one 'does not split every instance' ledger_check "$out/falsify-ledger-one.txt"
+	return $result
+}
+
 profile() {
 	build
 	status=0
@@ -317,10 +438,7 @@ profile() {
 	echo "commit: $(git rev-parse --short HEAD)"
 	echo "parallelism ledger ($out/ledger.txt):"
 	grep -E 'PAR split +style\.' "$out/ledger.txt" || true
-	if ! grep -E 'PAR split +style\.match_all ' "$out/ledger.txt" | grep -v declined | grep -q .; then
-		echo "run.sh: the ledger does not split match_all" >&2
-		status=1
-	fi
+	ledger_check "$out/ledger.txt" || status=1
 	pages_run=${*:-ecma262 html5 apollo11}
 	first=
 	for page in $pages_run; do
@@ -380,26 +498,7 @@ profile() {
 				run=$((run + 1))
 			done
 		done
-		# The counters do not depend on the build, the workers or the run.
-		distinct=$(grep -h '^count ' "$out"/profile-"$page"-*.txt | grep -v '^count reps ' | sort -u | wc -l | tr -d ' ')
-		if [ "$distinct" != 9 ]; then
-			echo "run.sh: $page: counters differ between runs ($distinct distinct lines, not 9)" >&2
-			status=1
-		fi
-		hists=$(grep -h '^hist ' "$out"/profile-"$page"-*.txt | sort -u | wc -l | tr -d ' ')
-		if [ "$hists" != 2 ]; then
-			echo "run.sh: $page: histograms differ between runs" >&2
-			status=1
-		fi
-		offered=$(sed -n 's/^count candidates_sum //p' "$out/profile-$page-seq-1.txt")
-		admitted=$(sed -n 's/^count admitted_sum //p' "$out/profile-$page-seq-1.txt")
-		matched=$(sed -n 's/^count matched_sum //p' "$out/profile-$page-seq-1.txt")
-		if [ "$offered" -ge "$admitted" ] && [ "$admitted" -ge "$matched" ] && [ "$matched" -gt 0 ]; then
-			echo "$page: counters in order, offered $offered >= admitted $admitted >= matched $matched > 0"
-		else
-			echo "run.sh: $page: counters out of order: offered $offered admitted $admitted matched $matched" >&2
-			status=1
-		fi
+		counter_check "$out" "$page" || status=1
 	done
 	profile_table | tee "$out/profile-table.txt"
 	return $status
@@ -781,6 +880,10 @@ overhead)
 	shift
 	overhead "$@"
 	;;
+falsify)
+	shift
+	falsify "$@"
+	;;
 check)
 	shift
 	check "$@"
@@ -790,7 +893,7 @@ time)
 	time_parts "$@"
 	;;
 *)
-	echo "usage: run.sh check [PAGE...] | time [PAGE [REPS]] | profile [PAGE...] | overhead [PAGE...] | compare [PAGE...] | identity DIR [PAGE...]" >&2
+	echo "usage: run.sh check [PAGE...] | time [PAGE [REPS]] | profile [PAGE...] | overhead [PAGE...] | falsify [PAGE] | compare [PAGE...] | identity DIR [PAGE...]" >&2
 	exit 2
 	;;
 esac
