@@ -1678,6 +1678,26 @@ rule is reported for the B-only build and the change; when only the change
 meets it, the bound rests on the seven offers, which the call grain
 publishes for a reason unrelated to their runtime work (next paragraph).
 
+**Result (hosted runner, run 38325149283).** Four-worker style stage against
+the base:
+
+| page | change (both parts) | B alone | seven offers given B |
+| --- | --- | --- | --- |
+| ecma262 | -33.7% | -29.1% | -6.5% |
+| html5 | -34.4% | -29.4% | -7.2% |
+| apollo11 | -37.4% | -23.4% | -18.2% |
+
+Interning's share of the four-worker stage fell from 19.5, 21.0 and 12.8
+percent at the base to 14.8, 15.8 and 10.1 with B alone and 13.9, 14.9 and
+8.3 with the change. Sequentially the change was 4.8, 5.3 and 5.3 percent
+faster. Every build's dumps were byte-identical to the base's, and the build
+with a deliberately wrong hash (`wrong-box-hash.patch`) failed the identity
+check. B is kept: alone it is 29 percent below the base on both falsifier
+pages, where the twin's four-worker interning varied by about 5 percent
+between rounds. The 15 percent bound is met on all three pages by the change
+and by B alone on ecma262 and apollo11 but not html5 (15.8 percent), so on
+html5 it rests on the seven offers, as the falsifier paragraph anticipated.
+
 **What this means for the call-grain request.** The Whitefoot request that
 calls be offered by their runtime extent (board request
 sg-req-call-grain-runtime-extent) was filed because the seven calls lost
