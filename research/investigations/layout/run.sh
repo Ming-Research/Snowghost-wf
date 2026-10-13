@@ -125,7 +125,7 @@ case_floors() {
 	grid-cases) echo "286 2 198" ;;
 	grid-final-space-cases) echo "26 0 8" ;;
 	inline-items-cases) echo "32 19 42" ;;
-	line-fill-cases) echo "37 8 42" ;;
+	line-fill-cases) echo "40 10 48" ;;
 	table-cases) echo "694 29 306" ;;
 	*) echo "" ;;
 	esac
