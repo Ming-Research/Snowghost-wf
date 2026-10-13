@@ -1,0 +1,454 @@
+alias BoxGroup = pkg::css::values::BoxGroup;
+alias Document = pkg::dom::Document;
+alias LengthPercentage = pkg::css::values::LengthPercentage;
+alias NodeId = pkg::dom::NodeId;
+alias Styles = pkg::style::Styles;
+alias Translation = pkg::css::values::Translation;
+alias atom_body = pkg::base::static_atoms::atom_body;
+alias atom_html = pkg::base::static_atoms::atom_html;
+alias unit_from_f64 = pkg::base::geometry::unit_from_f64;
+
+struct TranslationOffset {
+  x: i32;
+  y: i32;
+}
+
+struct TranslationBox {
+  width: i32;
+  height: i32;
+  replaced: Bool;
+}
+
+struct OutputGeometry {
+  translation: TranslationOffset;
+  clips_y: Bool;
+  position: u8;
+}
+
+fn no_translation_offset() -> made: TranslationOffset pure {
+  return TranslationOffset(x: 0_i32, y: 0_i32);
+}
+
+fn translation_fragment_box(fragments: &[Fragment], owner: u32) -> found: Option<TranslationBox> reads(fragments) {
+  doc "Finds a table row or row group's border box among its context's fragments through independent balanced halves. These owners have structural routes rather than block payloads.";
+  let count = fragments^.len;
+  if count == 0_u64 {
+    return None<TranslationBox>();
+  }
+  if count == 1_u64 {
+    let fragment = fragments^[0_u64];
+    let same = fragment.owner == owner;
+    let element = fragment.kind == placed_element;
+    let matches = band(same, element);
+    if matches {
+      let no = False();
+      let found = TranslationBox(width: fragment.width, height: fragment.height, replaced: no);
+      return Some<TranslationBox>(value: found);
+    }
+    return None<TranslationBox>();
+  }
+  let middle = count / 2_u64;
+  let left = translation_fragment_box(fragments: &fragments^[0_u64..middle], owner: owner);
+  let right = translation_fragment_box(fragments: &fragments^[middle..count], owner: owner);
+  match left {
+    Some(value: found) => {
+      return Some<TranslationBox>(value: found);
+    }
+    None() => {
+      return right;
+    }
+  }
+}
+
+fn translation_box_at(context: &Context, steps: &[ContextStep], depth: u64, owner: u32, block: u32) -> found: Option<TranslationBox> reads(context), reads(steps) {
+  doc "Reads the untransformed border size through a checked retained route. Sizes are independent of placement, column mapping and every ancestor translation.";
+  let count = steps^.len;
+  if depth < count {
+    let route = steps^[depth];
+    let child = cvt::<u32, u64>(route.child);
+    if context^.slot != route.parent {
+      return None<TranslationBox>();
+    }
+    if child < context^.children.inner.len {
+      if context^.children.inner[child].slot != route.slot {
+        return None<TranslationBox>();
+      }
+      let next = depth +sat 1_u64;
+      return translation_box_at(context: &context^.children.inner[child], steps: steps, depth: next, owner: owner, block: block);
+    }
+    return None<TranslationBox>();
+  }
+  if context^.retired {
+    return None<TranslationBox>();
+  }
+  let style = context^.style;
+  let same = style.element == owner;
+  let named = bnot(style.anonymous);
+  let plain = style.pseudo == no_pseudo;
+  let named_plain = band(named, plain);
+  let own = band(same, named_plain);
+  if own {
+    if context^.kind == ctx_table {
+      let fragments = context^.fragments.inner.len;
+      return translation_fragment_box(fragments: &context^.fragments.inner[0_u64..fragments], owner: owner);
+    }
+    let replaced_kind = context^.kind == ctx_replaced;
+    let replaced_natural = context^.natural != natural_object;
+    let replaced = bor(replaced_kind, replaced_natural);
+    let found = TranslationBox(width: context^.width, height: context^.height, replaced: replaced);
+    return Some<TranslationBox>(value: found);
+  }
+  let at = cvt::<u32, u64>(block);
+  if at < context^.blocks.inner.len {
+    let item = &context^.blocks.inner[at];
+    let item_same = item^.style.element == owner;
+    let item_named = bnot(item^.style.anonymous);
+    let item_plain = item^.style.pseudo == no_pseudo;
+    let item_named_plain = band(item_named, item_plain);
+    let item_own = band(item_same, item_named_plain);
+    if item_own {
+      let no = False();
+      let found = TranslationBox(width: item^.width, height: item^.height, replaced: no);
+      return Some<TranslationBox>(value: found);
+    }
+  }
+  let fragments = context^.fragments.inner.len;
+  return translation_fragment_box(fragments: &context^.fragments.inner[0_u64..fragments], owner: owner);
+}
+
+fn translation_route_box(layout: &Layout, serial: u32, owner: u32, block: u32) -> found: Option<TranslationBox> reads(layout) {
+  let steps = match path_steps(layout: layout, serial: serial) {
+    Ok(value: found) => {
+      give move found;
+    }
+    Err(..) => {
+      return None<TranslationBox>();
+    }
+  }
+  let count = steps.inner.len;
+  return translation_box_at(context: &layout^.root, steps: &steps.inner[0_u64..count], depth: 0_u64, owner: owner, block: block);
+}
+
+fn translation_border_box(layout: &Layout, owner: u32) -> found: Option<TranslationBox> reads(layout) {
+  doc "Uses the existing stable context and style directories; no transient global rectangle index or sequential sibling scan is needed. An owner without a rendered border box has no local translation.";
+  let at = cvt::<u32, u64>(owner);
+  let serial = route_read::<u32>(table: &layout^.context_of, at: at);
+  if serial != no_index {
+    let established = translation_route_box(layout: layout, serial: serial, owner: owner, block: no_index);
+    match established {
+      Some(value: found) => {
+        return Some<TranslationBox>(value: found);
+      }
+      None() => {
+      }
+    }
+  }
+  let uses = route_read::<StyleUse>(table: &layout^.uses, at: at);
+  let cursor = uses.head;
+  let count = layout^.routes.len;
+  for (step in 0_u64..count) {
+    let route_at = cvt::<u32, u64>(cursor);
+    if route_at < count {
+      let route = route_read::<StyleRoute>(table: &layout^.routes, at: route_at);
+      let has_block = route.block != no_index;
+      let owns_geometry = bor(has_block, route.structural);
+      if owns_geometry {
+        let found = translation_route_box(layout: layout, serial: route.serial, owner: owner, block: route.block);
+        match found {
+          Some(value: located) => {
+            return Some<TranslationBox>(value: located);
+          }
+          None() => {
+          }
+        }
+      }
+      set cursor = route.next;
+    } else {
+      break;
+    }
+  }
+  return None<TranslationBox>();
+}
+
+fn translation_length(value: LengthPercentage, basis: i32) -> px: f32 pure {
+  doc "Resolves a translation length-percentage against its untransformed border-box dimension before the combined element translation is rounded to LayoutUnit.";
+  if value.has_percent {
+    let base = pixels(raw: basis);
+    let fraction = fdiv.strict(value.percent, 1.0e2_f32);
+    let part = fmul.strict(base, fraction);
+    return fadd.strict(value.px, part);
+  }
+  return value.px;
+}
+
+fn translation_value(value: Translation, basis: TranslationBox) -> (x: f32, y: f32) pure {
+  match value {
+    Offset(x: ox, y: oy) => {
+      let dx = translation_length(value: ox, basis: basis.width);
+      let dy = translation_length(value: oy, basis: basis.height);
+      return dx, dy;
+    }
+    None() => {
+      return 0.0_f32, 0.0_f32;
+    }
+    Unsupported() => {
+      return 0.0_f32, 0.0_f32;
+    }
+  }
+}
+
+fn has_translation(value: Translation) -> yes: Bool pure {
+  match value {
+    Offset(..) => {
+      return True();
+    }
+    None() => {
+      return False();
+    }
+    Unsupported() => {
+      return False();
+    }
+  }
+}
+
+fn unsupported_translation(value: Translation) -> yes: Bool pure {
+  match value {
+    Unsupported() => {
+      return True();
+    }
+    Offset(..) => {
+      return False();
+    }
+    None() => {
+      return False();
+    }
+  }
+}
+
+fn element_translation(layout: &Layout, styles: &Styles, owner: u32) -> offset: TranslationOffset reads(layout), reads(styles) {
+  let no = False();
+  let style = StyleRef(element: owner, pseudo: no_pseudo, anonymous: no);
+  let size = size_of(styles: styles, style: style);
+  let transform_unsupported = unsupported_translation(value: size.transform);
+  let translate_unsupported = unsupported_translation(value: size.translate);
+  let unsupported = bor(transform_unsupported, translate_unsupported);
+  if unsupported {
+    return no_translation_offset();
+  }
+  let has_transform = has_translation(value: size.transform);
+  let has_translate = has_translation(value: size.translate);
+  let any = bor(has_transform, has_translate);
+  if any {
+  } else {
+    return no_translation_offset();
+  }
+  let box = box_of(styles: styles, style: style);
+  let contents = box.display == display_contents;
+  let column = box.display == display_column;
+  let column_group = box.display == display_column_group;
+  let columns = bor(column, column_group);
+  let excluded = bor(contents, columns);
+  if excluded {
+    return no_translation_offset();
+  }
+  let basis = match translation_border_box(layout: layout, owner: owner) {
+    Some(value: found) => {
+      give found;
+    }
+    None() => {
+      return no_translation_offset();
+    }
+  }
+  if box.display == display_inline {
+    if basis.replaced {
+    } else {
+      return no_translation_offset();
+    }
+  }
+  let (transform_x, transform_y) = translation_value(value: size.transform, basis: basis);
+  let (translate_x, translate_y) = translation_value(value: size.translate, basis: basis);
+  let x = fadd.strict(translate_x, transform_x);
+  let y = fadd.strict(translate_y, transform_y);
+  let wide_x = cvt::<f32, f64>(x);
+  let wide_y = cvt::<f32, f64>(y);
+  let rounded_x = unit_from_f64(pixels: wide_x);
+  let rounded_y = unit_from_f64(pixels: wide_y);
+  return TranslationOffset(x: rounded_x.raw, y: rounded_y.raw);
+}
+
+fn clips_output_y(layout: &Layout, document: &Document, styles: &Styles, owner: u32, box: BoxGroup) -> clips: Bool reads(layout), reads(document), reads(styles) {
+  doc "Whether this rendered box traps descendant vertical overflow. Root overflow is applied to the viewport; an HTML body's overflow is also propagated there when the HTML root has visible overflow on both axes. Boxes without a border box and non-replaced inline boxes establish no clip here.";
+  if box.overflow_y == overflow_visible {
+    return False();
+  }
+  let position = element_position(styles: styles, element: owner);
+  if position == 0_u64 {
+    return False();
+  }
+  let inline = box.display == display_inline;
+  let contents = box.display == display_contents;
+  let table_internal_from = box.display >= display_row_group;
+  let table_internal_to = box.display <= display_column;
+  let table_internal = band(table_internal_from, table_internal_to);
+  let not_cell = box.display != display_cell;
+  let table_noncontainer = band(table_internal, not_cell);
+  let inline_or_contents = bor(inline, contents);
+  let excluded = bor(inline_or_contents, table_noncontainer);
+  if excluded {
+    return False();
+  }
+  let node = NodeId(index: owner);
+  let (name, html, svg) = local_name_of(document: document, node: node);
+  let body_name = name == atom_body;
+  let body = band(html, body_name);
+  if body {
+    let at = cvt::<u32, u64>(owner);
+    if at < document^.nodes.inner.len {
+      match document^.nodes.inner[at].links.parent {
+        Some(value: parent) => {
+          let parent_node = parent^;
+          let parent_position = element_position(styles: styles, element: parent_node.index);
+          if parent_position == 0_u64 {
+            let (root_name, root_html, root_svg) = local_name_of(document: document, node: parent_node);
+            let html_name = root_name == atom_html;
+            let html_root = band(root_html, html_name);
+            if html_root {
+              let root_style = element_ref(element: parent_node.index);
+              let root_box = box_of(styles: styles, style: root_style);
+              let visible_x = root_box.overflow_x == overflow_visible;
+              let visible_y = root_box.overflow_y == overflow_visible;
+              let visible = band(visible_x, visible_y);
+              if visible {
+                return False();
+              }
+            }
+          }
+        }
+        None() => {
+        }
+      }
+    }
+  }
+  match translation_border_box(layout: layout, owner: owner) {
+    Some(..) => {
+      return True();
+    }
+    None() => {
+      return False();
+    }
+  }
+}
+
+fn output_geometry(layout: &Layout, document: &Document, styles: &Styles) -> offsets: Box<Array<OutputGeometry>> reads(layout), reads(document), reads(styles) {
+  doc "Each node independently resolves its own current style, clip and retained border size. Nothing is retained across edits, so changed transform values and changed percentage bases use the same inputs for incremental and full publication.";
+  let count = document^.nodes.inner.len;
+  let zero = no_translation_offset();
+  let no = False();
+  let empty = OutputGeometry(translation: zero, clips_y: no, position: position_static);
+  let offsets = box_array_filled::<OutputGeometry>(count: count, value: empty);
+  for (at in 0_u64..count) {
+    let owner = cvt.wrap::<u64, u32>(at);
+    let position = element_position(styles: styles, element: owner);
+    if position < styles^.elements.inner.len {
+      let style = element_ref(element: owner);
+      let box = box_of(styles: styles, style: style);
+      let translation = element_translation(layout: layout, styles: styles, owner: owner);
+      let clips = clips_output_y(layout: layout, document: document, styles: styles, owner: owner, box: box);
+      let containing_position = if box.display == display_contents {
+        give position_static;
+      } else {
+        give box.position;
+      }
+      set offsets.inner[at] = OutputGeometry(translation: translation, clips_y: clips, position: containing_position);
+    }
+  }
+  return move offsets;
+}
+
+fn translated_rectangle(document: &Document, offsets: &[OutputGeometry], rectangle: PlacedRect) -> placed: PlacedRect reads(document), reads(offsets) {
+  doc "An independent output rectangle follows only its DOM ancestors, including its own element or its text node's parent. This ancestry is the sole accumulation dependency; all sibling rectangles are independent, and no retained flow or fragment geometry is changed.";
+  let cursor = cvt::<u32, u64>(rectangle.owner);
+  let x = 0_i64;
+  let y = 0_i64;
+  let count = document^.nodes.inner.len;
+  for (step in 0_u64..count) {
+    if cursor < count {
+      if cursor < offsets^.len {
+        let local = offsets^[cursor].translation;
+        let local_x = cvt::<i32, i64>(local.x);
+        let local_y = cvt::<i32, i64>(local.y);
+        set x = local_x +sat x;
+        set y = local_y +sat y;
+      }
+      match document^.nodes.inner[cursor].links.parent {
+        Some(value: parent) => {
+          set cursor = cvt::<u32, u64>(parent^.index);
+        }
+        None() => {
+          break;
+        }
+      }
+    } else {
+      break;
+    }
+  }
+  let px_x = cvt::<f32, f64>(rectangle.x);
+  let px_y = cvt::<f32, f64>(rectangle.y);
+  let original_x = unit_from_f64(pixels: px_x);
+  let original_y = unit_from_f64(pixels: px_y);
+  let wide_x = cvt::<i32, i64>(original_x.raw);
+  let wide_y = cvt::<i32, i64>(original_y.raw);
+  let moved_x = wide_x +sat x;
+  let moved_y = wide_y +sat y;
+  let bounded_x = geometry_narrow(value: moved_x);
+  let bounded_y = geometry_narrow(value: moved_y);
+  let made = rectangle;
+  set made.x = pixels(raw: bounded_x);
+  set made.y = pixels(raw: bounded_y);
+  return made;
+}
+
+fn rectangle_scroll_bottom(document: &Document, geometry: &[OutputGeometry], rectangle: PlacedRect, translated: PlacedRect) -> bottom: f32 reads(document), reads(geometry) {
+  doc "Propagates one rectangle's translated extent to the root without changing flow geometry. As in Chromium's scrollable overflow, a translated box contributes only where it is drawn, not its untransformed position. A rendered non-visible-overflow ancestor traps descendants, but its own box contributes separately. Absolutely positioned content skips intervening DOM clips up to its position-established containing block; viewport-fixed content contributes no root scrolling extent. Translation-established containing blocks remain outside this output-only implementation.";
+  let cursor = cvt::<u32, u64>(rectangle.owner);
+  let own = True();
+  let seeking_containing_block = False();
+  let count = document^.nodes.inner.len;
+  for (step in 0_u64..count) {
+    if cursor < count {
+      if cursor < geometry^.len {
+        let local = geometry^[cursor];
+        if local.position == position_fixed {
+          return 0.0_f32;
+        }
+        let positioned = local.position != position_static;
+        if seeking_containing_block {
+          if positioned {
+            set seeking_containing_block = False();
+          }
+        }
+        if own {
+        } else if seeking_containing_block {
+        } else if local.clips_y {
+          return 0.0_f32;
+        }
+        if local.position == position_absolute {
+          set seeking_containing_block = True();
+        }
+      }
+      set own = False();
+      match document^.nodes.inner[cursor].links.parent {
+        Some(value: parent) => {
+          set cursor = cvt::<u32, u64>(parent^.index);
+        }
+        None() => {
+          break;
+        }
+      }
+    } else {
+      break;
+    }
+  }
+  let translated_bottom = fadd.strict(translated.y, translated.height);
+  return fmax(translated_bottom, 0.0_f32);
+}

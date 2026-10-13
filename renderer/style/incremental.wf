@@ -103,14 +103,14 @@ fn map_pseudos(cascade: &Cascade, flags: &Box<Slots<u8>>, first: &Box<Slots<u32>
 fn pseudo_bits(state: &StyleState, store: &RuleStore, document: &Document, atoms: &AtomTable, element: NodeId) -> bits: u8 reads(state), reads(store), reads(document), reads(atoms) {
   doc "Which pseudo-elements some rule with a longhand declaration now matches on element, as map_pseudos records them.";
   let filter = element_filter(document: document, atoms: atoms, positions: &state^.cascade.positions, element: element);
-  let keys = array_filled::<u64, 99>(value: 0_u64);
-  let out = array_filled::<u32, 99>(value: 0_u32);
+  let keys = array_filled::<u64, 101>(value: 0_u64);
+  let out = array_filled::<u32, 101>(value: 0_u32);
   let scratch = array_filled::<u64, 1>(value: 0_u64);
-  let before = has_pseudo(keys: &keys[0_u64..99_u64], out: &out[0_u64..99_u64], bits: &scratch[0_u64..0_u64], pseudo_index: &state^.pseudo_index, store: store, document: document, atoms: atoms, positions: &state^.cascade.positions, element: element, kind: pseudo_element_before, filter: filter);
-  let keys_after = array_filled::<u64, 99>(value: 0_u64);
-  let out_after = array_filled::<u32, 99>(value: 0_u32);
+  let before = has_pseudo(keys: &keys[0_u64..winner_words], out: &out[0_u64..winner_words], bits: &scratch[0_u64..0_u64], pseudo_index: &state^.pseudo_index, store: store, document: document, atoms: atoms, positions: &state^.cascade.positions, element: element, kind: pseudo_element_before, filter: filter);
+  let keys_after = array_filled::<u64, 101>(value: 0_u64);
+  let out_after = array_filled::<u32, 101>(value: 0_u32);
   let scratch_after = array_filled::<u64, 1>(value: 0_u64);
-  let after = has_pseudo(keys: &keys_after[0_u64..99_u64], out: &out_after[0_u64..99_u64], bits: &scratch_after[0_u64..0_u64], pseudo_index: &state^.pseudo_index, store: store, document: document, atoms: atoms, positions: &state^.cascade.positions, element: element, kind: pseudo_element_after, filter: filter);
+  let after = has_pseudo(keys: &keys_after[0_u64..winner_words], out: &out_after[0_u64..winner_words], bits: &scratch_after[0_u64..0_u64], pseudo_index: &state^.pseudo_index, store: store, document: document, atoms: atoms, positions: &state^.cascade.positions, element: element, kind: pseudo_element_after, filter: filter);
   let low = if before {
     give 1_u8;
   } else {
@@ -157,8 +157,8 @@ fn rematch_node(state: &StyleState, store: &RuleStore, document: &Document, atom
           for (b in bit_start..bit_end) {
             set state^.cascade.custom_keys.inner[b] = 0_u64;
           }
-          let keys = array_filled::<u64, 99>(value: 0_u64);
-          let fits = match_element(keys: &keys[0_u64..99_u64], out: &state^.cascade.winners.inner[winner_start..winner_end], bits: &state^.cascade.custom_keys.inner[bit_start..bit_end], index: &state^.index, pseudo_index: &state^.pseudo_index, store: store, document: document, atoms: atoms, positions: &state^.cascade.positions, element: element, kind: kind);
+          let keys = array_filled::<u64, 101>(value: 0_u64);
+          let fits = match_element(keys: &keys[0_u64..winner_words], out: &state^.cascade.winners.inner[winner_start..winner_end], bits: &state^.cascade.custom_keys.inner[bit_start..bit_end], index: &state^.index, pseudo_index: &state^.pseudo_index, store: store, document: document, atoms: atoms, positions: &state^.cascade.positions, element: element, kind: kind);
           return fits;
         }
       }
@@ -592,9 +592,9 @@ fn changed_entry(position: u64, boxes_only: Bool) -> made: u32 pure {
 }
 
 fn layout_same(styles: &Styles, first: ComputedStyle, second: ComputedStyle) -> same: Bool reads(styles) {
-  doc "Whether two computed styles of the kept tables agree in everything layout reads, as layout_changes compares two runs: the box, size, spacing, font, container, item, table and content groups, the text and border groups without their colours, and whether the background is present; the custom-property set is not read.";
+  doc "Whether two computed styles of the kept tables agree in everything flow layout reads, as layout_changes compares two runs: the box, size, spacing, font, container, item, table and content groups, the text and border groups without their colours, and whether the background is present; size-group transform and translate are excluded because rectangle publication reads their current values without relayout, and the custom-property set is not read.";
   let a = first.box == second.box;
-  let b = first.size == second.size;
+  let b = size_ids_layout_same(styles: styles, first: first.size, second: second.size);
   let c = first.spacing == second.spacing;
   let d = first.font == second.font;
   let e = first.container == second.container;
@@ -650,6 +650,23 @@ fn layout_same(styles: &Styles, first: ComputedStyle, second: ComputedStyle) -> 
   let present_second = background_present(styles: styles, id: second.background);
   let background = present_first == present_second;
   return background;
+}
+
+fn size_ids_layout_same(styles: &Styles, first: u32, second: u32) -> same: Bool reads(styles) {
+  doc "Compares kept size groups by their flow fields when a translation edit changed the group's identifier.";
+  if first == second {
+    return True();
+  }
+  let a = cvt::<u32, u64>(first);
+  let b = cvt::<u32, u64>(second);
+  let a_inside = a < styles^.sizes.inner.len;
+  let b_inside = b < styles^.sizes.inner.len;
+  let inside = band(a_inside, b_inside);
+  if inside {
+    let same = same_size_layout(first: styles^.sizes.inner[a], second: styles^.sizes.inner[b]);
+    return same;
+  }
+  return False();
 }
 
 fn construction_same(styles: &Styles, first: ComputedStyle, second: ComputedStyle) -> same: Bool reads(styles) {
@@ -955,6 +972,11 @@ fn reads_root_font(store: &RuleStore, declared: Declared, customs_rem: Bool) -> 
       let lengths = bor(tracks, spacing);
       return lengths;
     }
+    Translation(x: tx, y: ty, ..) => {
+      let x_reads = fne(tx.rem, 0.0_f32);
+      let y_reads = fne(ty.rem, 0.0_f32);
+      return bor(x_reads, y_reads);
+    }
     Keyword(..) => {
       return False();
     }
@@ -994,19 +1016,19 @@ fn root_font_readers(state: &StyleState, store: &RuleStore, readers: &Box<Slots<
   let customs_rem = customs_read_rem(store: store);
   let unread = False();
   let reading = box_array_filled::<Bool>(count: declarations, value: unread);
-  let columns = array_filled::<Bool, 99>(value: unread);
+  let columns = array_filled::<Bool, 101>(value: unread);
   for (d in 0_u64..declarations) {
     let found = reads_root_font(store: store, declared: store^.declared.declarations.inner[d].value, customs_rem: customs_rem);
     if found {
       set reading.inner[d] = True();
       let longhand = cvt::<u8, u64>(store^.declared.declarations.inner[d].longhand);
-      if longhand < 99_u64 {
+      if longhand < winner_words {
         set columns[longhand] = True();
       }
     }
   }
   let used = box_slots_new::<u64>(capacity: 0_u64);
-  for (w in 0_u64..99_u64) {
+  for (w in 0_u64..winner_words) {
     if columns[w] {
       let pushed = propagate push::<u64>(cell: &used, value: w, ceiling: 128_u64);
     }

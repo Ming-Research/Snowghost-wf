@@ -24,7 +24,16 @@
 # case_floors holds the least number of matched block-level boxes,
 # inline-level boxes and text nodes compare reports for each case page, the
 # counts when the table was last set. Raise a floor in the change that raises
-# the count; lowering one is a decision about the stage.
+# the count; lowering one is a decision about the stage. A case page for which
+# case_height_judged says yes (transform-cases, whose translations exist to
+# move overflow) is also judged on its scroll height: the line "scroll height
+# (reported): chromium A, snowghost B" in compare's output must be present and
+# |A - B| must be at most 1. The other case pages differ by a few pixels, which
+# are separate defects, so their scroll height is reported only.
+#
+# ORACLE and OUT replace build/oracle/layout and build/research/layout, the
+# directories judge reads Chromium's dumps and Snowghost's from (the falsifier
+# step of .github/workflows/q139.yml judges a mutated copy this way).
 #
 # PAGE is one of ecma262, html5 and apollo11, the real pages of the
 # concurrency investigation, or the name of a case page
@@ -67,8 +76,8 @@ root=$(cd "$here/../../.." && pwd)
 cd "$root"
 
 data=${PAGES:-build/research/concurrency}
-oracle=build/oracle/layout
-out=build/research/layout
+oracle=${ORACLE:-build/oracle/layout}
+out=${OUT:-build/research/layout}
 ua=${UA:-renderer/style/ua.css}
 compiler=${WHITEFOOTC:-$root/build/whitefoot/$(sed -n "s/^release = //p" "$root/whitefoot.pin")/whitefootc}
 lock=${RUN_CHECK:-}
@@ -128,7 +137,16 @@ case_floors() {
 	line-fill-cases) echo "40 10 48" ;;
 	logical-cases) echo "56 3 3" ;;
 	table-cases) echo "694 29 306" ;;
+	transform-cases) echo "55 1 1" ;;
 	*) echo "" ;;
+	esac
+}
+
+# Whether judge_page also judges the scroll height of a case page.
+case_height_judged() {
+	case $1 in
+	transform-cases) echo yes ;;
+	*) echo no ;;
 	esac
 }
 
@@ -174,6 +192,19 @@ judge_page() {
 		if [ "$3" -lt "$floor_texts" ]; then
 			echo "$page: FAIL, $3 text nodes match, floor $floor_texts" >&2
 			failed=1
+		fi
+		if [ "$(case_height_judged "$page")" = yes ]; then
+			heights=$(sed -n 's/^scroll height (reported): chromium \([-0-9.]*\), snowghost \([-0-9.]*\)$/\1 \2/p' "$out/$page.compare.txt")
+			if [ -z "$heights" ]; then
+				echo "$page: FAIL, compare printed no scroll height line" >&2
+				failed=1
+			else
+				set -- $heights
+				if ! awk -v a="$1" -v b="$2" 'BEGIN { d = a - b; if (d < 0) d = -d; exit !(d <= 1) }'; then
+					echo "$page: FAIL, scroll height chromium $1, snowghost $2, more than 1 px apart" >&2
+					failed=1
+				fi
+			fi
 		fi
 		return $failed
 		;;

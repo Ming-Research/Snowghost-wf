@@ -31,6 +31,15 @@
 #                                   on a layout kept across edits) is the
 #                                   same as the rebuilt one; differences,
 #                                   refusals and incomplete runs fail
+#   run.sh transforms DRIVER       checks the focused translation fixture's
+#                                   transform, unrelated style, text,
+#                                   border-box-basis and percentage-basis (a
+#                                   text edit that changes the height a
+#                                   translateY percentage resolves against)
+#                                   edits against full rebuilds; an overflow
+#                                   change is refused by incremental layout
+#                                   whatever the translation, so the fixture
+#                                   checks trapping only in full layout
 #   run.sh time BUILD PAGE KIND [RUNS]
 #                                   times text_changed + update per edit
 #                                   with the driver's incremental mode, RUNS
@@ -253,6 +262,44 @@ dumps() {
 	return "$dumps_status"
 }
 
+transforms() {
+	transform_driver=$1
+	fixture=research/investigations/incremental-layout/scripts/transform-case.html
+	mkdir -p "$work/transforms"
+	"$transform_driver" nodes 0 "$fixture" "$ua" >"$work/transforms/nodes.txt"
+	# The node IDs are discovered from traversal positions, as in the existing
+	# splice fixture generator, rather than assuming HTML arena allocation.
+	outer=$(awk '$1 == "E" && $6 == 5 { print $2; n++ } END { if (n != 1) exit 1 }' "$work/transforms/nodes.txt")
+	child=$(awk '$1 == "E" && $6 == 6 { print $2; n++ } END { if (n != 1) exit 1 }' "$work/transforms/nodes.txt")
+	paragraph=$(awk '$1 == "E" && $6 == 7 { print $2; n++ } END { if (n != 1) exit 1 }' "$work/transforms/nodes.txt")
+	float=$(awk '$1 == "E" && $6 == 9 { print $2; n++ } END { if (n != 1) exit 1 }' "$work/transforms/nodes.txt")
+	shift_paragraph=$(awk '$1 == "E" && $6 == 14 { print $2; n++ } END { if (n != 1) exit 1 }' "$work/transforms/nodes.txt")
+	shift_text=$(awk -v parent="$shift_paragraph" '$1 == "T" && $3 == parent { print $2; n++ } END { if (n != 1) exit 1 }' "$work/transforms/nodes.txt")
+	text=$(awk -v parent="$paragraph" '$1 == "T" && $3 == parent { print $2; n++ } END { if (n != 1) exit 1 }' "$work/transforms/nodes.txt")
+	cat >"$work/transforms/case.edits" <<EOF
+C $outer size
+K $outer size
+C $outer changed
+C $child colour
+T $text 0 Inserted
+D $text 0 8
+C $outer mixed
+K $outer mixed
+C $outer individual
+K $outer individual
+K $outer changed
+C $float changed
+K $float changed
+C $child changed
+K $child changed
+T $shift_text 0 Added words that wrap more lines
+D $shift_text 0 32
+EOF
+	"$transform_driver" edit "$work/transforms/case.edits" "$fixture" "$ua" >"$work/transforms/case.raw"
+	python3 "$here/scripts/inctime.py" --check "$work/transforms/case.edits" "$work/transforms/case.raw"
+	grep '^edit [0-9]* hash ' "$work/transforms/case.raw"
+}
+
 cmd=$1
 shift
 case $cmd in
@@ -263,9 +310,10 @@ same) same "$@" ;;
 reparse) reparse "$@" ;;
 dumps) dumps "$@" ;;
 inc) inc "$@" ;;
+transforms) transforms "$@" ;;
 time) time_edits "$@" ;;
 *)
-	echo "usage: run.sh prepare|edit|roundtrip|same|reparse|dumps|inc|time ..." >&2
+	echo "usage: run.sh prepare|edit|roundtrip|same|reparse|dumps|inc|transforms|time ..." >&2
 	exit 2
 	;;
 esac

@@ -1,5 +1,301 @@
 alias ComponentList = pkg::css::syntax::ComponentList;
 
+const translation_function_words: Array<u8, 43> = "translate translatex translatey translate3d";
+
+const unsupported_transform_words: Array<u8, 130> = "rotate rotatex rotatey rotatez rotate3d scale scalex scaley scalez scale3d skew skewx skewy matrix matrix3d perspective translatez";
+
+fn translation_lengths(values: &ComponentList, start: u64, end: u64, percent: Bool) -> found: Option<Lengths> reads(values) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "One translation argument: a signed length, with a percentage when allowed, including the existing calc grammar.";
+  let at = match single_at(values: values, start: start, end: end) {
+    Some(value: k) => {
+      give k;
+    }
+    None() => {
+      return None<Lengths>();
+    }
+  }
+  if at >= end {
+    return None<Lengths>();
+  }
+  let next = sibling_after(values: values, at: at, limit: end);
+  let yes = True();
+  match length_at(values: values, at: at, limit: next, allow_percent: percent, allow_negative: yes) {
+    Some(value: parsed) => {
+      if parsed.next != next {
+        return None<Lengths>();
+      }
+      return Some<Lengths>(value: parsed.value.lengths);
+    }
+    None() => {
+      return None<Lengths>();
+    }
+  }
+}
+
+fn translation_declared(kind: u8, x: Lengths, y: Lengths) -> made: Declared pure {
+  doc "The declared translation state; unsupported and none carry zero lengths.";
+  return Declared::Translation(kind: kind, x: x, y: y);
+}
+
+fn translation_function(values: &ComponentList, start: u64, end: u64, which: u64) -> found: Option<Declared> reads(values) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "translate(), translateX(), translateY() or translate3d(), with commas between arguments; the third length is checked and ignored.";
+  let pieces = split_pieces(values: values, start: start, end: end);
+  let zero = lengths_zero();
+  let yes = True();
+  let no = False();
+  let axis = which == 1_u64;
+  let vertical = which == 2_u64;
+  let single = bor(axis, vertical);
+  if single {
+    if pieces.count != 1_u64 {
+      return None<Declared>();
+    }
+  } else if which == 3_u64 {
+    if pieces.count != 3_u64 {
+      return None<Declared>();
+    }
+  } else if pieces.count > 2_u64 {
+    return None<Declared>();
+  }
+  let first_end = bound(values: values, at: pieces.first_end);
+  let first = match translation_lengths(values: values, start: pieces.first_start, end: first_end, percent: yes) {
+    Some(value: v) => {
+      give v;
+    }
+    None() => {
+      return None<Declared>();
+    }
+  }
+  if single {
+    let x = if vertical {
+      give zero;
+    } else {
+      give first;
+    }
+    let y = if vertical {
+      give first;
+    } else {
+      give zero;
+    }
+    let made = translation_declared(kind: translation_value, x: x, y: y);
+    return Some<Declared>(value: made);
+  }
+  let y = zero;
+  if pieces.count >= 2_u64 {
+    let second_end = bound(values: values, at: pieces.second_end);
+    match translation_lengths(values: values, start: pieces.second_start, end: second_end, percent: yes) {
+      Some(value: v) => {
+        set y = v;
+      }
+      None() => {
+        return None<Declared>();
+      }
+    }
+  }
+  if which == 3_u64 {
+    let third_end = bound(values: values, at: pieces.third_end);
+    match translation_lengths(values: values, start: pieces.third_start, end: third_end, percent: no) {
+      Some(..) => {
+      }
+      None() => {
+        return None<Declared>();
+      }
+    }
+  }
+  let made = translation_declared(kind: translation_value, x: first, y: y);
+  return Some<Declared>(value: made);
+}
+
+fn transform_value(values: &ComponentList, start: u64, end: u64) -> found: Option<Declared> reads(values) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "none, a translation-only function list added unit by unit, or Unsupported for a list with another known CSS transform function. Unsupported functions' arguments are opaque; their validity is outside this translation grammar. Unknown function names and invalid translation arguments reject the declaration.";
+  let zero = lengths_zero();
+  let none_n = none_flex_word.len;
+  match single_at(values: values, start: start, end: end) {
+    Some(value: at) => {
+      if at < end {
+        let none = ident_is(values: values, at: at, word: &none_flex_word[0_u64..none_n]);
+        if none {
+          let made = translation_declared(kind: translation_none, x: zero, y: zero);
+          return Some<Declared>(value: made);
+        }
+      }
+    }
+    None() => {
+    }
+  }
+  let x = zero;
+  let y = zero;
+  let unsupported = False();
+  let count = 0_u64;
+  let cursor = start;
+  let span = end -sat start;
+  let function_n = translation_function_words.len;
+  let unsupported_n = unsupported_transform_words.len;
+  for (step in 0_u64..span) {
+    let at = skip_space(values: values, at: cursor, limit: end);
+    if at >= end {
+      break;
+    }
+    let shape = shape_of(values: values, at: at);
+    if shape.kind != s_function {
+      return None<Declared>();
+    }
+    let contents = at +sat 1_u64;
+    let start_at = bound(values: values, at: contents);
+    let close_wide = cvt::<u32, u64>(shape.end);
+    let close = bound(values: values, at: close_wide);
+    let inside = close <= end;
+    let ordered = start_at <= close;
+    let closed = band(inside, ordered);
+    if closed {
+    } else {
+      return None<Declared>();
+    }
+    match span_word(values: values, span: shape.name, list: &translation_function_words[0_u64..function_n]) {
+      Some(value: which) => {
+        match translation_function(values: values, start: start_at, end: close, which: which) {
+          Some(value: parsed) => {
+            match parsed {
+              Translation(x: dx, y: dy, ..) => {
+                set x = lengths_add(first: x, second: dx, sign: 1.0_f32);
+                set y = lengths_add(first: y, second: dy, sign: 1.0_f32);
+              }
+              Keyword(..) => {
+                return None<Declared>();
+              }
+              Length(..) => {
+                return None<Declared>();
+              }
+              Number(..) => {
+                return None<Declared>();
+              }
+              Integer(..) => {
+                return None<Declared>();
+              }
+              ColorValue(..) => {
+                return None<Declared>();
+              }
+              CurrentColor() => {
+                return None<Declared>();
+              }
+              Families(..) => {
+                return None<Declared>();
+              }
+              ListStyle(..) => {
+                return None<Declared>();
+              }
+              Wide(..) => {
+                return None<Declared>();
+              }
+              Pending(..) => {
+                return None<Declared>();
+              }
+              Ratio(..) => {
+                return None<Declared>();
+              }
+              Stored(..) => {
+                return None<Declared>();
+              }
+            }
+          }
+          None() => {
+            return None<Declared>();
+          }
+        }
+      }
+      None() => {
+        match span_word(values: values, span: shape.name, list: &unsupported_transform_words[0_u64..unsupported_n]) {
+          Some(..) => {
+            set unsupported = True();
+          }
+          None() => {
+            return None<Declared>();
+          }
+        }
+      }
+    }
+    set count = count +sat 1_u64;
+    set cursor = sibling_after(values: values, at: at, limit: end);
+  }
+  if count == 0_u64 {
+    return None<Declared>();
+  }
+  if unsupported {
+    let made = translation_declared(kind: translation_unsupported, x: zero, y: zero);
+    return Some<Declared>(value: made);
+  }
+  let made = translation_declared(kind: translation_value, x: x, y: y);
+  return Some<Declared>(value: made);
+}
+
+fn translate_property_value(values: &ComponentList, start: u64, end: u64) -> found: Option<Declared> reads(values) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "The translate property: none or one to three whitespace-separated arguments; x and y are length-percentages, z a length checked then ignored.";
+  let zero = lengths_zero();
+  let x = zero;
+  let y = zero;
+  let count = 0_u64;
+  let cursor = start;
+  let span = end -sat start;
+  let none_n = none_flex_word.len;
+  for (step in 0_u64..span) {
+    let at = skip_space(values: values, at: cursor, limit: end);
+    if at >= end {
+      break;
+    }
+    let next = sibling_after(values: values, at: at, limit: end);
+    let rest = skip_space(values: values, at: next, limit: end);
+    let none = ident_is(values: values, at: at, word: &none_flex_word[0_u64..none_n]);
+    if none {
+      let first = count == 0_u64;
+      let last = rest == end;
+      let alone = band(first, last);
+      if alone {
+        let made = translation_declared(kind: translation_none, x: zero, y: zero);
+        return Some<Declared>(value: made);
+      }
+      return None<Declared>();
+    }
+    if count >= 3_u64 {
+      return None<Declared>();
+    }
+    let percent = count < 2_u64;
+    match translation_lengths(values: values, start: at, end: next, percent: percent) {
+      Some(value: v) => {
+        if count == 0_u64 {
+          set x = v;
+        }
+        if count == 1_u64 {
+          set y = v;
+        }
+      }
+      None() => {
+        return None<Declared>();
+      }
+    }
+    let more = rest < end;
+    let adjacent = rest == next;
+    let joined = band(more, adjacent);
+    if joined {
+      return None<Declared>();
+    }
+    set count = count +sat 1_u64;
+    set cursor = next;
+  }
+  if count == 0_u64 {
+    return None<Declared>();
+  }
+  let made = translation_declared(kind: translation_value, x: x, y: y);
+  return Some<Declared>(value: made);
+}
+
 const align_prefix_words: Array<u8, 22> = "first last safe unsafe";
 
 const none_flex_word: Array<u8, 4> = "none";
