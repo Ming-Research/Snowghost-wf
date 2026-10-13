@@ -147,7 +147,7 @@ a character no face of the list maps falls back to the installed faces in a
 fixed order. This was to revise the style stage's provisional `ex` and
 `ch` rule (`design/pipeline/style.md`) to the metrics of the installed font
 each element uses; the stage did not do it, and the style stage still takes
-them from the generic families' faces (`docs/todo.md`). Web fonts stay out
+them from the generic families' faces (now items on the status board). Web fonts stay out
 of scope, so the rule stays provisional on them.
 
 **Replaced elements.** `img`, `video`, `svg` and `canvas` sized by CSS, by
@@ -461,7 +461,7 @@ bold and italic) match. What the reference does, as measured:
   break of `overflow-wrap` is never before a space, and `word-break:
   break-word` is `normal` with `overflow-wrap: anywhere`.
 
-Each mismatch class, with its cause (`docs/todo.md` holds the changes):
+Each mismatch class, with its cause (the status board holds the changes):
 
 - **Emoji presentation** (html5's U+231B, and the 6 synthetic emoji cases):
   Chromium draws an Emoji_Presentation character with Noto Color Emoji
@@ -493,7 +493,7 @@ on this host (`run.sh check`, `runs/check.txt`; Chromium's dumps from
 Criterion 1 holds on all three pages. The case pages, which hold probes of
 the rules below and of known gaps, give flex 259/259, grid 286/286, table
 694/718, flow 219/234 and columns 93/99 block-level boxes. What remains,
-by class and cause (each deferred in `docs/todo.md`):
+by class and cause (each deferred as an item on the status board):
 
 - **ecma262, 70 block-level boxes, 10 inline boxes and 22 text
   nodes:** line wraps that differ by less than 0.2 px of available width,
@@ -513,8 +513,14 @@ by class and cause (each deferred in `docs/todo.md`):
   language names; twelve `abbr` links in `font-variant: small-caps`,
   which the style stage does not compute; and about twenty links whose
   text Chromium kerns with the punctuation after them, which the stage
-  does on a probe of the same markup but not on the page, cause not yet
-  found.
+  does on a probe of the same markup but not on the page. The page's
+  sheet gives every link `word-wrap: break-word`
+  (`.mw-parser-output a`), and text preparation joined two runs for
+  shaping only when their wrapping, white-space and font-family
+  declaration were also alike, where Blink's ShapeText compares only the
+  font, letter-spacing and word-spacing; Blink synthesizes small capitals
+  for a face without `smcp` by uppercasing the letters that change and
+  drawing them at the size times 0.7, rounded (`flow-cases` probes both).
 
 The rules that brought the pages there, each from a probe of Chromium,
 are in `runs/` with their cases in `tests/layout/*-cases.html`: the

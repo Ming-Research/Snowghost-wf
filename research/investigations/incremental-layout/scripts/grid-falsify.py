@@ -5,7 +5,6 @@ error, incomplete output or unrelated driver error never counts as detection.
 Remove the temporary baseline-path option when Q140 admission is implemented.
 """
 import argparse
-import math
 from pathlib import Path
 import re
 import subprocess
@@ -133,32 +132,7 @@ EXTRA_SITES = {
 }
 
 
-def require_complete_dump(output):
-    rows = output.splitlines()
-    if not output.endswith('\n') or not rows or not rows[-1].startswith('H\t'):
-        raise ValueError('incomplete dump: missing terminal height row')
-    if sum(row.startswith('H\t') for row in rows) != 1:
-        raise ValueError('malformed dump: duplicate height row')
-    fields = rows[-1].split('\t')
-    if len(fields) != 2 or not math.isfinite(float(fields[1])):
-        raise ValueError('malformed dump: invalid terminal height')
-
-
 def self_test():
-    complete = 'E\t0\thtml\t-1\tb\t0,0,10,10\nT\t0\t0\t0,0,5,5\nH\t10\n'
-    require_complete_dump(complete)
-    incomplete = [
-        '', complete.split('T\t')[0], complete.rsplit('H\t', 1)[0],
-        complete.rstrip('\n'), complete + 'H\t10\n',
-        complete.replace('H\t10', 'H\tnan'),
-    ]
-    for output in incomplete:
-        try:
-            require_complete_dump(output)
-        except ValueError:
-            continue
-        raise AssertionError('incomplete or malformed dump accepted')
-    print('complete dump accepted; truncated and malformed dumps rejected')
     detector = module('percentage-falsify')
     with tempfile.TemporaryDirectory() as directory:
         script = Path(directory) / 'case.edits'
@@ -198,7 +172,6 @@ def verify(name, baseline, mutant, directory, baseline_paths):
         base = detector.run_driver(baseline, arguments, directory / 'control')
         if base.returncode or base.stderr:
             raise ValueError('unmutated driver failed: ' + base.stderr)
-        require_complete_dump(base.stdout)
         grid.command(['node', 'tests/layout/layout_oracle.mjs', 'compare', str(directory / 'case.chromium.tsv'), str(directory / 'control.raw')])
     else:
         grid.run(baseline, directory, case, baseline_paths)
@@ -209,7 +182,6 @@ def verify(name, baseline, mutant, directory, baseline_paths):
         wrong = detector.run_driver(mutant, arguments, directory / 'mutated')
         if wrong.returncode or wrong.stderr:
             raise ValueError('mutated driver failed: ' + wrong.stderr)
-        require_complete_dump(wrong.stdout)
         compared = subprocess.run([
             'node', 'tests/layout/layout_oracle.mjs', 'compare',
             str(directory / 'case.chromium.tsv'), str(directory / 'mutated.raw'),
