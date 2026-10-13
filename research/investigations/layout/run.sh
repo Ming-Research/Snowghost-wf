@@ -124,7 +124,7 @@ case_floors() {
 	percentage-height-cases) echo "14 0 0" ;;
 	grid-cases) echo "286 2 198" ;;
 	grid-final-space-cases) echo "26 0 8" ;;
-	inline-items-cases) echo "45 20 60" ;;
+	inline-items-cases) echo "50 23 66" ;;
 	line-fill-cases) echo "40 10 48" ;;
 	table-cases) echo "694 29 306" ;;
 	*) echo "" ;;
