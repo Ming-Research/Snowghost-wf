@@ -4,6 +4,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `Nodes:` naming every node changed, `Owner-approved:` and `Summary:`;
 the design-tree part of the owner-wide agent instructions owns the form.
 
+## 2026-10-13 Report translation-only transforms in layout's output rectangles
+
+Nodes: pipeline/layout
+
+Owner-approved: On the status board on 2026-10-12 the owner chose A on the card asking whether layout's scope adds the translation of `transform` (translation only, not rotation or scaling); and on 2026-10-13 chose A on the card approving the five new decisions of Snowghost-wf#82 at head e4f5c4f: translation-only transforms and the `translate` property enter the output rectangles, percentages resolve against the element's untransformed border box with the combined offset rounded once, an element whose transform list holds any other function is not translated itself, scrollable overflow counts only the translated position with scroll containers trapping their contents, and translation is applied only when geometry is published.
+
+Summary: Output rectangles include translation-only transforms and the `translate` property, as Chromium's reported rectangles do, while flow sizes, sibling placement and float exclusions stay untransformed. Percentages resolve against the element's own untransformed border box and the element's combined offset is rounded once to the nearest LayoutUnit; a transform list with any non-translation function leaves that element's own translation unapplied rather than placing it where no browser would, while ancestors' translations still apply. Scrollable overflow counts a translated descendant only at its translated position, because Chromium 141 reports 3300 for the case page where the union of original and translated extents gives 7780. Offsets are added only when geometry is published, so each element reads only its own style and border box, only ancestry orders the accumulation, and a transform-only restyle republishes without relayout. The translation cases match Chromium on all 55 block boxes, all 56 absolute positions and the scroll height ([translation output](../research/investigations/layout/DESIGN.md#translation-output)).
+
 ## 2026-10-13 Map flow-relative margin, padding, inset and border properties to physical sides at parse time
 
 Nodes: pipeline/style

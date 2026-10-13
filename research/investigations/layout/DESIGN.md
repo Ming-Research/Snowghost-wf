@@ -207,7 +207,7 @@ container queries; `zoom`; quirks mode.
 
 The question is where to apply translation without adding dependencies to
 flow layout or stale state to incremental layout. The owner selected the
-translation-only scope; this implementation's output placement is proposed.
+translation-only scope and approved this output placement.
 
 | Candidate | Inputs and true dependencies | Additional work or state |
 | --- | --- | --- |
