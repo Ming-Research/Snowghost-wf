@@ -22,12 +22,15 @@
 #   run.sh reach PAGE KIND...      checks B/X restyle completeness (structural_restyle);
 #                                   also accepts PAGE structure, KIND case or full, and
 #                                   PAGE sides or ofclause, KIND case, for fixtures
+#                                   PAGE layers, KIND structure, uses layered flex/grid
 #   run.sh incremental PAGE KIND... runs the style oracle's incremental check
 #                                   (restyle on a kept state against a full
 #                                   style run after every C and K edit) and
 #                                   prints the edits, those whose styles
 #                                   differ, those rebuilt and the elements
 #                                   visited; fails when any differ
+#                                   PAGE layers, KIND classes, changes layered
+#                                   flex/grid values and inherited custom properties
 #
 # PAGE is ecma262, html5 or apollo11, with the inputs of X5's run.sh;
 # apollo11 is the supplementary capture in build/x5/apollo-supplement. The
@@ -54,6 +57,7 @@ page_args() {
 	structure) echo "$cases/structure-case.html $ua" ;;
 	sides) echo "$cases/sides-case.html $ua" ;;
 	ofclause) echo "$cases/ofclause-case.html $ua" ;;
+	layers) echo "$cases/layers-case.html $ua" ;;
 	apollo11) echo "$apollo/apollo11.html $ua wikibase.client.init&only=styles&skin=vector-2022=$apollo/apollo11-modules.css modules=site.styles&only=styles&skin=vector-2022=$apollo/apollo11-site.css" ;;
 	*)
 		echo "run.sh: unknown page $1" >&2
@@ -159,6 +163,7 @@ incremental() {
 	for kind in "$@"; do
 		script=build/x5/scripts/$page-$kind.edits
 		[ -f "$script" ] || script=$work/scripts/$page-$kind.edits
+		[ -f "$script" ] || script=$cases/$page-$kind.edits
 		out=$work/incremental/$page-$kind.txt
 		# shellcheck disable=SC2046
 		"${STYLE:-$work/style_seq}" incremental "$script" $(page_args "$page") >"$out"

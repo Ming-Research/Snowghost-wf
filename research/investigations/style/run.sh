@@ -13,7 +13,8 @@
 #                               parts on every page, or on PAGE (criterion 2)
 #
 # PAGE is one of ecma262, html5 and apollo11, the real pages of the
-# concurrency investigation, or cases, tests/css/style-cases.html (checked,
+# concurrency investigation, or cases, tests/css/style-cases.html, and
+# layers, tests/css/layer-cases.html (checked,
 # not timed); `research/investigations/concurrency/run.sh
 # fetch` downloads them and their sheets to build/research/concurrency/, and
 # `make oracle-style-dump` writes Chromium's dumps to build/oracle/style/.
@@ -56,7 +57,7 @@ compiler=${WHITEFOOTC:-$root/build/whitefoot/$(sed -n "s/^release = //p" "$root/
 lock=${RUN_CHECK:-}
 runs=${RUNS:-5}
 workers=${WORKERS:-1 2 4}
-pages='ecma262 html5 apollo11 cases'
+pages='ecma262 html5 apollo11 cases layers'
 modes=${MODES:-match inherited reset all}
 
 # The sheet mappings of each page's stylesheet links, SUFFIX=SHEET as the
@@ -64,7 +65,7 @@ modes=${MODES:-match inherited reset all}
 sheets_of() {
 	case $1 in
 	ecma262) echo "assets/css/ecmarkup.css=$data/ecma262-ecmarkup.css assets/css/print.css=$data/ecma262-print.css" ;;
-	html5 | cases) echo "" ;;
+	html5 | cases | layers) echo "" ;;
 	apollo11) echo "wikibase.client.init&only=styles&skin=vector-2022=$data/apollo11-modules.css modules=site.styles&only=styles&skin=vector-2022=$data/apollo11-site.css" ;;
 	*)
 		echo "run.sh: unknown page $1" >&2
@@ -78,6 +79,7 @@ sheets_of() {
 page_file() {
 	case $1 in
 	cases) echo tests/css/style-cases.html ;;
+	layers) echo tests/css/layer-cases.html ;;
 	*) echo "$data/$1.html" ;;
 	esac
 }

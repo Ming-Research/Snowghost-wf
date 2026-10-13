@@ -1,0 +1,414 @@
+alias ComponentList = pkg::css::syntax::ComponentList;
+alias Span = pkg::css::syntax::Span;
+
+const layer_reserved_words: Array<u8, 41> = "initial inherit unset revert revert-layer";
+
+struct LayerPart {
+  name: Span;
+  position: u32;
+  continuation: Bool;
+}
+
+fn layer_origin(origin: u8) -> group: u8 pure contract {
+  ensures group <= 1_u8;
+} {
+  doc "Shares the cascade's two origin groups: zero is user agent and every other origin value is author.";
+  if origin == 0_u8 {
+    return 0_u8;
+  }
+  return 1_u8;
+}
+
+fn collect_layer(store: &RuleStore, values: &ComponentList, start: u64, end: u64, sheet: u32, origin: u8, parent: u32, block_form: Bool) -> result: Result<Option<u32>, StyleError> reads(values), writes(store) contract {
+  requires start <= end;
+  requires end <= values^.components.inner.len;
+} {
+  doc "Validates the entire layer prelude before recording any occurrence, so an invalid later name establishes no prefix. Names are decoded, case-sensitive spans; anonymous blocks use their source address. The existing structural walk appends occurrences but never consults earlier identities or ranks.";
+  let at = skip_space(values: values, at: start, limit: end);
+  if at >= end {
+    if block_form {
+      let empty = Span(start: 0_u32, end: 0_u32);
+      let position = narrow_index(value: start);
+      let anonymous = True();
+      let occurrence = propagate append_layer(store: store, parent: parent, sheet: sheet, position: position, name: empty, origin: origin, anonymous: anonymous);
+      let found = Some<u32>(value: occurrence);
+      return Ok<Option<u32>, StyleError>(value: found);
+    }
+    let none = None<u32>();
+    return Ok<Option<u32>, StyleError>(value: none);
+  }
+  let parts = box_slots_new::<LayerPart>(capacity: 0_u64);
+  let continuation = False();
+  loop @names {
+    if at >= end {
+      let none = None<u32>();
+      return Ok<Option<u32>, StyleError>(value: none);
+    }
+    let kind = component_kind(values: values, at: at);
+    if kind != c_ident {
+      let none = None<u32>();
+      return Ok<Option<u32>, StyleError>(value: none);
+    }
+    let reserved_length = layer_reserved_words.len;
+    let reserved = name_word(values: values, at: at, list: &layer_reserved_words[0_u64..reserved_length]);
+    match reserved {
+      Some(..) => {
+        let none = None<u32>();
+        return Ok<Option<u32>, StyleError>(value: none);
+      }
+      None() => {
+      }
+    }
+    let name = match name_at(values: values, at: at) {
+      Some(value: span) => {
+        give span;
+      }
+      None() => {
+        let none = None<u32>();
+        return Ok<Option<u32>, StyleError>(value: none);
+      }
+    }
+    let position = narrow_index(value: at);
+    let part = LayerPart(name: name, position: position, continuation: continuation);
+    let placed = propagate push::<LayerPart>(cell: &parts, value: part, ceiling: rule_ceiling);
+    let after = at + 1_u64;
+    set at = skip_space(values: values, at: after, limit: end);
+    if at >= end {
+      break @names;
+    }
+    let separator_code = delim_at(values: values, at: at);
+    let dot = separator_code == 46_u32;
+    if dot {
+      if at != after {
+        let none = None<u32>();
+        return Ok<Option<u32>, StyleError>(value: none);
+      }
+      set continuation = True();
+    } else {
+      let separator = component_kind(values: values, at: at);
+      let comma = separator == c_comma;
+      let statement = bnot(block_form);
+      let allowed = band(comma, statement);
+      if allowed {
+        set continuation = False();
+      } else {
+        let none = None<u32>();
+        return Ok<Option<u32>, StyleError>(value: none);
+      }
+    }
+    let after_separator = at + 1_u64;
+    if continuation {
+      set at = after_separator;
+    } else {
+      set at = skip_space(values: values, at: after_separator, limit: end);
+    }
+  }
+  let current = parent;
+  let count = parts.inner.len;
+  for (p in 0_u64..count) {
+    let part = parts.inner[p];
+    if part.continuation {
+    } else {
+      set current = parent;
+    }
+    let anonymous = False();
+    let appended = propagate append_layer(store: store, parent: current, sheet: sheet, position: part.position, name: part.name, origin: origin, anonymous: anonymous);
+    set current = appended;
+  }
+  let found = Some<u32>(value: current);
+  return Ok<Option<u32>, StyleError>(value: found);
+}
+
+fn append_layer(store: &RuleStore, parent: u32, sheet: u32, position: u32, name: Span, origin: u8, anonymous: Bool) -> result: Result<u32, StyleError> writes(store) {
+  doc "Appends a path occurrence whose parent path is already known from syntax. Its storage slot is only a reference; lexical sheet and component positions decide precedence.";
+  let depth = 1_u32;
+  let p = cvt::<u32, u64>(parent);
+  let size = store^.layers.inner.len;
+  if p < size {
+    let enclosing_depth = store^.layers.inner[p].depth;
+    if enclosing_depth >= 4194304_u32 {
+      return too_large::<u32>();
+    }
+    set depth = enclosing_depth + 1_u32;
+  }
+  let index = narrow_index(value: size);
+  let group = layer_origin(origin: origin);
+  let event = LayerEvent(parent: parent, depth: depth, sheet: sheet, position: position, name: name, origin: group, anonymous: anonymous);
+  let placed = propagate push::<LayerEvent>(cell: &store^.layers, value: event, ceiling: rule_ceiling);
+  return Ok<u32, StyleError>(value: index);
+}
+
+fn layer_address_before(first: LayerEvent, second: LayerEvent) -> before: Bool pure {
+  doc "Lexical source order independent of the occurrence's storage slot or later reduction completion.";
+  if first.sheet != second.sheet {
+    return first.sheet < second.sheet;
+  }
+  return first.position < second.position;
+}
+
+fn layer_component_equal(store: &RuleStore, first: LayerEvent, second: LayerEvent) -> same: Bool reads(store) {
+  doc "Compares a named component byte for byte after CSS escape decoding, or anonymous components by their lexical address.";
+  if first.anonymous {
+    if second.anonymous {
+      let same_sheet = first.sheet == second.sheet;
+      let same_position = first.position == second.position;
+      return band(same_sheet, same_position);
+    }
+    return False();
+  }
+  if second.anonymous {
+    return False();
+  }
+  let a = cvt::<u32, u64>(first.sheet);
+  let b = cvt::<u32, u64>(second.sheet);
+  let sheets = store^.sheets.inner.len;
+  if a >= sheets {
+    return False();
+  }
+  if b >= sheets {
+    return False();
+  }
+  let (af, ae) = text_bounds(values: &store^.sheets.inner[a].values, span: first.name);
+  let (bf, be) = text_bounds(values: &store^.sheets.inner[b].values, span: second.name);
+  let an = ae - af;
+  let bn = be - bf;
+  if an != bn {
+    return False();
+  }
+  for (k in 0_u64..an) {
+    let ai = af + k;
+    let bi = bf + k;
+    if store^.sheets.inner[a].values.text.inner[ai] != store^.sheets.inner[b].values.text.inner[bi] {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn layer_identity_equal(store: &RuleStore, first: u64, second: u64) -> same: Bool reads(store) contract {
+  requires first < store^.layers.inner.len;
+  requires second < store^.layers.inner.len;
+} {
+  doc "Compares complete symbolic paths without a registry. The ancestor chain is the path's true dependency; separate identity comparisons share only immutable inputs.";
+  let left = store^.layers.inner[first];
+  let right = store^.layers.inner[second];
+  if left.origin != right.origin {
+    return False();
+  }
+  if left.depth != right.depth {
+    return False();
+  }
+  let a = first;
+  let b = second;
+  let depth = cvt::<u32, u64>(left.depth);
+  let size = store^.layers.inner.len;
+  for (step in 0_u64..depth) {
+    if a >= size {
+      return False();
+    }
+    if b >= size {
+      return False();
+    }
+    let ea = store^.layers.inner[a];
+    let eb = store^.layers.inner[b];
+    let equal = layer_component_equal(store: store, first: ea, second: eb);
+    if equal {
+    } else {
+      return False();
+    }
+    set a = cvt::<u32, u64>(ea.parent);
+    set b = cvt::<u32, u64>(eb.parent);
+  }
+  return True();
+}
+
+fn earliest_layer(store: &RuleStore, target: u64, start: u64, end: u64) -> first: u32 reads(store) contract {
+  requires target < store^.layers.inner.len;
+  requires start <= end;
+  requires end <= store^.layers.inner.len;
+} {
+  doc "Independent balanced minimum reduction for one symbolic identity. Leaves compare identities; internal nodes compare lexical source addresses, never allocation order.";
+  let width = end - start;
+  if width == 0_u64 {
+    return no_slot;
+  }
+  if width == 1_u64 {
+    let same = layer_identity_equal(store: store, first: target, second: start);
+    if same {
+      return narrow_index(value: start);
+    }
+    return no_slot;
+  }
+  let half = width / 2_u64;
+  let middle = start + half;
+  let left = earliest_layer(store: store, target: target, start: start, end: middle);
+  let right = earliest_layer(store: store, target: target, start: middle, end: end);
+  let a = cvt::<u32, u64>(left);
+  let b = cvt::<u32, u64>(right);
+  let count = store^.layers.inner.len;
+  if a >= count {
+    return right;
+  }
+  if b >= count {
+    return left;
+  }
+  let before = layer_address_before(first: store^.layers.inner[a], second: store^.layers.inner[b]);
+  if before {
+    return left;
+  }
+  return right;
+}
+
+fn canonical_parent(store: &RuleStore, first: &[u32], at: u64) -> parent: u64 reads(store), reads(first) contract {
+  requires at < store^.layers.inner.len;
+} {
+  doc "The canonical parent of an occurrence, or no_slot for the root.";
+  let p = cvt::<u32, u64>(store^.layers.inner[at].parent);
+  if p < first^.len {
+    return cvt::<u32, u64>(first^[p]);
+  }
+  return 4294967295_u64;
+}
+
+fn layer_precedes(store: &RuleStore, first: &[u32], left: u64, right: u64) -> before: Bool reads(store), reads(first) contract {
+  requires left < store^.layers.inner.len;
+  requires right < store^.layers.inner.len;
+} {
+  doc "A descendant precedes its ancestor's direct declarations. Otherwise the first divergent sibling's canonical source address decides, keeping each subtree together.";
+  let a = left;
+  let b = right;
+  let count = store^.layers.inner.len;
+  loop @parents {
+    if a >= count {
+      return False();
+    }
+    if b >= count {
+      return False();
+    }
+    if a == b {
+      let left_depth = store^.layers.inner[left].depth;
+      let right_depth = store^.layers.inner[right].depth;
+      return left_depth > right_depth;
+    }
+    let ea = store^.layers.inner[a];
+    let eb = store^.layers.inner[b];
+    if ea.depth > eb.depth {
+      set a = canonical_parent(store: store, first: first, at: a);
+    } else if eb.depth > ea.depth {
+      set b = canonical_parent(store: store, first: first, at: b);
+    } else {
+      let pa = canonical_parent(store: store, first: first, at: a);
+      let pb = canonical_parent(store: store, first: first, at: b);
+      if pa == pb {
+        return layer_address_before(first: ea, second: eb);
+      }
+      set a = pa;
+      set b = pb;
+    }
+  }
+}
+
+fn count_layer_predecessors(store: &RuleStore, first: &[u32], candidates: &[u32], target: u64, origin: u8) -> (rank: u64, count: u64) reads(store), reads(first), reads(candidates) contract {
+  ensures rank <= count;
+  ensures count <= candidates^.len;
+} {
+  doc "Independent balanced count reduction over distinct canonical layers of one origin. An out-of-range target is the unlayered root, after every explicit layer.";
+  let width = candidates^.len;
+  if width == 0_u64 {
+    return 0_u64, 0_u64;
+  }
+  if width == 1_u64 {
+    let candidate = cvt::<u32, u64>(candidates^[0_u64]);
+    let size = store^.layers.inner.len;
+    if candidate >= size {
+      return 0_u64, 0_u64;
+    }
+    if store^.layers.inner[candidate].origin != origin {
+      return 0_u64, 0_u64;
+    }
+    if target >= size {
+      return 1_u64, 1_u64;
+    }
+    let before = layer_precedes(store: store, first: first, left: candidate, right: target);
+    if before {
+      return 1_u64, 1_u64;
+    }
+    return 0_u64, 1_u64;
+  }
+  let half = width / 2_u64;
+  let (left_rank, left_count) = count_layer_predecessors(store: store, first: first, candidates: &candidates^[0_u64..half], target: target, origin: origin);
+  let (right_rank, right_count) = count_layer_predecessors(store: store, first: first, candidates: &candidates^[half..width], target: target, origin: origin);
+  let rank = left_rank + right_rank;
+  let count = left_count + right_count;
+  return rank, count;
+}
+
+fn unlayered_order(store: &RuleStore, origin: u8) -> order: LayerOrder reads(store.layer_counts) {
+  doc "The implicit root follows every explicit layer of its origin for normal declarations and precedes every one for important declarations.";
+  let group = layer_origin(origin: origin);
+  let at = cvt::<u8, u64>(group);
+  let size = store^.layer_counts.inner.len;
+  let count = 0_u32;
+  if at < size {
+    set count = store^.layer_counts.inner[at];
+  }
+  return LayerOrder(normal_rank: count, important_rank: 0_u32);
+}
+
+fn order_layers(store: &RuleStore) -> result: Result<unit, StyleError> writes(store) {
+  doc "Publishes an immutable rank snapshot after sheet collection. Every first occurrence, rank and origin count has an independent balanced reduction; the final rule loop writes only its own metadata. Matching begins only after publication. A changed sheet or condition requires rebuilding retained style state, whose API requires an unchanged store.";
+  let count = store^.layers.inner.len;
+  if count > 4294967295_u64 {
+    return too_large::<unit>();
+  }
+  let first = box_array_filled::<u32>(count: count, value: no_slot);
+  for (i in 0_u64..count) {
+    set first.inner[i] = earliest_layer(store: store, target: i, start: 0_u64, end: count);
+  }
+  let candidates = box_array_filled::<u32>(count: count, value: no_slot);
+  for (i in 0_u64..count) {
+    let identity = cvt::<u32, u64>(first.inner[i]);
+    if identity == i {
+      set candidates.inner[i] = first.inner[i];
+    }
+  }
+  let empty = LayerOrder(normal_rank: 0_u32, important_rank: 0_u32);
+  let ranks = box_array_filled::<LayerOrder>(count: count, value: empty);
+  for (i in 0_u64..count) {
+    let origin = store^.layers.inner[i].origin;
+    let target = cvt::<u32, u64>(first.inner[i]);
+    if target == i {
+      let (rank, total) = count_layer_predecessors(store: store, first: &first.inner[0_u64..count], candidates: &candidates.inner[0_u64..count], target: target, origin: origin);
+      let reversed = total - rank;
+      let normal = cvt::<u64, u32>(rank);
+      let important = cvt::<u64, u32>(reversed);
+      set ranks.inner[i] = LayerOrder(normal_rank: normal, important_rank: important);
+    }
+  }
+  let counts = box_array_filled::<u32>(count: 2_u64, value: 0_u32);
+  for (i in 0_u64..2_u64) {
+    let origin = cvt::<u64, u8>(i);
+    let (rank, total) = count_layer_predecessors(store: store, first: &first.inner[0_u64..count], candidates: &candidates.inner[0_u64..count], target: count, origin: origin);
+    set counts.inner[i] = cvt::<u64, u32>(total);
+  }
+  let rules = store^.rules.inner.len;
+  for (i in 0_u64..rules) {
+    let layer = cvt::<u32, u64>(store^.rules.inner[i].layer);
+    let origin = layer_origin(origin: store^.rules.inner[i].origin);
+    let origin_index = cvt::<u8, u64>(origin);
+    let total = counts.inner[origin_index];
+    let target = if layer < count {
+      give cvt::<u32, u64>(first.inner[layer]);
+    } else {
+      give count;
+    }
+    let order = if target < count {
+      give ranks.inner[target];
+    } else {
+      give LayerOrder(normal_rank: total, important_rank: 0_u32);
+    }
+    set store^.rules.inner[i].layer_order = order;
+  }
+  set store^.layer_counts = move counts;
+  return Ok<unit, StyleError>(value: unit);
+}
