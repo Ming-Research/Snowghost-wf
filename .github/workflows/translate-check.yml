@@ -1,0 +1,54 @@
+# Temporary, for research/translate: the translation fixture against
+# Chromium, sequential and parallel dumps identical, and the retained layout
+# after each translation edit identical to a full rebuild. Removed before the
+# branch is ready.
+name: translate-check
+
+on:
+  push:
+    branches: [research/translate]
+  workflow_dispatch:
+
+jobs:
+  translate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Toolchain and fonts
+        run: |
+          sudo sh -c 'printf "%s\n" https://archive.ubuntu.com/ubuntu > /etc/apt/apt-mirrors.txt'
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=30 update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          npm install --prefix build/reference playwright@1.56.1
+          build/reference/node_modules/.bin/playwright install --with-deps chromium
+          echo "PLAYWRIGHT=$GITHUB_WORKSPACE/build/reference/node_modules/playwright" >> "$GITHUB_ENV"
+          node -e 'console.log("CHROMIUM=" + require("./build/reference/node_modules/playwright").chromium.executablePath())' >> "$GITHUB_ENV"
+
+      - name: Drivers
+        run: |
+          set -euo pipefail
+          make -s toolchain compiler oracle-fonts
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          mkdir -p build/m1
+          (cd renderer && "$wfc" --graph modules.wfg --entry style_oracle -o ../build/m1/style_seq)
+          (cd renderer && "$wfc" --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_seq)
+          (cd renderer && "$wfc" --par --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_par)
+          echo "WFC=$wfc" >> "$GITHUB_ENV"
+
+      - name: Translation fixture retained identity, seq and par
+        run: |
+          set -euo pipefail
+          mkdir -p build/oracle/layout build/research/layout
+          node tests/layout/layout_oracle.mjs dump tests/layout/transform-cases.html > build/oracle/layout/transform-cases.chromium.tsv
+          build/layout_oracle_seq dump 1 tests/layout/transform-cases.html renderer/style/ua.css > build/research/layout/transform-cases.seq.tsv
+          WF_WORKERS=4 build/layout_oracle_par dump 1 tests/layout/transform-cases.html renderer/style/ua.css > build/research/layout/transform-cases.par.tsv
+          cmp build/research/layout/transform-cases.seq.tsv build/research/layout/transform-cases.par.tsv
+          for build in seq par; do
+            WF_WORKERS=4 sh research/investigations/incremental-layout/run.sh transforms "build/layout_oracle_$build" > "build/transform-edits.$build.txt"
+          done
+          cmp build/transform-edits.seq.txt build/transform-edits.par.txt
+          sh research/investigations/layout/run.sh judge transform-cases
