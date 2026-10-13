@@ -35,6 +35,32 @@ jobs:
           echo "DESIGN_REVIEW_BASE=$design_review_base" >> "$GITHUB_ENV"
           git log --oneline -1 "$design_review_base"
 
+      # The Makefile builds with whitefootc --cache build/whitefoot-cache
+      # --fragments function. Every record in that cache is keyed by the
+      # SHA-256 of the compiler that wrote it, and is read back only when its
+      # stored key matches byte for byte, so a record serves only a later run
+      # of the same compiler: a moved pin finds none, and a restored cache
+      # only skips work that compiler would otherwise repeat. The compiler
+      # itself is not cached: make downloads the pinned release and checks it
+      # against the release's SHA256SUMS on every run, as before. The key
+      # names the runner OS, the pin and this commit; restore-keys restores
+      # the newest cache of the same OS and pin. A push restores only caches
+      # saved by its own branch or by main, so a cache saved on another
+      # branch never reaches main. Every run saves its own entry, under 31 MB
+      # at this pin, because a key is never overwritten; GitHub keeps 10 GB
+      # per repository, evicting the least recently used entries and any
+      # entry unused for 7 days. The save runs even when the check fails, so
+      # the push that fixes a failure starts warm; the compiler caches only
+      # accepted results, so a source that fails cold fails warm too. No check
+      # is skipped: make check runs in full on whatever was restored.
+      - name: Restore the compiler cache
+        uses: actions/cache/restore@v4
+        with:
+          path: build/whitefoot-cache
+          key: whitefoot-cache-${{ runner.os }}-${{ hashFiles('whitefoot.pin') }}-${{ github.sha }}
+          restore-keys: |
+            whitefoot-cache-${{ runner.os }}-${{ hashFiles('whitefoot.pin') }}-
+
       # whitefootc compiles programs with /usr/bin/clang and links a cached
       # build's fragments with LLD on Linux; both must be the LLVM major the
       # pinned release was built with, which make toolchain installs
@@ -46,3 +72,10 @@ jobs:
 
       - name: Check
         run: make check
+
+      - name: Save the compiler cache
+        if: ${{ !cancelled() }}
+        uses: actions/cache/save@v4
+        with:
+          path: build/whitefoot-cache
+          key: whitefoot-cache-${{ runner.os }}-${{ hashFiles('whitefoot.pin') }}-${{ github.sha }}
