@@ -4,6 +4,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `Nodes:` naming every node changed, `Owner-approved:` and `Summary:`;
 the design-tree part of the owner-wide agent instructions owns the form.
 
+## 2026-10-13 Shape adjacent text runs together and synthesize small capitals as Chromium does
+
+Nodes: pipeline/layout
+
+Owner-approved: On the status board on 2026-10-13 the owner chose A on the card asking whether to approve the two new decisions, shaping adjacent elements' text together and synthesizing small-caps as Chromium does, in Snowghost-wf#76 at head 23108a3.
+
+Summary: Adjacent text runs whose font, letter-spacing and word-spacing match are shaped as one range when no inline box edge with padding, border or margin separates them, as Blink's ShapeText compares only those properties, so kerning across a link and its following punctuation matches Chromium; text preparation's shaping decision now names such ranges. `font-variant: small-caps` uses the face's `smcp` feature when present and otherwise uppercases the letters that change and draws them at 0.7 of the size, rounded, as Blink does; the flow cases probe both rules and apollo11's abbreviation links and linked text now match Chromium ([layout results](../research/investigations/layout/DESIGN.md#layout-results)).
+
 ## 2026-10-13 Place preserved tabs, justify lines and hang preserved line-end spaces as Chromium does
 
 Nodes: pipeline/layout
