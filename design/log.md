@@ -4,6 +4,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `Nodes:` naming every node changed, `Owner-approved:` and `Summary:`;
 the design-tree part of the owner-wide agent instructions owns the form.
 
+## 2026-10-13 Map flow-relative margin, padding, inset and border properties to physical sides at parse time
+
+Nodes: pipeline/style
+
+Owner-approved: On the status board on 2026-10-13 the owner chose A on the card asking whether flow-relative margin, padding, inset and border properties are rewritten at parse time into the physical sides under horizontal-tb and ltr as a provisional rule, reopened when writing direction enters the style stage's scope, in Snowghost-wf#83; and chose A on the card approving the two later rewordings of that decision (one reopening condition that leaves vertical writing modes uncovered, and the source link for its measurement) at head 28311fb.
+
+Summary: A flow-relative property of margin, padding, the insets or the border, longhand or shorthand, is parsed into the physical longhands it maps to under the stage's one writing mode and direction (block-start top, inline-end right, block-end bottom, inline-start left), each keeping its declaration's place, importance and rule, so the existing per-longhand selection decides between logical and physical declarations by the same key as Chromium's cascade. With one direction the mapping depends on nothing an element computes, so it adds no dependency between elements and no cascade slot. Keeping logical longhands as their own slots resolved after the level cascade, and mapping them during matching with the element's direction, were rejected: the first stores a second key per slot for no gain while direction is fixed, the second makes matching wait on the parent. The ignored properties put the first wrong box on six of the 21 web-app pages compared with Chromium 141 ([logical properties](../research/investigations/layout/runs/pagewise-logical.txt)); the logical cases now match Chromium on every block box, inline box and text node, and the style cases on every margin, padding, border and inset value.
+
 ## 2026-10-13 Anchor floated and out-of-flow boxes in the paragraph text around them
 
 Nodes: pipeline/layout
