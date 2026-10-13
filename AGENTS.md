@@ -59,9 +59,12 @@ speed decides only between candidates of equal dependencies.
 - `make check`, the gate, in CI on every push: downloads the compiler release
   `whitefoot.pin` names (Whitefoot-kit's `whitefoot.mk`), builds the renderer,
   checks that the static atoms record matches its name list, runs the
-  document arena's self-test and `make design-lint`. It needs git,
-  Python 3, curl, `/usr/bin/clang` and on Linux LLD of the LLVM major the
-  release names (`make toolchain` installs it, `make toolchain-check`
+  document arena's self-test, `make binary-size-check` (the full-pipeline
+  driver `layout_oracle` built with `--par`, a stand-in for the engine binary
+  until one exists, stays within the owner's 10 MB, 10 000 000-byte, limit;
+  the gate measures the Linux x86-64 build only) and `make design-lint`. It
+  needs git, Python 3, curl, `/usr/bin/clang` and on Linux LLD of the LLVM
+  major the release names (`make toolchain` installs it, `make toolchain-check`
   checks it), and the `design/skill` and `whitefoot-kit` submodules;
   `make check WHITEFOOTC=<path>` uses another compiler.
 - The readiness check adds `make pin-ready`: `whitefoot.pin` names no
@@ -83,7 +86,8 @@ Whitefoot gap filed.
 
 ## Documents
 
-`README.md` introduces and navigates; this file holds the goal and project
-rules; `docs/review-checklist.md` the review items; the status board's items
-the open defects and Whitefoot requirements; `research/investigations/`
+`README.md` introduces and navigates, and its Releases section holds the
+long-term direction and the release goals; this file holds the project's goal
+and rules; `docs/review-checklist.md` the review items; the status board's
+items the open defects and Whitefoot requirements; `research/investigations/`
 questions, experiments and results.

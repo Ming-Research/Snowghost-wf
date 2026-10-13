@@ -12,6 +12,14 @@ Owner-approved: On the status board on 2026-10-13 the owner chose A on the card 
 
 Summary: A preserved tab advances to its next tab stop from where it falls, computed by line building and by the intrinsic-width walk where its position is known; a justified line a soft wrap ends shares its free space equally among its justification opportunities; spaces and tabs `white-space: pre-wrap` keeps at a line's end hang at full width in a fragment of their own; and those spaces add nothing to a min-content width where they hang unconditionally. Each rule follows Chromium 141's line breaker and was confirmed against its layout dumps of the line-fill cases (40/40 block boxes, 10/10 inline boxes, 48/48 text nodes) ([line-fill evidence](../research/investigations/layout/runs/line-fill.txt)).
 
+## 2026-10-12 Measure the engine binary against a 10 000 000-byte limit
+
+Nodes: scope/binary-size
+
+Owner-approved: On 2026-10-12 the owner set a hard limit of 10 MB on the engine binary with a gate check, then chose option A on the status board card asking whether the limit is measured as proposed (10 000 000 bytes; the renderer alone while the first release has no shell; the Linux x86-64 build as linked, unstripped; layout_oracle built with --par as the stand-in until an engine binary exists), and commented in Chinese that room must be kept for the JavaScript engine.
+
+Summary: A new node under scope records how the 10 MB limit is measured. It takes the decimal reading, 10 000 000 bytes, the stricter of the two, since the largest build measured uses 44.8 % of it. It covers the renderer alone until a release ships a shell. It judges the Linux x86-64 build, as linked, because that build is 1.91 times the macOS build and stripping would hide 10.7 % of it. Until an engine binary exists it measures layout_oracle built with --par, the largest pipeline build measured. Rejected: 10 MiB, a shell estimate, a macOS or per-platform gate, the stripped size, and a sequential or smaller stand-in. The measurements are in research/investigations/binary-size/README.md. The room the JavaScript engine needs is to be budgeted on its own card when that engine is planned.
+
 ## 2026-10-11 Bound the structural restyle of next-sibling `+` chains by their length
 
 Nodes: pipeline/style
