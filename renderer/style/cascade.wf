@@ -49,6 +49,16 @@ const words_ceiling: u64 = 65536_u64;
 
 const attribute_specificity: u64 = 1073741823_u64;
 
+struct CascadeKey {
+  priority: u64;
+  detail: u64;
+}
+
+fn empty_cascade_key() -> key: CascadeKey pure {
+  doc "The initial maximum-selection key before a declaration is offered.";
+  return CascadeKey(priority: 0_u64, detail: 0_u64);
+}
+
 fn key_bucket(key: SubjectKey) -> bucket: u64 pure {
   doc "The bucket of a subject key: ids in the first key_buckets, classes in the next, types in the last, each by its hash's low bits; any_bucket for Anything and no_bucket for Nothing.";
   match key {
@@ -156,7 +166,7 @@ fn build_rule_index(store: &RuleStore, atoms: &AtomTable, pseudo: Bool) -> resul
   return Ok<RuleIndex, StyleError>(value: move made);
 }
 
-fn test_bucket(keys: &[u64], out: &[u32], bits: &[u64], index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, pseudo: u8, filter: FeatureFilter, bucket: u64) -> fits: Bool reads(index), reads(store), reads(document), reads(atoms), reads(positions), writes(keys), writes(out), writes(bits) {
+fn test_bucket(keys: &[CascadeKey], out: &[u32], bits: &[u64], index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, pseudo: u8, filter: FeatureFilter, bucket: u64) -> fits: Bool reads(index), reads(store), reads(document), reads(atoms), reads(positions), writes(keys), writes(out), writes(bits) {
   doc "Tests every rule listed under bucket against element.";
   let slots = index^.starts.inner.len;
   let listed = bucket < bucket_total;
@@ -217,7 +227,7 @@ fn is_class_space(byte: u8) -> space: Bool pure {
   return space;
 }
 
-fn test_classes(keys: &[u64], out: &[u32], bits: &[u64], index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, pseudo: u8, filter: FeatureFilter, span: TextSpan) -> fits: Bool reads(index), reads(store), reads(document), reads(atoms), reads(positions), writes(keys), writes(out), writes(bits) {
+fn test_classes(keys: &[CascadeKey], out: &[u32], bits: &[u64], index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, pseudo: u8, filter: FeatureFilter, span: TextSpan) -> fits: Bool reads(index), reads(store), reads(document), reads(atoms), reads(positions), writes(keys), writes(out), writes(bits) {
   doc "Tests the rules under the class bucket of every whitespace-separated word of the class attribute value span holds.";
   let start = cvt::<u32, u64>(span.start);
   let end = cvt::<u32, u64>(span.end);
@@ -263,7 +273,7 @@ fn test_classes(keys: &[u64], out: &[u32], bits: &[u64], index: &RuleIndex, stor
   return fits;
 }
 
-fn match_indexed(keys: &[u64], out: &[u32], bits: &[u64], index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, pseudo: u8, filter: FeatureFilter) -> fits: Bool reads(index), reads(store), reads(document), reads(atoms), reads(positions), writes(keys), writes(out), writes(bits) {
+fn match_indexed(keys: &[CascadeKey], out: &[u32], bits: &[u64], index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, pseudo: u8, filter: FeatureFilter) -> fits: Bool reads(index), reads(store), reads(document), reads(atoms), reads(positions), writes(keys), writes(out), writes(bits) {
   doc "Offers test_rule the anything list and the rules under the buckets of element's local name, its first id attribute value and the words of its first class attribute value, found as the matchers find them; filter is the element_filter of element.";
   let fits = True();
   let wide = index^.anything.inner.len;
@@ -378,8 +388,10 @@ fn pack_specificity(specificity: Specificity) -> packed: u64 pure {
   return packed;
 }
 
-fn layer_of(origin: u8, important: Bool) -> layer: u64 pure {
-  doc "The cascade layer of origin and importance: user agent normal 0, author normal 1, author important 2, user agent important 3.";
+fn origin_tier(origin: u8, important: Bool) -> tier: u64 pure contract {
+  ensures tier <= 3_u64;
+} {
+  doc "The origin and importance tier: user agent normal 0, author normal 1, author important 2, user agent important 3.";
   let agent = origin == origin_user_agent;
   if important {
     if agent {
@@ -393,18 +405,43 @@ fn layer_of(origin: u8, important: Bool) -> layer: u64 pure {
   return 1_u64;
 }
 
-fn cascade_key(layer: u64, packed: u64, declaration: u64) -> key: u64 pure {
-  doc "The cascade key of a declaration: its layer in the top two bits, its specificity in the next thirty and its order of appearance in the low thirty-two.";
-  let top = ishl(layer, 62_u32);
-  let bounded = iand(packed, 1073741823_u64);
-  let middle = ishl(bounded, 32_u32);
+fn cascade_key(tier: u64, attached: Bool, layer: LayerOrder, important: Bool, packed: u64, declaration: u64) -> key: CascadeKey pure contract {
+  requires tier <= 3_u64;
+  requires layer.normal_rank <= layer.count;
+} {
+  doc "The maximum-selection key: origin and importance, element-attached priority, normal or importance-reversed hierarchical layer rank, specificity and declaration source order. The two words preserve all thirty specificity bits and thirty-two source-order bits.";
+  let r = cvt::<u32, u64>(layer.normal_rank);
+  let n = cvt::<u32, u64>(layer.count);
+  let rank = if important {
+    give n - r;
+  } else {
+    give r;
+  };
+  let attached_bit = if attached {
+    give 1_u64;
+  } else {
+    give 0_u64;
+  };
+  let tier_bits = ishl(tier, 33_u32);
+  let attached_bits = ishl(attached_bit, 32_u32);
+  let upper = ior(tier_bits, attached_bits);
+  let priority = ior(upper, rank);
+  let specificity = iand(packed, 1073741823_u64);
+  let specificity_bits = ishl(specificity, 32_u32);
   let order = iand(declaration, 4294967295_u64);
-  let upper = ior(top, middle);
-  let key = ior(upper, order);
-  return key;
+  let detail = ior(specificity_bits, order);
+  return CascadeKey(priority: priority, detail: detail);
 }
 
-fn offer(keys: &[u64], out: &[u32], store: &RuleStore, first: u32, end: u32, origin: u8, packed: u64) -> result: unit reads(store), writes(keys), writes(out) {
+fn key_ge(first: CascadeKey, second: CascadeKey) -> wins: Bool pure {
+  doc "Lexicographic maximum comparison, including equality so later offers with the same key preserve the existing winner-selection convention.";
+  if first.priority != second.priority {
+    return first.priority > second.priority;
+  }
+  return first.detail >= second.detail;
+}
+
+fn offer(keys: &[CascadeKey], out: &[u32], store: &RuleStore, first: u32, end: u32, origin: u8, attached: Bool, layer: LayerOrder, packed: u64) -> result: unit reads(store), writes(keys), writes(out) {
   doc "Offers each declaration from first to end: it becomes its longhand's winner when its key is at least the winner's so far.";
   let low = cvt::<u32, u64>(first);
   let high = cvt::<u32, u64>(end);
@@ -419,14 +456,15 @@ fn offer(keys: &[u64], out: &[u32], store: &RuleStore, first: u32, end: u32, ori
   for (d in low..high) {
     let declaration = store^.declared.declarations.inner[d];
     let longhand = cvt::<u8, u64>(declaration.longhand);
-    let layer = layer_of(origin: origin, important: declaration.important);
-    let key = cascade_key(layer: layer, packed: packed, declaration: d);
+    let tier = origin_tier(origin: origin, important: declaration.important);
+    let key = cascade_key(tier: tier, attached: attached, layer: layer, important: declaration.important, packed: packed, declaration: d);
     let in_keys = longhand < keys^.len;
     let in_out = longhand < out^.len;
     let placed = band(in_keys, in_out);
     if placed {
       let current = keys^[longhand];
-      if key >= current {
+      let wins = key_ge(first: key, second: current);
+      if wins {
         set keys^[longhand] = key;
         let fits = d < 4294967295_u64;
         if fits {
@@ -439,7 +477,7 @@ fn offer(keys: &[u64], out: &[u32], store: &RuleStore, first: u32, end: u32, ori
   return unit;
 }
 
-fn test_rule(keys: &[u64], out: &[u32], bits: &[u64], store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, pseudo: u8, filter: FeatureFilter, item: u64) -> fits: Bool reads(store), reads(document), reads(atoms), reads(positions), writes(keys), writes(out), writes(bits) {
+fn test_rule(keys: &[CascadeKey], out: &[u32], bits: &[u64], store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, pseudo: u8, filter: FeatureFilter, item: u64) -> fits: Bool reads(store), reads(document), reads(atoms), reads(positions), writes(keys), writes(out), writes(bits) {
   doc "Matches the rule and alternative item names against element, unless filter, the element_filter of element, lacks a bit of the rule's selector_mask, and, when it matches, offers its declarations and, for a rule that sets custom properties, writes its packed specificity plus one to its slot of bits when that is more than the slot holds, which is zero where no such rule matched, so each slot ends with the greatest over the rule's matching alternatives. False when its slot lies outside bits.";
   let rule = ishr(item, alternative_bits);
   let alternative = iand(item, whole_rule);
@@ -462,7 +500,9 @@ fn test_rule(keys: &[u64], out: &[u32], bits: &[u64], store: &RuleStore, documen
       let first = store^.rules.inner[rule].first;
       let end = store^.rules.inner[rule].end;
       let origin = store^.rules.inner[rule].origin;
-      offer(keys: keys, out: out, store: store, first: first, end: end, origin: origin, packed: packed);
+      let layer = store^.rules.inner[rule].layer_order;
+      let attached = False();
+      offer(keys: keys, out: out, store: store, first: first, end: end, origin: origin, attached: attached, layer: layer, packed: packed);
       let slot = store^.rules.inner[rule].custom_slot;
       if slot != 4294967295_u32 {
         let wide = cvt::<u32, u64>(slot);
@@ -500,7 +540,7 @@ fn record_of(index: &Box<Array<u32>>, node: u64) -> found: Option<u64> reads(ind
   return None<u64>();
 }
 
-fn offer_record(keys: &[u64], out: &[u32], store: &RuleStore, records: &Box<Slots<AttributeStyle>>, index: &Box<Array<u32>>, node: u64, origin: u8, packed: u64) -> result: unit reads(store), reads(records), reads(index), writes(keys), writes(out) {
+fn offer_record(keys: &[CascadeKey], out: &[u32], store: &RuleStore, records: &Box<Slots<AttributeStyle>>, index: &Box<Array<u32>>, node: u64, origin: u8, attached: Bool, packed: u64) -> result: unit reads(store), reads(records), reads(index), writes(keys), writes(out) {
   doc "Offers the declarations of the record of records that index gives the element whose NodeId index is node, when there is one.";
   match record_of(index: index, node: node) {
     Some(value: record) => {
@@ -508,7 +548,8 @@ fn offer_record(keys: &[u64], out: &[u32], store: &RuleStore, records: &Box<Slot
       if inside {
         let first = records^.inner[record].first;
         let end = records^.inner[record].end;
-        offer(keys: keys, out: out, store: store, first: first, end: end, origin: origin, packed: packed);
+        let layer = unlayered_order(store: store, origin: origin);
+        offer(keys: keys, out: out, store: store, first: first, end: end, origin: origin, attached: attached, layer: layer, packed: packed);
       }
     }
     None() => {
@@ -517,8 +558,8 @@ fn offer_record(keys: &[u64], out: &[u32], store: &RuleStore, records: &Box<Slot
   return unit;
 }
 
-fn match_element(keys: &[u64], out: &[u32], bits: &[u64], index: &RuleIndex, pseudo_index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, kind: u8) -> fits: Bool reads(index), reads(pseudo_index), reads(store), reads(document), reads(atoms), reads(positions), writes(keys), writes(out), writes(bits) {
-  doc "Selects one styled node's winners. An element takes the rules the element index offers, its presentational hints in the user-agent layer above every user-agent selector, and its style attribute; a pseudo-element of kind pseudo_element_before or pseudo_element_after takes the rules the pseudo-element index offers for its originating element.";
+fn match_element(keys: &[CascadeKey], out: &[u32], bits: &[u64], index: &RuleIndex, pseudo_index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, kind: u8) -> fits: Bool reads(index), reads(pseudo_index), reads(store), reads(document), reads(atoms), reads(positions), writes(keys), writes(out), writes(bits) {
+  doc "Selects one styled node's winners. An element takes the rules the element index offers, its presentational hints in the user-agent normal tier above every normal user-agent selector, and its style attribute with element-attached priority within its origin and importance tier; a pseudo-element of kind pseudo_element_before or pseudo_element_after takes the rules the pseudo-element index offers for its originating element.";
   let filter = element_filter(document: document, atoms: atoms, positions: positions, element: element);
   if kind != pseudo_element_none {
     let fits = match_indexed(keys: keys, out: out, bits: bits, index: pseudo_index, store: store, document: document, atoms: atoms, positions: positions, element: element, pseudo: kind, filter: filter);
@@ -526,12 +567,14 @@ fn match_element(keys: &[u64], out: &[u32], bits: &[u64], index: &RuleIndex, pse
   }
   let fits = match_indexed(keys: keys, out: out, bits: bits, index: index, store: store, document: document, atoms: atoms, positions: positions, element: element, pseudo: kind, filter: filter);
   let node = cvt::<u32, u64>(element.index);
-  offer_record(keys: keys, out: out, store: store, records: &store^.hints, index: &store^.hint_at, node: node, origin: origin_user_agent, packed: hint_specificity);
-  offer_record(keys: keys, out: out, store: store, records: &store^.attributes, index: &store^.attribute_at, node: node, origin: origin_author, packed: attribute_specificity);
+  let detached = False();
+  let attached = True();
+  offer_record(keys: keys, out: out, store: store, records: &store^.hints, index: &store^.hint_at, node: node, origin: origin_user_agent, attached: detached, packed: hint_specificity);
+  offer_record(keys: keys, out: out, store: store, records: &store^.attributes, index: &store^.attribute_at, node: node, origin: origin_author, attached: attached, packed: attribute_specificity);
   return fits;
 }
 
-fn has_pseudo(keys: &[u64], out: &[u32], bits: &[u64], pseudo_index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, kind: u8, filter: FeatureFilter) -> matched: Bool reads(pseudo_index), reads(store), reads(document), reads(atoms), reads(positions), writes(keys), writes(out), writes(bits) {
+fn has_pseudo(keys: &[CascadeKey], out: &[u32], bits: &[u64], pseudo_index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, kind: u8, filter: FeatureFilter) -> matched: Bool reads(pseudo_index), reads(store), reads(document), reads(atoms), reads(positions), writes(keys), writes(out), writes(bits) {
   doc "True when some rule of the pseudo-element index with a longhand declaration matches element's pseudo-element of kind; keys and out are scratch the matcher fills, and bits is empty, so no custom-property rule is recorded.";
   let fits = match_indexed(keys: keys, out: out, bits: bits, index: pseudo_index, store: store, document: document, atoms: atoms, positions: positions, element: element, pseudo: kind, filter: filter);
   let count = out^.len;
@@ -560,11 +603,12 @@ fn pseudo_flags(flags: &[u8], elements: &[NodeId], pseudo_index: &RuleIndex, sto
   for (i in 0_u64..count) {
     let element = elements^[i];
     let filter = element_filter(document: document, atoms: atoms, positions: positions, element: element);
-    let keys = array_filled::<u64, 99>(value: 0_u64);
+    let empty = empty_cascade_key();
+    let keys = array_filled::<CascadeKey, 99>(value: empty);
     let out = array_filled::<u32, 99>(value: 0_u32);
     let scratch = array_filled::<u64, 1>(value: 0_u64);
     let before = has_pseudo(keys: &keys[0_u64..99_u64], out: &out[0_u64..99_u64], bits: &scratch[0_u64..0_u64], pseudo_index: pseudo_index, store: store, document: document, atoms: atoms, positions: positions, element: element, kind: pseudo_element_before, filter: filter);
-    let keys_after = array_filled::<u64, 99>(value: 0_u64);
+    let keys_after = array_filled::<CascadeKey, 99>(value: empty);
     let out_after = array_filled::<u32, 99>(value: 0_u32);
     let scratch_after = array_filled::<u64, 1>(value: 0_u64);
     let after = has_pseudo(keys: &keys_after[0_u64..99_u64], out: &out_after[0_u64..99_u64], bits: &scratch_after[0_u64..0_u64], pseudo_index: pseudo_index, store: store, document: document, atoms: atoms, positions: positions, element: element, kind: pseudo_element_after, filter: filter);
@@ -618,7 +662,8 @@ fn match_all(winners: &[u32], bits: &[u64], words: u64, nodes: &[NodeId], kinds:
     invariant winners_within: winner_end <= total_winners {
       use winner_words times (i + 1_u64 <= count);
     }
-    let keys = array_filled::<u64, 99>(value: 0_u64);
+    let empty = empty_cascade_key();
+    let keys = array_filled::<CascadeKey, 99>(value: empty);
     let fits = match_element(keys: &keys[0_u64..99_u64], out: &winners^[winner_start..winner_end], bits: &bits^[bit_start..bit_end], index: index, pseudo_index: pseudo_index, store: store, document: document, atoms: atoms, positions: positions, element: node, kind: kind);
     set all = band(all, fits);
   }

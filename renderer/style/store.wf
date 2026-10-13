@@ -37,7 +37,7 @@ const sheet_ceiling: u64 = 16777216_u64;
 
 const no_slot: u32 = 4294967295_u32;
 
-const group_words: Array<u8, 14> = "media supports";
+const group_words: Array<u8, 20> = "media supports layer";
 
 const stylesheet_word: Array<u8, 10> = "stylesheet";
 
@@ -52,6 +52,12 @@ const max_supports_depth: u64 = 16_u64;
 struct Pending {
   items: RuleItems;
   next: u64;
+  layer: u32;
+}
+
+struct NestedRules {
+  items: RuleItems;
+  layer: u32;
 }
 
 struct Added {
@@ -81,6 +87,8 @@ fn rule_store_new() -> made: RuleStore pure {
   doc "Returns an empty store.";
   let sheets = box_slots_new::<Sheet>(capacity: 0_u64);
   let rules = box_slots_new::<Rule>(capacity: 0_u64);
+  let layers = box_slots_new::<LayerEvent>(capacity: 0_u64);
+  let layer_counts = box_array_filled::<u32>(count: 2_u64, value: 0_u32);
   let declared = declaration_store_new();
   let customs = box_slots_new::<CustomDeclaration>(capacity: 0_u64);
   let custom_rules = box_slots_new::<u32>(capacity: 0_u64);
@@ -90,7 +98,7 @@ fn rule_store_new() -> made: RuleStore pure {
   let hint_at = box_array_filled::<u32>(count: 0_u64, value: no_slot);
   let reaches = box_slots_new::<FeatureReach>(capacity: 0_u64);
   let bounded = True();
-  return RuleStore(sheets: move sheets, rules: move rules, declared: move declared, customs: move customs, custom_rules: move custom_rules, attributes: move attributes, hints: move hints, attribute_at: move attribute_at, hint_at: move hint_at, reaches: move reaches, reaches_complete: bounded);
+  return RuleStore(sheets: move sheets, rules: move rules, layers: move layers, layer_counts: move layer_counts, declared: move declared, customs: move customs, custom_rules: move custom_rules, attributes: move attributes, hints: move hints, attribute_at: move attribute_at, hint_at: move hint_at, reaches: move reaches, reaches_complete: bounded);
 }
 
 fn rule_count(store: &RuleStore) -> count: u64 reads(store) {
@@ -132,14 +140,15 @@ fn add_sheet(store: &RuleStore, source: &[u8], origin: u8, environment: Environm
   let walked = propagate walk_rules(store: store, list: &list, items: move items, sheet: sheet, origin: origin, environment: environment, atoms: atoms);
   let kept = Sheet(values: move list);
   let placed = propagate push::<Sheet>(cell: &store^.sheets, value: move kept, ceiling: rule_ceiling);
+  let ranked = propagate order_layers(store: store);
   order_reaches(store: store);
   return Ok<unit, StyleError>(value: unit);
 }
 
 fn walk_rules(store: &RuleStore, list: &ComponentList, items: RuleItems, sheet: u32, origin: u8, environment: Environment, atoms: &AtomTable) -> result: Result<unit, StyleError> reads(list), writes(store), writes(atoms) {
-  doc "Adds the style rules of items in source order, descending into each @media and @supports block whose condition holds. An explicit stack holds the rule lists still being read, the innermost on top.";
+  doc "Adds style rules in lexical order, descending into eligible conditional and layer blocks. Parsing and appending to the existing atom/declaration stores already require this walk's order; layer collection adds no registry lookup or rank dependency. Each stack frame carries only an immutable enclosing path occurrence.";
   let stack = box_slots_new::<Pending>(capacity: 0_u64);
-  let first = Pending(items: move items, next: 0_u64);
+  let first = Pending(items: move items, next: 0_u64, layer: no_slot);
   let started = propagate push::<Pending>(cell: &stack, value: move first, ceiling: nesting_ceiling);
   loop @lists {
     let depth = stack.inner.len;
@@ -152,12 +161,14 @@ fn walk_rules(store: &RuleStore, list: &ComponentList, items: RuleItems, sheet: 
     let more = position < count;
     if more {
       let item = stack.inner[top].items.items.inner[position];
+      let layer = stack.inner[top].layer;
       let next = position + 1_u64;
       set stack.inner[top].next = next;
-      let nested = propagate take_item(store: store, list: list, item: item, sheet: sheet, origin: origin, environment: environment, atoms: atoms);
+      let nested = propagate take_item(store: store, list: list, item: item, sheet: sheet, origin: origin, layer: layer, environment: environment, atoms: atoms);
       match move nested {
         Some(value: inner) => {
-          let frame = Pending(items: move inner, next: 0_u64);
+          let NestedRules(items: children, layer: child_layer) = move inner;
+          let frame = Pending(items: move children, next: 0_u64, layer: child_layer);
           let pushed = propagate push::<Pending>(cell: &stack, value: move frame, ceiling: nesting_ceiling);
         }
         None() => {
@@ -187,25 +198,45 @@ fn range_bounds(list: &ComponentList, range: ComponentRange) -> (start: u64, end
   return 0_u64, 0_u64;
 }
 
-fn take_item(store: &RuleStore, list: &ComponentList, item: RuleItem, sheet: u32, origin: u8, environment: Environment, atoms: &AtomTable) -> result: Result<Option<RuleItems>, StyleError> reads(list), writes(store), writes(atoms) {
-  doc "Adds item when it is a style rule, and returns the rule list of an @media or @supports block whose condition holds for the caller to read next; every other item adds nothing.";
-  let none = None<RuleItems>();
+fn take_item(store: &RuleStore, list: &ComponentList, item: RuleItem, sheet: u32, origin: u8, layer: u32, environment: Environment, atoms: &AtomTable) -> result: Result<Option<NestedRules>, StyleError> reads(list), writes(store), writes(atoms) {
+  doc "Adds a style rule with its enclosing layer occurrence, records eligible layer statements, and returns the contents and context of an eligible group block. False conditions are never traversed and establish no layers.";
+  let none = None<NestedRules>();
   match item {
     QualifiedRule(prelude: selectors, block: body) => {
-      let added = propagate add_rule(store: store, list: list, prelude: selectors, block: body, sheet: sheet, origin: origin, atoms: atoms);
-      return Ok<Option<RuleItems>, StyleError>(value: move none);
+      let added = propagate add_rule(store: store, list: list, prelude: selectors, block: body, sheet: sheet, origin: origin, layer: layer, atoms: atoms);
+      return Ok<Option<NestedRules>, StyleError>(value: move none);
     }
     AtRule(name: rule_name, prelude: condition, block: body) => {
       let (a, b) = text_bounds(values: list, span: rule_name);
       let n = group_words.len;
       let group = word_index(list: &group_words[0_u64..n], text: &list^.text.inner[a..b]);
       let (start, end) = range_bounds(list: list, range: condition);
+      let child_layer = layer;
       let holds = match group {
         Some(value: i) => {
           if i == 0_u64 {
             give media_list_holds(values: list, start: start, end: end, environment: environment);
-          } else {
+          } else if i == 1_u64 {
             give supports_condition(values: list, start: start, end: end, depth: 0_u64, atoms: atoms);
+          } else {
+            let block_form = match body {
+              Some(..) => {
+                give True();
+              }
+              None() => {
+                give False();
+              }
+            };
+            let collected = propagate collect_layer(store: store, values: list, start: start, end: end, sheet: sheet, origin: origin, parent: layer, block_form: block_form);
+            match collected {
+              Some(value: occurrence) => {
+                set child_layer = occurrence;
+                give True();
+              }
+              None() => {
+                give False();
+              }
+            }
           }
         }
         None() => {
@@ -218,11 +249,12 @@ fn take_item(store: &RuleStore, list: &ComponentList, item: RuleItem, sheet: u32
             let parsed = parse_rule_list(values: list, range: contents);
             match move parsed {
               Ok(value: inner) => {
-                let found = Some<RuleItems>(value: move inner);
-                return Ok<Option<RuleItems>, StyleError>(value: move found);
+                let nested = NestedRules(items: move inner, layer: child_layer);
+                let found = Some<NestedRules>(value: move nested);
+                return Ok<Option<NestedRules>, StyleError>(value: move found);
               }
               Err(..) => {
-                return too_large::<Option<RuleItems>>();
+                return too_large::<Option<NestedRules>>();
               }
             }
           }
@@ -230,13 +262,13 @@ fn take_item(store: &RuleStore, list: &ComponentList, item: RuleItem, sheet: u32
           }
         }
       }
-      return Ok<Option<RuleItems>, StyleError>(value: move none);
+      return Ok<Option<NestedRules>, StyleError>(value: move none);
     }
     Declaration(..) => {
-      return Ok<Option<RuleItems>, StyleError>(value: move none);
+      return Ok<Option<NestedRules>, StyleError>(value: move none);
     }
     Invalid() => {
-      return Ok<Option<RuleItems>, StyleError>(value: move none);
+      return Ok<Option<NestedRules>, StyleError>(value: move none);
     }
   }
 }
@@ -505,7 +537,7 @@ fn add_declarations(store: &RuleStore, list: &ComponentList, items: &RuleItems, 
   return Ok<Added, StyleError>(value: made);
 }
 
-fn add_rule(store: &RuleStore, list: &ComponentList, prelude: ComponentRange, block: ComponentRange, sheet: u32, origin: u8, atoms: &AtomTable) -> result: Result<unit, StyleError> reads(list), writes(store), writes(atoms) {
+fn add_rule(store: &RuleStore, list: &ComponentList, prelude: ComponentRange, block: ComponentRange, sheet: u32, origin: u8, layer: u32, atoms: &AtomTable) -> result: Result<unit, StyleError> reads(list), writes(store), writes(atoms) {
   doc "Adds one style rule: its selector list, skipping the rule when the prelude is invalid, and its declarations.";
   let parsed = parse_selector_list(values: list, range: prelude, atoms: atoms);
   let selectors = match move parsed {
@@ -559,7 +591,8 @@ fn add_rule(store: &RuleStore, list: &ComponentList, prelude: ComponentRange, bl
     set store^.reaches_complete = False();
   }
   let features = selector_mask(list: &selectors, atoms: atoms);
-  let rule = Rule(selectors: move selectors, origin: origin, first: added.first, end: added.end, custom_first: added.custom_first, custom_end: added.custom_end, custom_slot: slot, uniform: uniform, packed: packed, features: features);
+  let layer_order = LayerOrder(normal_rank: 0_u32, count: 0_u32);
+  let rule = Rule(selectors: move selectors, origin: origin, layer: layer, layer_order: layer_order, first: added.first, end: added.end, custom_first: added.custom_first, custom_end: added.custom_end, custom_slot: slot, uniform: uniform, packed: packed, features: features);
   let placed = propagate push::<Rule>(cell: &store^.rules, value: move rule, ceiling: rule_ceiling);
   return Ok<unit, StyleError>(value: unit);
 }

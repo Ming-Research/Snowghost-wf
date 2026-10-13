@@ -173,8 +173,8 @@ oracle-png-speed: $(BUILD)/png_oracle $(BUILD)/png-reference
 
 # Dumps Chromium's computed values of the style stage's longhands for the
 # three real pages of the concurrency investigation and for
-# tests/css/style-cases.html, the oracle of the style
-# stage (research/investigations/style). It needs Chromium and Playwright
+# tests/css/style-cases.html and tests/css/layer-cases.html, the style-stage
+# oracle (research/investigations/style). It needs Chromium and Playwright
 # (tests/css/style_oracle.mjs names their paths) and the pages fetched by
 # research/investigations/concurrency/run.sh fetch; it stays out of `check`.
 STYLE_PAGES := $(BUILD)/research/concurrency
@@ -197,9 +197,12 @@ oracle-style-dump:
 	@cd $(ROOT) && $(NODE) tests/css/style_oracle.mjs dump tests/css/style-cases.html \
 		> $(STYLE_ORACLE)/cases.chromium.tsv.part
 	@mv $(STYLE_ORACLE)/cases.chromium.tsv.part $(STYLE_ORACLE)/cases.chromium.tsv
+	@cd $(ROOT) && $(NODE) tests/css/style_oracle.mjs dump tests/css/layer-cases.html \
+		> $(STYLE_ORACLE)/layers.chromium.tsv.part
+	@mv $(STYLE_ORACLE)/layers.chromium.tsv.part $(STYLE_ORACLE)/layers.chromium.tsv
 
 # Builds the style_oracle driver sequentially and with --par, dumps the three
-# real pages with both, requires the two dumps to be identical and compares
+# real pages and case pages with both, requires the two dumps to be identical and compares
 # them with Chromium's from oracle-style-dump (research/investigations/style);
 # it fails while a page misses the 99 percent criterion. It stays out of
 # `check` for the same reasons.
