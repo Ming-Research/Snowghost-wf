@@ -2,7 +2,9 @@
 # html5 and apollo11, and the scan-parameter experiment, on a GitHub-hosted
 # runner (research/investigations/style/DESIGN.md, "Step timing"). The numbers
 # attribute time to steps; they are not precise timings, which run on the
-# 14900K runner. Remove this workflow when the investigation closes.
+# 14900K runner. The incremental job runs the style oracle's structure, reach
+# and incremental modes, which reach the matcher's incremental call sites this
+# branch changed. Remove this workflow when the investigation closes.
 name: style-build-timing
 
 on:
@@ -71,10 +73,17 @@ jobs:
           BASE_DRIVERS="$GITHUB_WORKSPACE/build/base-drivers" sh research/investigations/style/run.sh profile ecma262 html5 apollo11 2>&1 | tee build/research/style/profile-log.txt
           { echo '```'; cat build/research/style/profile-table.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
+      # Each counter and ledger check of the step above must fail on a copy of
+      # its input with one deliberate fault.
+      - name: Falsifiers of the counter and ledger checks
+        run: |
+          set -o pipefail
+          sh research/investigations/style/run.sh falsify apollo11 2>&1 | tee build/research/style/falsify.txt
+
       - name: The ledger for match_all, earlier build and this one
         if: always()
         run: |
-          grep -h 'style\.match_all ' build/base-drivers/ledger.txt build/research/style/ledger.txt | tee build/research/style/ledger-match-all.txt
+          grep -h -E 'style\.match_all(\$instance\$[^ ]*)? ' build/base-drivers/ledger.txt build/research/style/ledger.txt | tee build/research/style/ledger-match-all.txt
 
       - name: Cost of the counters when they count nothing
         if: always()
@@ -91,6 +100,7 @@ jobs:
             build/research/style/machine.txt
             build/research/style/profile-*.txt
             build/research/style/overhead.txt
+            build/research/style/falsify*.txt
             build/research/style/ledger*.txt
             build/base-drivers/ledger.txt
 
@@ -145,3 +155,62 @@ jobs:
             build/scan-param-machine.txt
             build/scan-param/times.txt
             build/scan-param/check-*.txt
+
+  incremental:
+    name: incremental style paths (structure, reach, incremental)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Toolchain, compiler and fonts
+        run: |
+          set -euo pipefail
+          sudo sh -c 'printf "%s\n" https://archive.ubuntu.com/ubuntu > /etc/apt/apt-mirrors.txt'
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=30 update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          make -s toolchain compiler oracle-fonts
+
+      - name: Sequential and parallel style oracle, and the node-listing driver
+        run: |
+          set -euo pipefail
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          mkdir -p build/m1
+          (cd renderer && "$wfc" --cache "$GITHUB_WORKSPACE/build/whitefoot-cache" --fragments function --graph modules.wfg --entry style_oracle -o ../build/m1/style_seq)
+          (cd renderer && "$wfc" --cache "$GITHUB_WORKSPACE/build/whitefoot-cache" --fragments function --par --graph modules.wfg --entry style_oracle -o ../build/m1/style_par)
+          (cd renderer && "$wfc" --cache "$GITHUB_WORKSPACE/build/whitefoot-cache" --fragments function --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_seq)
+
+      - name: Structural reaches and kept style state on the fixtures
+        run: |
+          set -euo pipefail
+          for mode in seq par; do
+            for page_kind in 'structure case full' 'sides case' 'ofclause case'; do
+              WF_WORKERS=4 STYLE="build/m1/style_$mode" sh research/investigations/incremental-style/run.sh reach $page_kind
+              WF_WORKERS=4 STYLE="build/m1/style_$mode" sh research/investigations/incremental-style/run.sh structure $page_kind
+            done
+          done
+
+      - name: html5 block and class edits
+        run: |
+          set -euo pipefail
+          sh research/investigations/concurrency/run.sh fetch || true
+          echo 'f0466f5a8c8099935a9394607abcd4bbbb3b41384a14b3f906eea80a521fe06e  build/research/concurrency/html5.html' | sha256sum -c -
+          sh research/investigations/incremental-layout/run.sh prepare html5
+          sh research/investigations/incremental-style/run.sh scripts html5
+          for mode in seq par; do
+            WF_WORKERS=4 STYLE="build/m1/style_$mode" sh research/investigations/incremental-style/run.sh reach html5 block
+            WF_WORKERS=4 STYLE="build/m1/style_$mode" sh research/investigations/incremental-style/run.sh structure html5 block
+            WF_WORKERS=4 STYLE="build/m1/style_$mode" sh research/investigations/incremental-style/run.sh incremental html5 classes
+          done
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: style-incremental-${{ github.run_id }}
+          path: |
+            build/m1/reach
+            build/m1/structure
+            build/m1/incremental
