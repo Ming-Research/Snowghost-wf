@@ -258,7 +258,7 @@ dumps() {
 
 transforms() {
 	transform_driver=$1
-	fixture=$here/scripts/transform-case.html
+	fixture=research/investigations/incremental-layout/scripts/transform-case.html
 	mkdir -p "$work/transforms"
 	"$transform_driver" nodes 0 "$fixture" "$ua" >"$work/transforms/nodes.txt"
 	# The node IDs are discovered from traversal positions, as in the existing
