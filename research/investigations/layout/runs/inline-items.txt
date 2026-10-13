@@ -43,9 +43,10 @@ spaces that overflow the line reach (has_only_pre_wrap_trailing_spaces), so the 
 spaces trail. When the spaces do not overflow (collapsible, or preserved and fitting), the line is not trailing,
 HandleOutOfFlowPositioned gives the anchor the can_break_after of the text before it (LineBreakOofNoOrc),
 HandleOverflow takes that break opportunity and RewindOverflow(i + 1) keeps the anchor on line 1, so the spaces are
-not at the line's end. An anchor at a soft wrap's end with more content following therefore belongs to the next line
-only when the line ends in preserved spaces whose full width, hanging past the end, overflows it, and always after a
-forced break. The first prediction for (e), x 0, y 20 (a rule for preserved and collapsible spaces alike), was
+not at the line's end. With no intervening inline box start, an anchor at a soft wrap's end with more content following
+therefore belongs to the next line only when the line ends in preserved spaces whose full per-item-rounded width,
+hanging past the end, overflows it, and always after a forced break. An intervening Open changes that rule, as the
+completion-review findings below explain. The first prediction for (e), x 0, y 20 (a rule for preserved and collapsible spaces alike), was
 refuted; an overflow test on the line's content width alone (which leaves hanging spaces out) failed (b).
 
 
@@ -90,3 +91,52 @@ The letter cases assume "a" is 454.5 or 454.67 layout units wide, as the Times-m
 suggest; with another width they still pass, but may not have failed before.
 Confidence: the epsilon and the per-item rounding of text widths, high (both are long-standing in LineBreaker); the
 exact set of item edges, medium (script runs are not marked).
+
+Completion-review findings at 30ef599 (static source comparison; predictions before CI).
+Reference for the line-breaker rules below:
+https://github.com/chromium/chromium/blob/141.0.7390.37/third_party/blink/renderer/core/layout/inline/line_breaker.cc
+Reference for intrinsic float contributions:
+https://github.com/chromium/chromium/blob/141.0.7390.37/third_party/blink/renderer/core/layout/inline/inline_node.cc
+
+F1. Confirmed: the preserved-space overflow test rounded the whole content once and the whole hanging tail once,
+although next_line rounds each item before summing. LineBreaker uses ShapeResult::SnappedWidth for each text item
+(line_breaker.cc 1437-1448, 1655) and adds item_result->inline_size to position_ (1361); its preserved trailing-space
+overflow enters kTrailing (1398-1400), excluding a following out-of-flow item. The full line width must therefore
+use the same per-item sum as next_line, including preserved spaces and tabs measured at their actual tab stops.
+The line keeps that already computed full width, including the chosen break candidate's measure. This is chosen
+over measuring the line again: retaining the sum adds no dependency, whereas another pass repeats the line's
+left-to-right tab-position chain. The visible content width keeps its existing meaning for placement and alignment.
+Prediction: where the once-rounded content plus once-rounded tail fits within available width plus 1/64 px but
+the per-item total exceeds it, the anchor goes to the next line and the preserved spaces form a trailing fragment.
+No new F1 case: the page's known "aaa" width is already snapped; it does not establish the raw one-letter width
+needed for a reliable rounding-boundary case. The earlier six-span case explicitly assumes that geometry. No font
+measurement is permitted in this worktree, so this prediction remains unverified rather than adding a guessed case.
+
+F2. Confirmed: a float at the text's end was added before recognizing the mandatory break at that same position.
+InlineNode measures each line separately (inline_node.cc 2098-2103), collects floats from that line's results
+(2106-2139) and compares that line's total against the maximum (2154). HandleForcedLineBreak ends the line before
+the next item (line_breaker.cc 2962). The terminal position now follows the same break-before-float rule as
+an interior position. The shaped break array has no terminal cell, so the last forced-break scalar supplies that
+boundary's judgment. New max-content case: div.mc containing "aaa", br, span.fl30, with no text after the float.
+Prediction: its content width is max(width("aaa"), 30) = 30 px, and its bordered width is 32 px, rather than
+53.3125 px. The float's vertical placement is still the known paragraph-float deviation; this fix concerns intrinsic
+width only. This case adds 2 block-level boxes, 1 inline-level box (br), and 1 rendered text node.
+
+F3. The scan stops at the Open as reported, but the claim that the wrapped anchor should stay on line 1 is refuted.
+HandleOpenTag leaves can_break_after false (line_breaker.cc 4024). HandleOutOfFlowPositioned explicitly documents
+"Text+SP OP OOF Text => !break_after" (3939) and copies the previous item's can_break_after (3945). RewindOverflow
+remembers the unclosed Open (4395-4406) and rewinds before it upon encountering the non-trailable out-of-flow item
+(4415-4418). Open and Anchor therefore move together in source order. The scan keeps its break. Its lookahead now
+stops at the same deferred Open or Atomic, so an anchor behind one cannot falsely make preserved spaces non-trailing.
+New case (e) companion: the existing eleven "aaa " words and "a ", followed by a plain span containing span.abs
+"x" and "tail". Prediction: the anchor is at x 0, y 20 of its p, with the wrapper and "tail" on line 2; the existing
+unwrapped case keeps its anchor on line 1. A second companion uses pre-wrap: the same next-line anchor, with the
+fitting final space on line 1 reported as a separate trailing fragment. That companion detects the lookahead error;
+the normal-space companion checks that Open and Anchor stay together. Each adds 2 block-level boxes, 1 inline-level
+box (the wrapper), and 3 rendered text nodes. These predictions rely on LineBreakOofNoOrc, stable in Chromium 141
+(runtime_enabled_features.json5 2932-2936), as did the earlier unwrapped observations.
+
+Together the three new cases add 6 block-level boxes, 3 inline-level boxes and 7 rendered text nodes. The existing
+page totals were 46, 20 and 60; predicted new totals are 52, 23 and 67. Whitespace-only source nodes between cases
+are not rendered and do not enter these oracle totals. No floors in run.sh change. No local build, test or oracle
+run was made; the new outcomes and totals await the primary agent's Chromium 141 comparison in CI.

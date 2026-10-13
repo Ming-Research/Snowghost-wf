@@ -3057,7 +3057,7 @@ fn lay_out_flow(context: &Context, events: &[Flow], styles: &Styles, document: &
 }
 
 fn paragraph_intrinsic(paragraph: &Paragraph, children: &[Context], styles: &Styles, fonts: &FontSet, picks: &FontPicks, minimum: Bool) -> (width: i32, first: i32, anchored: i32) reads(paragraph), reads(children), reads(styles), reads(fonts), reads(picks) {
-  doc "A paragraph's min-content width (its widest unbreakable run between allowed or mandatory break opportunities) or max-content width (its widest run between mandatory breaks), with the first line's indent, its inline boxes' margins, borders and paddings, and its atomic inlines at the margin-box widths their own intrinsic sizes give, except that the icon before an img's alt text floats in the reference, so it adds nothing to the min-content width of its line and only sets a least for it (research/investigations/layout/runs/alt-icon-min-content.txt); the spaces and tabs that end a run at an allowed break, a collapsible space or a space or tab white-space: pre-wrap keeps, hang and add nothing (CSS Text 3 4.1.3: they hang unconditionally there, and unconditionally hanging content adds nothing to intrinsic sizes), and so do the collapsible spaces at the paragraph's end, while those white-space: pre-wrap keeps at the paragraph's end or before a forced break count, as the reference counts them (they hang only conditionally there; research/investigations/layout/runs/line-fill.txt, observation 9), the forced break's own scalar ending their run; a preserved tab advances to its next tab stop from where it falls in its run, measured from 0 after each break that ends a run, because each such run is a line of its own when the box is that narrow (min-content) and starts after a forced break (max-content) (research/investigations/layout/runs/line-fill.txt). Each run is measured as the reference's line breaker measures a line (next_line): every item on it (Measure's items) counts as its width rounded up to a whole layout unit, so that content laid out in its own max-content width fits. For the max-content width, each float anchored in the paragraph (Mark's Anchor) adds its max-content margin box to the run between mandatory breaks it sits in, not to the widest one (research/investigations/layout/runs/float-intrinsic.txt). Also returns the first such run's width with its floats, which the floats placed before the paragraph's first piece join (intrinsic_flow), and the total of the anchored floats' widths; both are 0's meaning for the min-content width. Hanging composes with that measure: a run a break cuts counts its items up to its last scalar that does not hang, and the paragraph's last run up to its last scalar that is not a collapsible space, the item holding that scalar rounded up whole.";
+  doc "A paragraph's min-content width (its widest unbreakable run between allowed or mandatory break opportunities) or max-content width (its widest run between mandatory breaks), with the first line's indent, its inline boxes' margins, borders and paddings, and its atomic inlines at the margin-box widths their own intrinsic sizes give, except that the icon before an img's alt text floats in the reference, so it adds nothing to the min-content width of its line and only sets a least for it (research/investigations/layout/runs/alt-icon-min-content.txt); the spaces and tabs that end a run at an allowed break, a collapsible space or a space or tab white-space: pre-wrap keeps, hang and add nothing (CSS Text 3 4.1.3: they hang unconditionally there, and unconditionally hanging content adds nothing to intrinsic sizes), and so do the collapsible spaces at the paragraph's end, while those white-space: pre-wrap keeps at the paragraph's end or before a forced break count, as the reference counts them (they hang only conditionally there; research/investigations/layout/runs/line-fill.txt, observation 9), the forced break's own scalar ending their run; a preserved tab advances to its next tab stop from where it falls in its run, measured from 0 after each break that ends a run, because each such run is a line of its own when the box is that narrow (min-content) and starts after a forced break (max-content) (research/investigations/layout/runs/line-fill.txt). Each run is measured as the reference's line breaker measures a line (next_line): every item on it (Measure's items) counts as its width rounded up to a whole layout unit, so that content laid out in its own max-content width fits. For the max-content width, each float anchored in the paragraph (Mark's Anchor) adds its max-content margin box to the run between mandatory breaks it sits in, not to the widest one (research/investigations/layout/runs/float-intrinsic.txt). A mandatory break at the paragraph's end closes its preceding run before floats at that position join the new empty run, just as at an interior break; without that break, end-position floats join the last content run. Also returns the first such run's width with its floats, which the floats placed before the paragraph's first piece join (intrinsic_flow), and the total of the anchored floats' widths; both are 0's meaning for the min-content width. Hanging composes with that measure: a run a break cuts counts its items up to its last scalar that does not hang, and the paragraph's last run up to its last scalar that is not a collapsible space, the item holding that scalar rounded up whole.";
   let count = paragraph^.text.inner.len;
   let sizes = measure(paragraph: paragraph, children: children, styles: styles, fonts: fonts, picks: picks, basis: 0_i32);
   let positions = count +sat 1_u64;
@@ -3139,11 +3139,20 @@ fn paragraph_intrinsic(paragraph: &Paragraph, children: &[Context], styles: &Sty
   let shown = indent;
   let kept = indent;
   let line_floats = 0_i32;
-  for (j in 0_u64..count) {
+  let final_tail = forced_tail(paragraph: paragraph, start: 0_u64, end: count);
+  let final_forced = final_tail < count;
+  for (j in 0_u64..positions) {
     let kind = break_at(paragraph: paragraph, sizes: &sizes, at: j);
-    let mandatory = kind == break_mandatory;
+    let terminal = j == count;
+    let mandatory = if terminal {
+      give final_forced;
+    } else {
+      give kind == break_mandatory;
+    }
     let allowed = kind == break_allowed;
-    let ends = if minimum {
+    let ends = if terminal {
+      give mandatory;
+    } else if minimum {
       give bor(mandatory, allowed);
     } else {
       give mandatory;
@@ -3166,6 +3175,9 @@ fn paragraph_intrinsic(paragraph: &Paragraph, children: &[Context], styles: &Sty
     }
     if j < float_widths.inner.len {
       set line_floats = line_floats +sat float_widths.inner[j];
+    }
+    if terminal {
+      break;
     }
     let ends_before = item_bound(sizes: &sizes, at: j);
     if ends_before {
@@ -3206,9 +3218,6 @@ fn paragraph_intrinsic(paragraph: &Paragraph, children: &[Context], styles: &Sty
       set shown = through;
       set kept = through;
     }
-  }
-  if count < float_widths.inner.len {
-    set line_floats = line_floats +sat float_widths.inner[count];
   }
   let run_total = kept +sat line_floats;
   set best = imax(best, run_total);
