@@ -262,9 +262,13 @@ For example, `(0.1px, 0.2px)` becomes `(0.09375px, 0.203125px)`; this loses
 sub-layout-unit positions, as the owner chose, without changing flow sizes.
 
 Scroll overflow includes transformed rectangles, rather than keeping the
-first draft's untransformed height. Translation may extend overflow but must
-not shrink it: the overflow area includes bounds before and after the
-transform ([CSS Transforms 1](https://www.w3.org/TR/css-transforms-1/#transform-rendering)).
+first draft's untransformed height. A translated box and its descendants
+contribute only their translated rectangles, as relatively positioned boxes
+do ([CSS Transforms 1](https://www.w3.org/TR/css-transforms-1/#transform-rendering));
+the untransformed position stays covered by the flow parent's own box. Chromium
+141 reports a document scroll height of 3300 for the transform cases, where
+also counting the untransformed rectangles gives 7780 through the
+upward-translated relative child.
 A nested scroll container traps its content's overflow; only exposed
 overflow propagates to outer containers
 ([CSS Overflow 3](https://www.w3.org/TR/css-overflow-3/#scrollable)).
@@ -308,7 +312,7 @@ confirm its actual output.
 | Fractional translation | `(0.09375,0.203125)` after nearest LayoutUnit rounding; judged with the ordinary comparator's tolerances. |
 | Transformed overflow | `(0,2000)` extends document scroll height without enlarging its flow parent. |
 | Nested scroll container | Its child's `(0,2000)` rectangle enlarges inner overflow, but cannot enlarge the document beyond the outer container's own box. |
-| Relative overflow under an upward-translated ancestor | Parent `(0,-6000)` and child relative top 6000px expose whether retaining every original global descendant rectangle overstates root overflow; Chromium 141's ordinary H comparison decides this pending question. |
+| Relative overflow under an upward-translated ancestor | Parent `(0,-6000)` and child relative top 6000px show that untransformed descendant rectangles do not extend root overflow: Chromium 141 reports 3300, not the 7780 the untransformed child would give. |
 | One-argument transform | `(7,0)`. Detects a missing y default. |
 | One-argument property | `(6,0)`. |
 | Invalid translate arity | Earlier valid `(8,9)` survives the invalid three-argument translate. |
