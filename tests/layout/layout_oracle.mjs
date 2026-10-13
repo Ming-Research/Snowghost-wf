@@ -65,7 +65,8 @@
 // measure below 100% its eight most frequent mismatch classes with their
 // counts and one example. Exit status: 0 when the three judged measures
 // each match at least 99.0%; 1 when one does not; 2 on a usage or input
-// error (an incomplete or malformed dump included); 3 when the files' structure differs.
+// error (an incomplete or malformed dump included); 3 when the files'
+// structure differs.
 //
 // CHROMIUM and PLAYWRIGHT override the browser binary and the playwright
 // module's path.
