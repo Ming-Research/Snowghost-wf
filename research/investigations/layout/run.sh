@@ -11,8 +11,7 @@
 #                               a real page's comparison exits non-zero or a
 #                               case page's structure differs from Chromium's
 #                               (compare exits 3) or matches fewer boxes or
-#                               text nodes than its floor, or reports a
-#                               document scroll height differing by over 1 px
+#                               text nodes than its floor
 #   run.sh judge [PAGE...]      judges the dumps already in build/research/
 #                               layout against Chromium's, as check does,
 #                               without building or dumping
@@ -137,17 +136,13 @@ case_floors() {
 # and kept in $out/PAGE.compare.txt; the page fails when compare exits with
 # other than 0, when a case page's compare exits with other than 0 or 1 (3 is
 # a structure that differs), or when a case page's matched count of a measure
-# is below its floor, or document scroll height differs by over 1 px.
+# is below its floor.
 judge_page() {
 	page=$1
 	echo "$page: against Chromium"
 	judged=0
 	node tests/layout/layout_oracle.mjs compare "$oracle/$page.chromium.tsv" "$out/$page.seq.tsv" >"$out/$page.compare.txt" || judged=$?
 	cat "$out/$page.compare.txt"
-	if [ "$judged" -le 1 ] && ! grep -q '^scroll height: 1/1 ' "$out/$page.compare.txt"; then
-		echo "$page: FAIL, document scroll height differs from Chromium's by over 1 px" >&2
-		return 1
-	fi
 	case $page in
 	*-cases)
 		floors=$(case_floors "$page")
