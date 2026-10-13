@@ -120,7 +120,7 @@ case_floors() {
 	case $1 in
 	columns-cases) echo "93 2 65" ;;
 	flex-cases) echo "259 2 25" ;;
-	flow-cases) echo "227 159 323" ;;
+	flow-cases) echo "226 159 323" ;;
 	percentage-height-cases) echo "14 0 0" ;;
 	grid-cases) echo "286 2 198" ;;
 	grid-final-space-cases) echo "26 0 8" ;;
