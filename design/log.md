@@ -4,6 +4,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `Nodes:` naming every node changed, `Owner-approved:` and `Summary:`;
 the design-tree part of the owner-wide agent instructions owns the form.
 
+## 2026-10-13 Anchor floated and out-of-flow boxes in the paragraph text around them
+
+Nodes: pipeline/layout
+
+Owner-approved: On the status board on 2026-10-13 the owner chose A on the card asking whether to approve the new decision that floated and absolutely positioned boxes leave an anchor in the paragraph text around them, Snowghost-wf#77.
+
+Summary: A floated or out-of-flow child context that the box tree walk meets after a paragraph's first piece leaves an Anchor in that paragraph's content as well as its own flow entry, a mark at its text position with no text and no width, because Chromium keeps such a box as an item of the inline content around it. The line the anchor falls on gives an out-of-flow box with auto insets its static position, and gives a float the max-content run its width joins. Recording a text position on the child context was rejected because the walk cannot know it before white-space processing. Ending the paragraph at the child was rejected because it would break the paragraph's lines there. Which line an anchor at a soft wrap belongs to follows Blink's line breaker. The inline-items cases match Chromium on 45 of 46 block-level boxes, the miss being a separately tracked float, and on every inline-level box and text node ([inline items](../research/investigations/layout/runs/inline-items.txt)).
+
 ## 2026-10-13 Shape adjacent text runs together and synthesize small capitals as Chromium does
 
 Nodes: pipeline/layout

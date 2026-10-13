@@ -366,6 +366,8 @@ fn prepare_spaces(context: &Context, events: &[Flow], styles: &Styles, content_w
               }
               Node(..) => {
               }
+              Anchor(..) => {
+              }
             }
           }
         }
@@ -890,6 +892,9 @@ fn shows_owner(context: &Context, events: &[Flow], flow: u64, owner: u32, openin
           Node(..) => {
             give False();
           }
+          Anchor(..) => {
+            give False();
+          }
         }
         if found {
           return True();
@@ -1147,7 +1152,7 @@ fn clear_lineless_placement(paragraph: &Paragraph) -> result: unit writes(paragr
 }
 
 fn place_paragraph(context: &Context, at: u64, content_left: i32, dx: i32, top: i32, normal_top: i32) -> result: unit writes(context) {
-  doc "Sets paragraph at's origin in the context's border box, x its left moved by the content box's left and the relative offset dx, and places its atomic inlines' child contexts (place_atomics).";
+  doc "Sets paragraph at's origin in the context's border box, x its left moved by the content box's left and the relative offset dx, and places its atomic inlines' child contexts (place_atomics) and the static positions of the out-of-flow child contexts anchored in it (place_anchored).";
   if at < context^.paragraphs.inner.len {
   } else {
     return unit;
@@ -1159,7 +1164,78 @@ fn place_paragraph(context: &Context, at: u64, content_left: i32, dx: i32, top: 
   set context^.paragraphs.inner[at].resolved_x = left;
   set context^.paragraphs.inner[at].resolved_top = top;
   place_atomics(context: context, at: at);
+  place_anchored(context: context, at: at);
   return unit;
+}
+
+fn place_anchored(context: &Context, at: u64) -> result: unit writes(context) {
+  doc "Gives the out-of-flow child contexts anchored in paragraph at (Mark's Anchor) their static positions: the paragraph's normal origin plus each one's place on its line (AnchorPlace) and its margins, as the reference places an out-of-flow box with auto insets where it would sit in the line, which the stacking pass's out-of-flow entry also reads before the paragraph (anchored_place); this runs again after floats narrow the paragraph's lines. Relative offsets do not move a static position, as for the out-of-flow entries outside paragraphs.";
+  if at < context^.paragraphs.inner.len {
+  } else {
+    return unit;
+  }
+  let paragraph_normal_x = context^.paragraphs.inner[at].normal_x;
+  let paragraph_normal_y = context^.paragraphs.inner[at].normal_top;
+  let places = context^.paragraphs.inner[at].places.inner.len;
+  for (q in 0_u64..places) {
+    if at < context^.paragraphs.inner.len {
+      if q < context^.paragraphs.inner[at].places.inner.len {
+        let place = context^.paragraphs.inner[at].places.inner[q];
+        let child = cvt::<u32, u64>(place.context);
+        if child < context^.children.inner.len {
+          let margin_left = context^.children.inner[child].margin_left;
+          let margin_top = context^.children.inner[child].margin_top;
+          let spot_x = paragraph_normal_x +sat place.x;
+          let spot_y = paragraph_normal_y +sat place.y;
+          let static_x = spot_x +sat margin_left;
+          let static_y = spot_y +sat margin_top;
+          set context^.children.inner[child].normal_x = static_x;
+          set context^.children.inner[child].x = static_x;
+          set context^.children.inner[child].normal_y = static_y;
+          set context^.children.inner[child].y = static_y;
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn anchored_place(context: &Context, events: &[Flow], from: u64, child: u32) -> (found: Bool, x: i32, y: i32) reads(context), reads(events) {
+  doc "The place on its line (AnchorPlace) of the out-of-flow child context child, whose flow entry is at from, in the paragraph whose content anchors it: that paragraph's entry follows from past only floated and out-of-flow entries, since the builder ends a paragraph before any block entry. Not found when no paragraph follows so or none of its lines holds child, as for one that comes before its paragraph's first piece.";
+  let count = reference_length(context: context, events: events);
+  let next = from +sat 1_u64;
+  for (k in next..count) {
+    let item = reference_event(context: context, events: events, at: k);
+    match item {
+      Text(paragraph: p) => {
+        let at = cvt::<u32, u64>(p);
+        if at < context^.paragraphs.inner.len {
+          let places = context^.paragraphs.inner[at].places.inner.len;
+          for (q in 0_u64..places) {
+            let place = context^.paragraphs.inner[at].places.inner[q];
+            if place.context == child {
+              return True(), place.x, place.y;
+            }
+          }
+        }
+        return False(), 0_i32, 0_i32;
+      }
+      Out(..) => {
+      }
+      Float(..) => {
+      }
+      Open(..) => {
+        return False(), 0_i32, 0_i32;
+      }
+      Close(..) => {
+        return False(), 0_i32, 0_i32;
+      }
+      Child(..) => {
+        return False(), 0_i32, 0_i32;
+      }
+    }
+  }
+  return False(), 0_i32, 0_i32;
 }
 
 fn place_atomics(context: &Context, at: u64) -> result: unit writes(context) {
@@ -1819,7 +1895,7 @@ fn resume_open_frames(context: &Context, styles: &Styles, frames: &Box<Slots<Fra
 }
 
 fn stack_flow(context: &Context, events: &[Flow], styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, content_left: i32, content_top: i32, content_width: i32, basis_height: i32, plan: Restack) -> result: StackResult reads(events), reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
-  doc "The stacking pass of a flow context, the one walk that keeps the true order of its content: places block boxes, paragraphs and in-flow child contexts down the content box with CSS 2.2's margin collapsing (8.3.1) and clearance, places floats as they come and breaks again the paragraphs that floats narrow, records out-of-flow children's static positions, and returns the content height, which contains the floats, and the last line's baseline; it records the flow's end before the floats (flow_end) and each entry's natural position (naturals). A re-stack (plan, Restack) recovers the state after the preceding paragraph with lines from its natural position, ancestor frames and placed floats, falling back to the start when no such paragraph exists or an inverted coordinate is saturated. It replays only the remaining entries before plan.from: a paragraph keeps its lines and a child its position, read back from where the previous pass placed it, and neither is placed again, while blocks, floats and out-of-flow children go through the same steps as before (they write what they wrote); from plan.from on it stacks as a full pass would after update's pre-pass path, breaking a paragraph again at full width first when the previous pass narrowed its lines or the paragraph is marked (after reading its previous height) and settling a child in the space the pre-pass gives it (settle_child), and after each paragraph with lines at or after plan.until it asks restack_settles whether to stop there. Suffix floors are built only when a float and a changed stacking state require them.";
+  doc "The stacking pass of a flow context, the one walk that keeps the true order of its content: places block boxes, paragraphs and in-flow child contexts down the content box with CSS 2.2's margin collapsing (8.3.1) and clearance, places floats as they come and breaks again the paragraphs that floats narrow, records out-of-flow children's static positions (at their places on the lines of the paragraph that anchors them, anchored_place and place_anchored), and returns the content height, which contains the floats, and the last line's baseline; it records the flow's end before the floats (flow_end) and each entry's natural position (naturals). A re-stack (plan, Restack) recovers the state after the preceding paragraph with lines from its natural position, ancestor frames and placed floats, falling back to the start when no such paragraph exists or an inverted coordinate is saturated. It replays only the remaining entries before plan.from: a paragraph keeps its lines and a child its position, read back from where the previous pass placed it, and neither is placed again, while blocks, floats and out-of-flow children go through the same steps as before (they write what they wrote); from plan.from on it stacks as a full pass would after update's pre-pass path, breaking a paragraph again at full width first when the previous pass narrowed its lines or the paragraph is marked (after reading its previous height) and settling a child in the space the pre-pass gives it (settle_child), and after each paragraph with lines at or after plan.until it asks restack_settles whether to stop there. Suffix floors are built only when a float and a changed stacking state require them.";
   let old_travel = if plan.partial {
     let total_output = False();
     let old_output = boundary_output(sequence: &context^.entries, slot: context^.entries.root, own: total_output, visits: &context^.boundary_visits);
@@ -2446,8 +2522,19 @@ fn stack_flow(context: &Context, events: &[Flow], styles: &Styles, document: &Do
           let y = stack.cursor +sat y_term;
           let margin_left = context^.children.inner[at].margin_left;
           let margin_top = context^.children.inner[at].margin_top;
-          let x_static = left +sat margin_left;
-          let y_static = y +sat margin_top;
+          let (anchored, place_x, place_y) = anchored_place(context: context, events: events, from: k, child: c);
+          let spot_x = if anchored {
+            give left +sat place_x;
+          } else {
+            give left;
+          }
+          let spot_y = if anchored {
+            give y +sat place_y;
+          } else {
+            give y;
+          }
+          let x_static = spot_x +sat margin_left;
+          let y_static = spot_y +sat margin_top;
           set context^.children.inner[at].normal_x = content_left +sat x_static;
           set context^.children.inner[at].x = content_left +sat x_static;
           set context^.children.inner[at].normal_y = content_top +sat y_static;
@@ -2969,10 +3056,13 @@ fn lay_out_flow(context: &Context, events: &[Flow], styles: &Styles, document: &
   return unit;
 }
 
-fn paragraph_intrinsic(paragraph: &Paragraph, children: &[Context], styles: &Styles, fonts: &FontSet, picks: &FontPicks, minimum: Bool) -> width: i32 reads(paragraph), reads(children), reads(styles), reads(fonts), reads(picks) {
-  doc "A paragraph's min-content width (its widest unbreakable run between allowed or mandatory break opportunities) or max-content width (its widest run between mandatory breaks), with the first line's indent, its inline boxes' margins, borders and paddings, and its atomic inlines at the margin-box widths their own intrinsic sizes give, except that the icon before an img's alt text floats in the reference, so it adds nothing to the min-content width of its line and only sets a least for it (research/investigations/layout/runs/alt-icon-min-content.txt); the spaces and tabs that end a run at an allowed break, a collapsible space or a space or tab white-space: pre-wrap keeps, hang and add nothing (CSS Text 3 4.1.3: they hang unconditionally there, and unconditionally hanging content adds nothing to intrinsic sizes), and so do the collapsible spaces at the paragraph's end, while those white-space: pre-wrap keeps at the paragraph's end or before a forced break count, as the reference counts them (they hang only conditionally there; research/investigations/layout/runs/line-fill.txt, observation 9), the forced break's own scalar ending their run; a preserved tab advances to its next tab stop from where it falls in its run, measured from 0 after each break that ends a run, because each such run is a line of its own when the box is that narrow (min-content) and starts after a forced break (max-content) (research/investigations/layout/runs/line-fill.txt).";
+fn paragraph_intrinsic(paragraph: &Paragraph, children: &[Context], styles: &Styles, fonts: &FontSet, picks: &FontPicks, minimum: Bool) -> (width: i32, first: i32, anchored: i32) reads(paragraph), reads(children), reads(styles), reads(fonts), reads(picks) {
+  doc "A paragraph's min-content width (its widest unbreakable run between allowed or mandatory break opportunities) or max-content width (its widest run between mandatory breaks), with the first line's indent, its inline boxes' margins, borders and paddings, and its atomic inlines at the margin-box widths their own intrinsic sizes give, except that the icon before an img's alt text floats in the reference, so it adds nothing to the min-content width of its line and only sets a least for it (research/investigations/layout/runs/alt-icon-min-content.txt); the spaces and tabs that end a run at an allowed break, a collapsible space or a space or tab white-space: pre-wrap keeps, hang and add nothing (CSS Text 3 4.1.3: they hang unconditionally there, and unconditionally hanging content adds nothing to intrinsic sizes), and so do the collapsible spaces at the paragraph's end, while those white-space: pre-wrap keeps at the paragraph's end or before a forced break count, as the reference counts them (they hang only conditionally there; research/investigations/layout/runs/line-fill.txt, observation 9), the forced break's own scalar ending their run; a preserved tab advances to its next tab stop from where it falls in its run, measured from 0 after each break that ends a run, because each such run is a line of its own when the box is that narrow (min-content) and starts after a forced break (max-content) (research/investigations/layout/runs/line-fill.txt). Each run is measured as the reference's line breaker measures a line (next_line): every item on it (Measure's items) counts as its width rounded up to a whole layout unit, so that content laid out in its own max-content width fits. For the max-content width, each float anchored in the paragraph (Mark's Anchor) adds its max-content margin box to the run between mandatory breaks it sits in, not to the widest one (research/investigations/layout/runs/float-intrinsic.txt). A mandatory break at the paragraph's end closes its preceding run before floats at that position join the new empty run, just as at an interior break; without that break, end-position floats join the last content run. Also returns the first such run's width with its floats, which the floats placed before the paragraph's first piece join (intrinsic_flow), and the total of the anchored floats' widths; both are 0's meaning for the min-content width. Hanging composes with that measure: a run a break cuts counts its items up to its last scalar that does not hang, and the paragraph's last run up to its last scalar that is not a collapsible space, the item holding that scalar rounded up whole.";
   let count = paragraph^.text.inner.len;
   let sizes = measure(paragraph: paragraph, children: children, styles: styles, fonts: fonts, picks: picks, basis: 0_i32);
+  let positions = count +sat 1_u64;
+  let float_widths = box_array_filled::<i32>(count: positions, value: 0_i32);
+  let anchored = 0_i32;
   let marks = paragraph^.marks.inner.len;
   let icon_floor = 0_i32;
   for (m in 0_u64..marks) {
@@ -3008,6 +3098,28 @@ fn paragraph_intrinsic(paragraph: &Paragraph, children: &[Context], styles: &Sty
           }
         }
       }
+      Anchor(at: here, context: child) => {
+        let at = cvt::<u32, u64>(here);
+        let child_at = cvt::<u32, u64>(child);
+        let inside = at < positions;
+        let known = child_at < children^.len;
+        let usable = band(inside, known);
+        let widest = bnot(minimum);
+        let counted = band(usable, widest);
+        if counted {
+          let float_owner = children^[child_at].style;
+          let float_group = box_of(styles: styles, style: float_owner);
+          if float_group.float != float_none {
+            let float_margins = margin_edges(styles: styles, style: float_owner, basis: 0_i32);
+            let float_inner = children^[child_at].max_content +sat float_margins.left;
+            let float_outer = float_inner +sat float_margins.right;
+            if at < float_widths.inner.len {
+              set float_widths.inner[at] = float_widths.inner[at] +sat float_outer;
+              set anchored = anchored +sat float_outer;
+            }
+          }
+        }
+      }
       Open(..) => {
       }
       Close(..) => {
@@ -3018,15 +3130,29 @@ fn paragraph_intrinsic(paragraph: &Paragraph, children: &[Context], styles: &Sty
   }
   let text = text_of(styles: styles, style: paragraph^.style);
   let indent = resolve_lp(value: text.text_indent, basis: 0_i32);
-  let best = 0.0_f32;
+  let best = 0_i32;
+  let first = 0_i32;
+  let on_first = True();
   let current = pixels(raw: indent);
-  let trailing = 0.0_f32;
-  let dropped = 0.0_f32;
-  for (j in 0_u64..count) {
+  let settled = indent;
+  let item = 0.0_f32;
+  let shown = indent;
+  let kept = indent;
+  let line_floats = 0_i32;
+  let final_tail = forced_tail(paragraph: paragraph, start: 0_u64, end: count);
+  let final_forced = final_tail < count;
+  for (j in 0_u64..positions) {
     let kind = break_at(paragraph: paragraph, sizes: &sizes, at: j);
-    let mandatory = kind == break_mandatory;
+    let terminal = j == count;
+    let mandatory = if terminal {
+      give final_forced;
+    } else {
+      give kind == break_mandatory;
+    }
     let allowed = kind == break_allowed;
-    let ends = if minimum {
+    let ends = if terminal {
+      give mandatory;
+    } else if minimum {
       give bor(mandatory, allowed);
     } else {
       give mandatory;
@@ -3034,45 +3160,76 @@ fn paragraph_intrinsic(paragraph: &Paragraph, children: &[Context], styles: &Sty
     let started = j > 0_u64;
     let cut = band(ends, started);
     if cut {
-      let visible = fsub.strict(current, trailing);
-      set best = fmax(best, visible);
+      let run_total = shown +sat line_floats;
+      set best = imax(best, run_total);
+      if on_first {
+        set first = run_total;
+      }
+      set on_first = False();
       set current = 0.0_f32;
-      set trailing = 0.0_f32;
-      set dropped = 0.0_f32;
+      set settled = 0_i32;
+      set item = 0.0_f32;
+      set shown = 0_i32;
+      set kept = 0_i32;
+      set line_floats = 0_i32;
+    }
+    if j < float_widths.inner.len {
+      set line_floats = line_floats +sat float_widths.inner[j];
+    }
+    if terminal {
+      break;
+    }
+    let ends_before = item_bound(sizes: &sizes, at: j);
+    if ends_before {
+      let closed = units_up(px: item);
+      set settled = settled +sat closed;
+      set item = 0.0_f32;
     }
     let opening = open_at(sizes: &sizes, at: j);
+    let opening_units = units_up(px: opening);
+    set settled = settled +sat opening_units;
     let with_open = fadd.strict(current, opening);
     let advance = advance_from(paragraph: paragraph, sizes: &sizes, at: j, position: with_open);
+    set item = fadd.strict(item, advance);
     let next = j +sat 1_u64;
+    let ends_after = item_bound(sizes: &sizes, at: next);
+    if ends_after {
+      let closed_after = units_up(px: item);
+      set settled = settled +sat closed_after;
+      set item = 0.0_f32;
+    }
     let closing = close_at(sizes: &sizes, at: next);
+    let closing_units = units_up(px: closing);
+    set settled = settled +sat closing_units;
     let with_advance = fadd.strict(with_open, advance);
     set current = fadd.strict(with_advance, closing);
     let hangs = hangs_at(sizes: &sizes, at: j);
+    let open_item = units_up(px: item);
+    let through = settled +sat open_item;
     if hangs {
-      let grown = fadd.strict(trailing, advance);
-      set trailing = fadd.strict(grown, closing);
+      set shown = shown +sat opening_units;
       let collapsible = collapsible_at(sizes: &sizes, at: j);
       if collapsible {
-        let dropping = fadd.strict(dropped, advance);
-        set dropped = fadd.strict(dropping, closing);
+        set kept = kept +sat opening_units;
       } else {
-        set dropped = 0.0_f32;
+        set kept = through;
       }
     } else {
-      set trailing = 0.0_f32;
-      set dropped = 0.0_f32;
+      set shown = through;
+      set kept = through;
     }
   }
-  let kept = fsub.strict(current, dropped);
-  set best = fmax(best, kept);
-  let icon_px = pixels(raw: icon_floor);
-  set best = fmax(best, icon_px);
-  let made = units_up(px: best);
-  return made;
+  let run_total = kept +sat line_floats;
+  set best = imax(best, run_total);
+  if on_first {
+    set first = run_total;
+  }
+  let made = imax(best, icon_floor);
+  return made, first, anchored;
 }
 
 fn chunk_most(most: i32, text: i32, floats: i32, around: i32) -> made: i32 pure {
-  doc "most raised by the max-content width of a run of floats and lines between two block boundaries: the reference adds the widths of the floats to the widest line they sit beside (research/investigations/layout/runs/float-intrinsic.txt).";
+  doc "most raised by the max-content width of a run of floats and lines between two block boundaries: text, the widest line with the floats it holds (paragraph_intrinsic), plus floats, those not yet joined to a line, as when the chunk holds no paragraph (research/investigations/layout/runs/float-intrinsic.txt).";
   let together = text +sat floats;
   let total = together +sat around;
   let made = imax(most, total);
@@ -3080,7 +3237,7 @@ fn chunk_most(most: i32, text: i32, floats: i32, around: i32) -> made: i32 pure 
 }
 
 fn intrinsic_flow(context: &Context, events: &[Flow], styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> (minimum: i32, maximum: i32) reads(events), reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
-  doc "The content's min-content and max-content widths of a flow context: the largest over its paragraphs and its in-flow and floated child contexts' contributions (their intrinsic sizes plus margins), each inside the margins, borders and paddings of the block boxes around it, a block box with a given width contributing that width instead of its content. Intrinsic contributions resolve margins locally against zero without overwriting retained used margins; cached child interiors may survive this query. Each paragraph's two widths are computed first in one counted loop, each iteration reading only its own paragraph, the child contexts (whose intrinsic sizes the loop above has just made known) and the styles, and writing only its own cells of two arrays local to this query, because one paragraph's widths depend on no other paragraph; the loop also measures paragraphs the walk skips, inside blocks of a given width, and vacant retired slots, extra work off the walk's chain (board item sg-intrinsic-prepass-trim). The walk over the flow is one sequential pass: its nesting frames are a prefix scan and its chunk widths a segmented maximum, whose logarithmic-depth parallel forms are not used (board item sg-layout-scan-walks). The widths live only for this query and are not stored in Paragraph.min_content and max_content, which the boundary outputs publish, so a published output does not depend on whether or when a parent asked for intrinsic sizes.";
+  doc "The content's min-content and max-content widths of a flow context: the largest over its paragraphs and its in-flow and floated child contexts' contributions (their intrinsic sizes plus margins), each inside the margins, borders and paddings of the block boxes around it, a block box with a given width contributing that width instead of its content. Intrinsic contributions resolve margins locally against zero without overwriting retained used margins; cached child interiors may survive this query. Each paragraph's two widths, with its first max-content run and the total of the floats anchored in it, are computed first in one counted loop, each iteration reading only its own paragraph, the child contexts (whose intrinsic sizes the loop above has just made known) and the styles, and writing only its own cells of four arrays local to this query, because one paragraph's widths depend on no other paragraph; the loop also measures paragraphs the walk skips, inside blocks of a given width, and vacant retired slots, extra work off the walk's chain (board item sg-intrinsic-prepass-trim). The walk over the flow is one sequential pass: its nesting frames are a prefix scan and its chunk widths a segmented maximum, whose logarithmic-depth parallel forms are not used (board item sg-layout-scan-walks). A paragraph's floats join the max-content run they sit in; the floats a chunk holds before its paragraph, outside its pieces, join its first run, and floats in a chunk without a paragraph add up on their own. The widths live only for this query and are not stored in Paragraph.min_content and max_content, which the boundary outputs publish, so a published output does not depend on whether or when a parent asked for intrinsic sizes.";
   let children = context^.children.inner.len;
   for (c in 0_u64..children) {
     let (least, most) = intrinsic_sizes(context: &context^.children.inner[c], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
@@ -3096,13 +3253,17 @@ fn intrinsic_flow(context: &Context, events: &[Flow], styles: &Styles, document:
   let paragraph_count = context^.paragraphs.inner.len;
   let paragraph_least = box_array_filled::<i32>(count: paragraph_count, value: 0_i32);
   let paragraph_most = box_array_filled::<i32>(count: paragraph_count, value: 0_i32);
+  let paragraph_first = box_array_filled::<i32>(count: paragraph_count, value: 0_i32);
+  let paragraph_anchored = box_array_filled::<i32>(count: paragraph_count, value: 0_i32);
   for (q in 0_u64..paragraph_count) {
     let yes = True();
     let no = False();
-    let low = paragraph_intrinsic(paragraph: &context^.paragraphs.inner[q], children: &context^.children.inner[0_u64..children], styles: styles, fonts: fonts, picks: picks, minimum: yes);
-    let high = paragraph_intrinsic(paragraph: &context^.paragraphs.inner[q], children: &context^.children.inner[0_u64..children], styles: styles, fonts: fonts, picks: picks, minimum: no);
+    let (low, low_first, low_anchored) = paragraph_intrinsic(paragraph: &context^.paragraphs.inner[q], children: &context^.children.inner[0_u64..children], styles: styles, fonts: fonts, picks: picks, minimum: yes);
+    let (high, high_first, high_anchored) = paragraph_intrinsic(paragraph: &context^.paragraphs.inner[q], children: &context^.children.inner[0_u64..children], styles: styles, fonts: fonts, picks: picks, minimum: no);
     set paragraph_least.inner[q] = low;
     set paragraph_most.inner[q] = high;
+    set paragraph_first.inner[q] = high_first;
+    set paragraph_anchored.inner[q] = high_anchored;
   }
   let flow_count = reference_length(context: context, events: events);
   for (k in 0_u64..flow_count) {
@@ -3171,9 +3332,13 @@ fn intrinsic_flow(context: &Context, events: &[Flow], styles: &Styles, document:
           let low = paragraph_least.inner[at];
           let high = paragraph_most.inner[at];
           let low_total = low +sat around;
-          let high_total = high +sat around;
           set least = imax(least, low_total);
-          set chunk_text = imax(chunk_text, high);
+          let leading_raw = chunk_floats -sat paragraph_anchored.inner[at];
+          let leading = imax(leading_raw, 0_i32);
+          let led = paragraph_first.inner[at] +sat leading;
+          let text_most = imax(high, led);
+          set chunk_text = imax(chunk_text, text_most);
+          set chunk_floats = 0_i32;
         }
       }
       Child(context: c) => {

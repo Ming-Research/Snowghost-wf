@@ -31,7 +31,7 @@ const valign_bottom: u8 = 7_u8;
 const no_group: u32 = 4294967295_u32;
 
 struct Measure {
-  doc "A paragraph's horizontal measures in px for line breaking: each index's advance (an atomic inline's margin box), the decorations (margin, border and padding) of the inline boxes that open and that close at each position, whether each index holds a collapsible space (1), which hangs at a line's end and is dropped at a line's start, or a space or tab white-space: pre-wrap keeps (2), which hangs at the end of a line a soft wrap or a forced break ends (CSS Text 3, 4.1.3), whether an inline box with a bidi control (unicode-bidi other than normal) opens before each index that follows no space, where the reference allows no soft wrap opportunity, the distance between the tab stops of the preserved tab at each index (0 elsewhere, and no cells when the paragraph holds no tab), and, once for the paragraph, the least advance a tab takes, half its block container's space: a tab's stops come from the tab-size of the run holding it and the space of the paragraph's block container (tab_space, tab_stop), and its advance depends on where it falls on its line, so the line building that places it computes it (advance_from).";
+  doc "A paragraph's horizontal measures in px for line breaking: each index's advance (an atomic inline's margin box), the decorations (margin, border and padding) of the inline boxes that open and that close at each position, whether each index holds a collapsible space (1), which hangs at a line's end and is dropped at a line's start, or a space or tab white-space: pre-wrap keeps (2), which hangs at the end of a line a soft wrap or a forced break ends (CSS Text 3, 4.1.3), whether an inline box with a bidi control (unicode-bidi other than normal) opens before each index that follows no space, where the reference allows no soft wrap opportunity, the distance between the tab stops of the preserved tab at each index (0 elsewhere, and no cells when the paragraph holds no tab), and, once for the paragraph, the least advance a tab takes, half its block container's space: a tab's stops come from the tab-size of the run holding it and the space of the paragraph's block container (tab_space, tab_stop), and its advance depends on where it falls on its line, so the line building that places it computes it (advance_from); and at each position whether an item of the reference's line breaker ends there (items, 1): every mark's position, both sides of an atomic inline and of a preserved tab and both ends of a text node's text, where the reference's text items, inline box edges, atomic inlines, tabs (control items) and floated or out-of-flow boxes (Anchor marks) meet; the reference measures each item on a line as a whole number of layout units, its width rounded up, and decides whether a line fits by their sum (next_line). Script and bidirectional runs, which also split the reference's text items, are not marked.";
   advances: Box<Array<f32>>;
   opens: Box<Array<f32>>;
   closes: Box<Array<f32>>;
@@ -39,6 +39,7 @@ struct Measure {
   glued: Box<Array<u8>>;
   tab_stops: Box<Array<f32>>;
   tab_least: f32;
+  items: Box<Array<u8>>;
 }
 
 struct Metrics {
@@ -201,7 +202,7 @@ fn tab_stop(styles: &Styles, style: StyleRef, spacing_unit: f32) -> interval: f3
 }
 
 fn measure(paragraph: &Paragraph, children: &[Context], styles: &Styles, fonts: &FontSet, picks: &FontPicks, basis: i32) -> made: Measure reads(paragraph), reads(children), reads(styles), reads(fonts), reads(picks) {
-  doc "Computes a paragraph's Measure. Each run marks its own hanging spaces and tabs in one counted loop writing only that run's cells, because they depend on the run's text and style alone, and tells by a bor reduction whether the paragraph holds a tab; only then does it look up the space and least advance of the paragraph's block container style, once for the paragraph, and a second counted loop over the runs writes each tab's stop distance from that space and its own run's tab-size, again only that run's cells. Each mark's own width (an inline box's start or end frame, an atomic inline's margin box) and whether an opening box glues to the preceding text are computed in one counted loop writing only that mark's cells, because they depend on the mark alone; a second loop then adds them into the per-position arrays in mark order, sequential because marks at one position add fadd.strict contributions to one cell and that order fixes the result's bits.";
+  doc "Computes a paragraph's Measure. Each run marks its own hanging spaces and tabs in one counted loop writing only that run's cells, because they depend on the run's text and style alone, and tells by a bor reduction whether the paragraph holds a tab; only then does it look up the space and least advance of the paragraph's block container style, once for the paragraph, and a second counted loop over the runs writes each tab's stop distance from that space and its own run's tab-size, again only that run's cells; the positions on either side of a tab are item edges, each found by one counted loop writing only its own cell. Each mark's own width (an inline box's start or end frame, an atomic inline's margin box) and whether an opening box glues to the preceding text are computed in one counted loop writing only that mark's cells, because they depend on the mark alone; a second loop then adds them into the per-position arrays in mark order, sequential because marks at one position add fadd.strict contributions to one cell and that order fixes the result's bits.";
   let full = paragraph^.text.inner.len;
   let count = imin(full, scalar_ceiling);
   let positions = count + 1_u64;
@@ -210,6 +211,7 @@ fn measure(paragraph: &Paragraph, children: &[Context], styles: &Styles, fonts: 
   let closes = box_array_filled::<f32>(count: positions, value: 0.0_f32);
   let collapsible = box_array_filled::<u8>(count: count, value: 0_u8);
   let glued = box_array_filled::<u8>(count: positions, value: 0_u8);
+  let items = box_array_filled::<u8>(count: positions, value: 0_u8);
   let shaped_count = paragraph^.shaped.advances.inner.len;
   for (i in 0_u64..count) {
     if i < shaped_count {
@@ -279,6 +281,23 @@ fn measure(paragraph: &Paragraph, children: &[Context], styles: &Styles, fonts: 
         }
       }
     }
+    for (i in 0_u64..positions) {
+      let tab_after = if i < count {
+        give paragraph^.text.inner[i] == 9_u32;
+      } else {
+        give False();
+      }
+      let tab_before = if i > 0_u64 {
+        let previous = i - 1_u64;
+        give paragraph^.text.inner[previous] == 9_u32;
+      } else {
+        give False();
+      }
+      let tab_edge = bor(tab_after, tab_before);
+      if tab_edge {
+        set items.inner[i] = 1_u8;
+      }
+    }
   }
   let marks = paragraph^.marks.inner.len;
   let mark_extent = box_array_filled::<f32>(count: marks, value: 0.0_f32);
@@ -322,6 +341,8 @@ fn measure(paragraph: &Paragraph, children: &[Context], styles: &Styles, fonts: 
       }
       Node(..) => {
       }
+      Anchor(..) => {
+      }
     }
   }
   for (m in 0_u64..marks) {
@@ -336,6 +357,7 @@ fn measure(paragraph: &Paragraph, children: &[Context], styles: &Styles, fonts: 
           if mark_glues.inner[m] == 1_u8 {
             set glued.inner[at] = 1_u8;
           }
+          set items.inner[at] = 1_u8;
         }
       }
       Close(at: here, ..) => {
@@ -343,19 +365,48 @@ fn measure(paragraph: &Paragraph, children: &[Context], styles: &Styles, fonts: 
         if at < positions {
           let old = closes.inner[at];
           set closes.inner[at] = fadd.strict(old, extent);
+          set items.inner[at] = 1_u8;
         }
       }
       Atomic(at: here, ..) => {
         let at = cvt::<u32, u64>(here);
         if at < count {
           set advances.inner[at] = extent;
+          set items.inner[at] = 1_u8;
+          let after = at +sat 1_u64;
+          if after < positions {
+            set items.inner[after] = 1_u8;
+          }
         }
       }
-      Node(..) => {
+      Node(at: from, end: to, ..) => {
+        let first = cvt::<u32, u64>(from);
+        let last = cvt::<u32, u64>(to);
+        if first < positions {
+          set items.inner[first] = 1_u8;
+        }
+        if last < positions {
+          set items.inner[last] = 1_u8;
+        }
+      }
+      Anchor(at: here, ..) => {
+        let at = cvt::<u32, u64>(here);
+        if at < positions {
+          set items.inner[at] = 1_u8;
+        }
       }
     }
   }
-  return Measure(advances: move advances, opens: move opens, closes: move closes, collapsible: move collapsible, glued: move glued, tab_stops: move tab_stops, tab_least: tab_least);
+  return Measure(advances: move advances, opens: move opens, closes: move closes, collapsible: move collapsible, glued: move glued, tab_stops: move tab_stops, tab_least: tab_least, items: move items);
+}
+
+fn item_bound(sizes: &Measure, at: u64) -> bound: Bool reads(sizes) {
+  doc "Whether an item of the reference's line breaker ends at position at; False past the end.";
+  if at < sizes^.items.inner.len {
+    let found = sizes^.items.inner[at] == 1_u8;
+    return found;
+  }
+  return False();
 }
 
 fn advance_at(sizes: &Measure, at: u64) -> px: f32 reads(sizes) {
@@ -389,6 +440,15 @@ fn collapsible_at(sizes: &Measure, at: u64) -> collapsible: Bool reads(sizes) {
   doc "Whether index at holds a collapsible space; False past the end.";
   if at < sizes^.collapsible.inner.len {
     let found = sizes^.collapsible.inner[at] == 1_u8;
+    return found;
+  }
+  return False();
+}
+
+fn preserved_at(sizes: &Measure, at: u64) -> kept: Bool reads(sizes) {
+  doc "Whether index at holds a space or tab white-space: pre-wrap keeps; False past the end.";
+  if at < sizes^.collapsible.inner.len {
+    let found = sizes^.collapsible.inner[at] == 2_u8;
     return found;
   }
   return False();
@@ -444,8 +504,40 @@ fn break_at(paragraph: &Paragraph, sizes: &Measure, at: u64) -> kind: u8 reads(p
   return 0_u8;
 }
 
-fn next_line(paragraph: &Paragraph, sizes: &Measure, start: u64, available: i32, origin: f32) -> (begin: u64, end: u64, width: f32) reads(paragraph), reads(sizes) {
-  doc "Finds the line that starts at start in available layout units, whose tab origin lies origin px before its content (the first line's text-indent, as the reference starts its position there): it drops collapsible spaces at its start, then fills greedily to the last allowed break opportunity before its content, trailing hanging spaces excluded, overflows available; a mandatory break ends it; with no allowed opportunity before the overflow, an emergency one (overflow-wrap) is taken, and failing that the line runs to the next allowed opportunity. Trailing spaces, and tabs white-space: pre-wrap keeps, hang (hangs_at): none of them makes the line overflow, nor does the forced break after them, which joins their hanging run (research/investigations/layout/runs/line-fill.txt); the content width of a line a soft wrap ends leaves all of them out, and that of a line a mandatory break or the paragraph's end ends leaves out only the collapsible ones. Returns its content start, its end and its content width in px.";
+fn measure_step(paragraph: &Paragraph, sizes: &Measure, at: u64, origin: f32, width: f32, settled: i32, item: f32) -> (width_next: f32, settled_next: i32, item_next: f32, advance: f32, closing: f32, opening_units: i32) reads(paragraph), reads(sizes) {
+  doc "Adds the scalar at at and its inline decorations to the line's width and per-item fit measure: settled holds the rounded widths of finished items, item the unrounded width of the current one, and width their total in px. Each item boundary rounds up once to a layout unit, and each preserved tab advances from its actual position after the opening decorations and the line's origin; next_line retains this full measure, including hanging spaces, for finish_lines to judge their overflow without repeating the width chain.";
+  let measured = settled;
+  let open_item = item;
+  let ends_before = item_bound(sizes: sizes, at: at);
+  if ends_before {
+    let closed = units_up(px: open_item);
+    set measured = measured +sat closed;
+    set open_item = 0.0_f32;
+  }
+  let opening = open_at(sizes: sizes, at: at);
+  let opening_units = units_up(px: opening);
+  set measured = measured +sat opening_units;
+  let with_open = fadd.strict(width, opening);
+  let position = fadd.strict(origin, with_open);
+  let advance = advance_from(paragraph: paragraph, sizes: sizes, at: at, position: position);
+  set open_item = fadd.strict(open_item, advance);
+  let next = at +sat 1_u64;
+  let ends_after = item_bound(sizes: sizes, at: next);
+  if ends_after {
+    let closed_after = units_up(px: open_item);
+    set measured = measured +sat closed_after;
+    set open_item = 0.0_f32;
+  }
+  let closing = close_at(sizes: sizes, at: next);
+  let closing_units = units_up(px: closing);
+  set measured = measured +sat closing_units;
+  let with_advance = fadd.strict(with_open, advance);
+  let width_next = fadd.strict(with_advance, closing);
+  return width_next, measured, open_item, advance, closing, opening_units;
+}
+
+fn next_line(paragraph: &Paragraph, sizes: &Measure, start: u64, available: i32, origin: f32) -> (begin: u64, end: u64, width: f32, used: i32, full: i32) reads(paragraph), reads(sizes) {
+  doc "Finds the line that starts at start in available layout units, whose tab origin lies origin px before its content (the first line's text-indent, as the reference starts its position there): it drops collapsible spaces at its start, then fills greedily to the last allowed break opportunity before its content, trailing hanging spaces excluded, overflows available; a mandatory break ends it; with no allowed opportunity before the overflow, an emergency one (overflow-wrap) is taken, and failing that the line runs to the next allowed opportunity. Trailing spaces, and tabs white-space: pre-wrap keeps, hang (hangs_at): none of them makes the line overflow, nor does the forced break after them, which joins their hanging run (research/investigations/layout/runs/line-fill.txt); the content width of a line a soft wrap ends leaves all of them out, and that of a line a mandatory break or the paragraph's end ends leaves out only the collapsible ones. Whether content fits is decided as the reference's line breaker decides it: each item on the line (a text item's part on it, an inline box's start or end decorations, an atomic inline; items) counts as its width rounded up to a whole layout unit, and the sum fits when it exceeds available by at most one layout unit, the epsilon the reference adds to the available width. Returns its content start, its end, its content width in px, that content's width as the fit test measured it in layout units, and the full per-item-rounded width including hanging spaces of exactly that chosen range. Candidate and emergency boundaries keep that full measure when remembered, so returning an earlier break never uses the width of the later overflowing scan.";
   let count = paragraph^.text.inner.len;
   let begin = start;
   for (step in start..count) {
@@ -458,48 +550,59 @@ fn next_line(paragraph: &Paragraph, sizes: &Measure, start: u64, available: i32,
       }
     }
   }
+  let fit = available +sat 1_i32;
   let width = 0.0_f32;
   let trailing = 0.0_f32;
   let dropped = 0.0_f32;
+  let settled = 0_i32;
+  let item = 0.0_f32;
+  let shown = 0_i32;
   let candidate = begin;
   let candidate_width = 0.0_f32;
+  let candidate_used = 0_i32;
+  let candidate_full = 0_i32;
   let have_candidate = False();
   let emergency = begin;
   let emergency_width = 0.0_f32;
+  let emergency_used = 0_i32;
+  let emergency_full = 0_i32;
   let have_emergency = False();
   let overflowed = False();
   for (j in begin..count) {
     if j > begin {
+      let open_before = units_up(px: item);
+      let full_before = settled +sat open_before;
       let kind = break_at(paragraph: paragraph, sizes: sizes, at: j);
       if kind == break_mandatory {
         let kept = fsub.strict(width, dropped);
-        return begin, j, kept;
+        return begin, j, kept, shown, full_before;
       }
       let content = fsub.strict(width, trailing);
       if kind == break_allowed {
         if overflowed {
-          return begin, j, content;
+          return begin, j, content, shown, full_before;
         }
         set candidate = j;
         set candidate_width = content;
+        set candidate_used = shown;
+        set candidate_full = full_before;
         set have_candidate = True();
       } else if kind == break_emergency {
         if overflowed {
         } else {
           set emergency = j;
           set emergency_width = content;
+          set emergency_used = shown;
+          set emergency_full = full_before;
           set have_emergency = True();
         }
       }
     }
-    let opening = open_at(sizes: sizes, at: j);
-    let with_open = fadd.strict(width, opening);
-    let position = fadd.strict(origin, with_open);
-    let advance = advance_from(paragraph: paragraph, sizes: sizes, at: j, position: position);
+    let (width_next, settled_next, item_next, advance, closing, opening_units) = measure_step(paragraph: paragraph, sizes: sizes, at: j, origin: origin, width: width, settled: settled, item: item);
+    set width = width_next;
+    set settled = settled_next;
+    set item = item_next;
     let next = j +sat 1_u64;
-    let closing = close_at(sizes: sizes, at: next);
-    let with_advance = fadd.strict(with_open, advance);
-    set width = fadd.strict(with_advance, closing);
     let hangs = hangs_at(sizes: sizes, at: j);
     let collapsible = collapsible_at(sizes: sizes, at: j);
     let following = break_at(paragraph: paragraph, sizes: sizes, at: next);
@@ -513,29 +616,33 @@ fn next_line(paragraph: &Paragraph, sizes: &Measure, start: u64, available: i32,
       } else {
         set dropped = 0.0_f32;
       }
+      set shown = shown +sat opening_units;
     } else if segment_break {
       let grown = fadd.strict(trailing, advance);
       set trailing = fadd.strict(grown, closing);
       set dropped = 0.0_f32;
+      set shown = shown +sat opening_units;
     } else {
       set trailing = 0.0_f32;
       set dropped = 0.0_f32;
+      let open_item = units_up(px: item);
+      set shown = settled +sat open_item;
     }
-    let visible = fsub.strict(width, trailing);
-    let needed = units_up(px: visible);
-    let over = needed > available;
+    let over = shown > fit;
     if over {
       if have_candidate {
-        return begin, candidate, candidate_width;
+        return begin, candidate, candidate_width, candidate_used, candidate_full;
       }
       if have_emergency {
-        return begin, emergency, emergency_width;
+        return begin, emergency, emergency_width, emergency_used, emergency_full;
       }
       set overflowed = True();
     }
   }
   let kept = fsub.strict(width, dropped);
-  return begin, count, kept;
+  let open_last = units_up(px: item);
+  let full = settled +sat open_last;
+  return begin, count, kept, shown, full;
 }
 
 fn exclusion_room(exclusions: &[Exclusion], top: i32, bottom: i32, width: i32) -> (left: i32, right: i32) reads(exclusions) {
@@ -559,7 +666,7 @@ fn exclusion_room(exclusions: &[Exclusion], top: i32, bottom: i32, width: i32) -
 }
 
 fn break_lines(paragraph: &Paragraph, sizes: &Measure, styles: &Styles, fonts: &FontSet, picks: &FontPicks, exclusions: &[Exclusion], origin_x: i32, origin_y: i32, width: i32) -> result: unit reads(sizes), reads(styles), reads(fonts), reads(picks), reads(exclusions), writes(paragraph) {
-  doc "Breaks the paragraph into lines in a box width wide whose origin lies at origin_x, origin_y in the context's content box, each line as wide as the floats in exclusions leave beside the line's top and a strut's height below it (all the width when exclusions is empty), the first line indented by text-indent; a line whose first unbreakable run does not fit in the room beside floats moves down to the next float's bottom (CSS 2.2 9.5), and a paragraph with no text still has one line when an inline box in it has a nonzero margin, border or padding on its sides (research/investigations/layout/runs/empty-framed-line.txt); records each line's start, end, offset and content width, with tops left for the line metrics.";
+  doc "Breaks the paragraph into lines in a box width wide whose origin lies at origin_x, origin_y in the context's content box, each line as wide as the floats in exclusions leave beside the line's top and a strut's height below it (all the width when exclusions is empty), the first line indented by text-indent; a line whose first unbreakable run does not fit in the room beside floats moves down to the next float's bottom (CSS 2.2 9.5), and a paragraph with no text still has one line when an inline box in it has a nonzero margin, border or padding on its sides (research/investigations/layout/runs/empty-framed-line.txt); records each line's start, end, offset, content width and full per-item-rounded width including hanging spaces from next_line, with tops left for the line metrics; each retry retains the full measure of its own returned range.";
   let cleared = paragraph^.lines.inner.len;
   for (step in 0_u64..cleared) {
     let length = paragraph^.lines.inner.len;
@@ -582,7 +689,7 @@ fn break_lines(paragraph: &Paragraph, sizes: &Measure, styles: &Styles, fonts: &
     let framed = bnot(flat);
     if framed {
       let edge_width = units_up(px: edges);
-      let only = Line(start: 0_u32, end: 0_u32, x: indent, width: edge_width, room: width, top: 0_i32, height: strut_height, baseline: strut.ascent, least_top: 0_i32);
+      let only = Line(start: 0_u32, end: 0_u32, x: indent, width: edge_width, full_width: edge_width, room: width, top: 0_i32, height: strut_height, baseline: strut.ascent, least_top: 0_i32);
       let pushed = push_item::<Line>(cell: &paragraph^.lines, value: only, ceiling: item_ceiling);
     }
   }
@@ -602,6 +709,7 @@ fn break_lines(paragraph: &Paragraph, sizes: &Measure, styles: &Styles, fonts: &
     let begin = start;
     let end = start;
     let content = 0.0_f32;
+    let full_content = 0_i32;
     let left = 0_i32;
     let available = 0_i32;
     let shifting = True();
@@ -617,14 +725,15 @@ fn break_lines(paragraph: &Paragraph, sizes: &Measure, styles: &Styles, fonts: &
         let right = imin(available_right, width);
         let room = right -sat line_left;
         let line_available = room -sat indent_here;
-        let (line_begin, line_end, line_content) = next_line(paragraph: paragraph, sizes: sizes, start: start, available: line_available, origin: tab_origin);
+        let (line_begin, line_end, line_content, line_used, line_full) = next_line(paragraph: paragraph, sizes: sizes, start: start, available: line_available, origin: tab_origin);
         set begin = line_begin;
         set end = line_end;
         set content = line_content;
+        set full_content = line_full;
         set left = line_left;
         set available = line_available;
-        let room_px = px_of(raw: line_available);
-        let wide = fgt(line_content, room_px);
+        let room_fit = line_available +sat 1_i32;
+        let wide = line_used > room_fit;
         let narrowed = room < width;
         let cramped = band(wide, narrowed);
         let lower = lowest_bottom_above(exclusions: exclusions, top: top);
@@ -649,7 +758,7 @@ fn break_lines(paragraph: &Paragraph, sizes: &Measure, styles: &Styles, fonts: &
     let begin_index = cvt::<u64, u32>(begin);
     let end_index = cvt::<u64, u32>(end);
     let least_top = top -sat origin_y;
-    let line = Line(start: begin_index, end: end_index, x: offset, width: line_width, room: available, top: 0_i32, height: strut_height, baseline: strut.ascent, least_top: least_top);
+    let line = Line(start: begin_index, end: end_index, x: offset, width: line_width, full_width: full_content, room: available, top: 0_i32, height: strut_height, baseline: strut.ascent, least_top: least_top);
     let pushed = push_item::<Line>(cell: &paragraph^.lines, value: line, ceiling: item_ceiling);
     set top = top +sat strut_height;
     set first = False();
@@ -855,6 +964,8 @@ fn framed_inside(paragraph: &Paragraph, styles: &Styles, fonts: &FontSet, picks:
       }
       Node(..) => {
       }
+      Anchor(..) => {
+      }
     }
   }
   let open_marks = box_slots_new::<u64>(capacity: 8_u64);
@@ -898,6 +1009,8 @@ fn framed_inside(paragraph: &Paragraph, styles: &Styles, fonts: &FontSet, picks:
         }
       }
       Node(..) => {
+      }
+      Anchor(..) => {
       }
     }
   }
@@ -1280,8 +1393,69 @@ fn spread_count(paragraph: &Paragraph, start: u64, end: u64) -> count: u64 reads
   return count;
 }
 
+fn oof_anchor_at(paragraph: &Paragraph, children: &[Context], styles: &Styles, from: u64, at: u64) -> found: Bool reads(paragraph), reads(children), reads(styles) {
+  doc "Whether an absolutely or fixed positioned child's anchor mark lies at index at, among the marks from index from on before an Open or Atomic at that position, where the placement scan defers the remaining marks at a wrap. An Open followed by an out-of-flow item goes with it to the next line: the reference gives an Open no break opportunity after it, the out-of-flow item inherits that judgment (HandleOpenTag, HandleOutOfFlowPositioned), and the overflow rewind stops before the Open (RewindOverflow). The reference does not let an out-of-flow item trail a line's spaces, as it does floats and inline box edges (IsTrailableItemType).";
+  let marks = paragraph^.marks.inner.len;
+  let seen = False();
+  for (m in from..marks) {
+    let current = paragraph^.marks.inner[m];
+    let here = match current {
+      Open(at: a, ..) => {
+        give cvt::<u32, u64>(a);
+      }
+      Close(at: a, ..) => {
+        give cvt::<u32, u64>(a);
+      }
+      Atomic(at: a, ..) => {
+        give cvt::<u32, u64>(a);
+      }
+      Node(at: a, ..) => {
+        give cvt::<u32, u64>(a);
+      }
+      Anchor(at: a, ..) => {
+        give cvt::<u32, u64>(a);
+      }
+    }
+    if here > at {
+      break;
+    }
+    let at_boundary = here == at;
+    match current {
+      Anchor(context: child, ..) => {
+        let child_at = cvt::<u32, u64>(child);
+        if here == at {
+          if child_at < children^.len {
+            let anchored_group = box_of(styles: styles, style: children^[child_at].style);
+            let absolute_box = anchored_group.position == position_absolute;
+            let fixed_box = anchored_group.position == position_fixed;
+            let out_of_flow_box = bor(absolute_box, fixed_box);
+            if out_of_flow_box {
+              set seen = True();
+            }
+          }
+        }
+      }
+      Open(..) => {
+        if at_boundary {
+          break;
+        }
+      }
+      Close(..) => {
+      }
+      Atomic(..) => {
+        if at_boundary {
+          break;
+        }
+      }
+      Node(..) => {
+      }
+    }
+  }
+  return seen;
+}
+
 fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], styles: &Styles, fonts: &FontSet, picks: &FontPicks, basis: i32) -> result: unit reads(sizes), reads(children), reads(styles), reads(fonts), reads(picks), writes(paragraph) {
-  doc "Computes each line's height and baseline (CSS 2.2 10.8) from the strut, the inline boxes on it and its atomic inlines (each vertically aligned), then aligns the subtrees whose vertical-align is top or bottom with the line box, growing it to hold them, moves each box, text and atomic inline by the relative offsets of its inline ancestors and its own, aligns it by text-align, and records the paragraph's fragments (its inline boxes and text nodes) and its atomic inlines' positions, relative to the paragraph's origin, and its height. Each preserved tab advances to its next tab stop from where it falls on its line before justification (advance_from), as next_line measured it, and every run of tabs is a text fragment of its own, and cuts the rectangles of an inline box with no sides around it, as the reference reports a tab as an item of its own (research/investigations/layout/runs/line-fill.txt). Under text-align: justify, a line that a soft wrap ends and whose content leaves free space shares that space equally among its justification opportunities before its trailing spaces (spreads_at, stretch_end), each opportunity's advance growing by one share, and is not shifted; the running total of the shares given so far (spread) rides the line's left-to-right x chain, which placement already follows, and takes them back out where a tab is measured, as tabs are measured before justification; the paragraph's last line, a line a forced break ends and a line with no opportunity align to the start (CSS Text 3, 7.3). The fragment of the spaces that hang at the end of a line keeps their full width, past the line's end, and the spaces white-space: pre-wrap keeps before a forced break or the paragraph's end, when the line with them overflows, form a fragment of their own (a soft wrap's always do, preserved_tail), as the reference reports them (research/investigations/layout/runs/line-fill.txt). Each position keeps the advance it was placed with (widths), its tab stop distance or justification share included, because a text fragment's width is the sum of its scalars' placed advances, those depend on where the line's left-to-right chain puts them, and fragments are cut only after the whole line is placed; the x positions alone do not give it, as the decorations of inline boxes that close or open at a fragment's end lie between them, and recomputing the chain per fragment would repeat the line's sequential work.";
+  doc "Computes each line's height and baseline (CSS 2.2 10.8) from the strut, the inline boxes on it and its atomic inlines (each vertically aligned), then aligns the subtrees whose vertical-align is top or bottom with the line box, growing it to hold them, moves each box, text and atomic inline by the relative offsets of its inline ancestors and its own, aligns it by text-align, and records the paragraph's fragments (its inline boxes and text nodes), its atomic inlines' positions and the places of the out-of-flow child contexts anchored in it (places: where the anchor falls on its line, after text-align, and the line's top, as the reference gives an out-of-flow box with auto insets its static position in the line; an anchor at the end of a line, with more content following, belongs to the next line when a forced break ends the line or when the line ends in spaces white-space: pre-wrap keeps whose full width, hanging past the line's end, overflows it (hung_over), which makes the reference's line trailing so that it stops the line before an out-of-flow item; that full width sums each item's width rounded up to a layout unit with actual tab advances, retained by next_line on the chosen Line as full_width, rather than rounding the content and hanging tail separately. After a soft wrap that leaves collapsible spaces, or preserved spaces that fit, an anchor before any deferred inline box start or atomic inline stays on its line, where the collapsible spaces start or after the preserved ones, as the reference gives the out-of-flow item the break opportunity of the text before it and breaks after it, and then the preserved spaces are not trailing and stay in their text's fragment (anchor_stays); an inline box start has no break opportunity after it, so an out-of-flow item after that start inherits that condition and rewinds with it to the next line. An anchor at the paragraph's end past the line's hanging spaces sits where they start), relative to the paragraph's origin, and its height. Each preserved tab advances to its next tab stop from where it falls on its line before justification (advance_from), as next_line measured it, and every run of tabs is a text fragment of its own, and cuts the rectangles of an inline box with no sides around it, as the reference reports a tab as an item of its own (research/investigations/layout/runs/line-fill.txt). Under text-align: justify, a line that a soft wrap ends and whose content leaves free space shares that space equally among its justification opportunities before its trailing spaces (spreads_at, stretch_end), each opportunity's advance growing by one share, and is not shifted; the running total of the shares given so far (spread) rides the line's left-to-right x chain, which placement already follows, and takes them back out where a tab is measured, as tabs are measured before justification; the paragraph's last line, a line a forced break ends and a line with no opportunity align to the start (CSS Text 3, 7.3). The fragment of the spaces that hang at the end of a line keeps their full width, past the line's end, and the spaces white-space: pre-wrap keeps before a forced break or the paragraph's end, when the line with them overflows, form a fragment of their own (a soft wrap's always do, preserved_tail), as the reference reports them (research/investigations/layout/runs/line-fill.txt). Each position keeps the advance it was placed with (widths), its tab stop distance or justification share included, because a text fragment's width is the sum of its scalars' placed advances, those depend on where the line's left-to-right chain puts them, and fragments are cut only after the whole line is placed; the x positions alone do not give it, as the decorations of inline boxes that close or open at a fragment's end lie between them, and recomputing the chain per fragment would repeat the line's sequential work.";
   let lines = paragraph^.lines.inner.len;
   let full = paragraph^.text.inner.len;
   let count = imin(full, scalar_ceiling);
@@ -1331,6 +1505,8 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
       }
       Atomic(..) => {
       }
+      Anchor(..) => {
+      }
     }
   }
   let stack = box_slots_new::<OpenBox>(capacity: 8_u64);
@@ -1361,6 +1537,14 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
     }
     let dropped = take_back(window: &paragraph^.atomics.inner);
   }
+  let cleared_places = paragraph^.places.inner.len;
+  for (step in 0_u64..cleared_places) {
+    let length = paragraph^.places.inner.len;
+    if length == 0_u64 {
+      break;
+    }
+    let dropped = take_back(window: &paragraph^.places.inner);
+  }
   for (l in 0_u64..lines) {
     let line = paragraph^.lines.inner[l];
     set top = imax(top, line.least_top);
@@ -1369,6 +1553,7 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
     let pending = box_slots_new::<Pending>(capacity: 8_u64);
     let atomics = box_slots_new::<Atomic>(capacity: 0_u64);
     let atomic_groups = box_slots_new::<u32>(capacity: 0_u64);
+    let anchored = box_slots_new::<AnchorPlace>(capacity: 0_u64);
     let aligned = box_slots_new::<Aligned>(capacity: 0_u64);
     let low = 0_i32 -sat strut.ascent;
     let high = strut.descent;
@@ -1408,7 +1593,31 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
       }
     }
     let wrapped = end < count;
-    let soft_start = if wrapped {
+    let unforced = bnot(forced);
+    let soft = band(wrapped, unforced);
+    let kept_last = if end > start {
+      let last = end - 1_u64;
+      give preserved_at(sizes: sizes, at: last);
+    } else {
+      give False();
+    }
+    let tab_origin = if l == 0_u64 {
+      give indent_px;
+    } else {
+      give 0.0_f32;
+    }
+    let hung_width = line.full_width;
+    let hung_fit = line.room +sat 1_i32;
+    let hung_over = hung_width > hung_fit;
+    let kept_hang = band(kept_last, hung_over);
+    let kept_soft = band(soft, kept_hang);
+    let leaves_anchor = bor(forced, kept_soft);
+    let anchor_end = oof_anchor_at(paragraph: paragraph, children: children, styles: styles, from: mark, at: end);
+    let anchor_kept = bnot(leaves_anchor);
+    let anchor_stays = band(anchor_end, anchor_kept);
+    let no_staying_anchor = bnot(anchor_stays);
+    let spaces_trail = band(wrapped, no_staying_anchor);
+    let soft_start = if spaces_trail {
       give preserved_tail(paragraph: paragraph, start: start, end: visible_end);
     } else {
       give visible_end;
@@ -1435,15 +1644,8 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
     } else {
       give main_end;
     }
-    let tab_origin = if l == 0_u64 {
-      give indent_px;
-    } else {
-      give 0.0_f32;
-    }
     let spare = line.room -sat line.width;
     let roomy = spare > 0_i32;
-    let unforced = bnot(forced);
-    let soft = band(wrapped, unforced);
     let spreading = band(justified, soft);
     let stretch = if spreading {
       give stretch_end(paragraph: paragraph, start: start, end: soft_start);
@@ -1485,6 +1687,9 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
           Node(at: a, ..) => {
             give cvt::<u32, u64>(a);
           }
+          Anchor(at: a, ..) => {
+            give cvt::<u32, u64>(a);
+          }
         }
         if here != p {
           break;
@@ -1504,6 +1709,9 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
           }
           Node(..) => {
             give False();
+          }
+          Anchor(..) => {
+            give band(defer, leaves_anchor);
           }
         }
         if mut_skip {
@@ -1664,6 +1872,32 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
             }
           }
           Node(..) => {
+          }
+          Anchor(context: child, ..) => {
+            let child_at = cvt::<u32, u64>(child);
+            let known_child = child_at < children^.len;
+            let out_of_flow = if known_child {
+              let anchored_style = children^[child_at].style;
+              let anchored_group = box_of(styles: styles, style: anchored_style);
+              let absolute_box = anchored_group.position == position_absolute;
+              let fixed_box = anchored_group.position == position_fixed;
+              give bor(absolute_box, fixed_box);
+            } else {
+              give False();
+            }
+            if out_of_flow {
+              let past_visible_anchor = p > visible_end;
+              let known_anchor = visible_end < xs.inner.len;
+              let hanging_anchor = band(past_visible_anchor, known_anchor);
+              let anchor_x = if hanging_anchor {
+                give xs.inner[visible_end];
+              } else {
+                give x;
+              }
+              let spot = units(px: anchor_x);
+              let place = AnchorPlace(context: child, x: spot, y: 0_i32);
+              let pushed_place = push_item::<AnchorPlace>(cell: &anchored, value: place, ceiling: item_ceiling);
+            }
           }
         }
       }
@@ -1914,6 +2148,14 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
       let moved = Atomic(context: placed.context, x: ax, y: ay, normal_x: normal_ax, normal_y: normal_ay);
       let pushed = push_item::<Atomic>(cell: &paragraph^.atomics, value: moved, ceiling: item_ceiling);
     }
+    let anchored_count = anchored.inner.len;
+    for (k in 0_u64..anchored_count) {
+      let spot = anchored.inner[k];
+      let spot_on_line = line_x +sat spot.x;
+      let spot_context = spot.context;
+      let placed_spot = AnchorPlace(context: spot_context, x: spot_on_line, y: top);
+      let pushed_spot = push_item::<AnchorPlace>(cell: &paragraph^.places, value: placed_spot, ceiling: item_ceiling);
+    }
     let node_marks = paragraph^.marks.inner.len;
     for (k in 0_u64..node_marks) {
       let candidate = paragraph^.marks.inner[k];
@@ -2021,6 +2263,8 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
         Close(..) => {
         }
         Atomic(..) => {
+        }
+        Anchor(..) => {
         }
       }
     }

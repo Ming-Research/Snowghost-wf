@@ -368,29 +368,32 @@ struct Block {
 }
 
 enum Mark {
-  doc "One entry of a paragraph's inline structure, at text index at: Open and Close bracket the inline box of an element or generated box; Atomic is an atomic inline, the child context drawn at the U+FFFC at at; Node maps the text from at to end to the text node node (its NodeId index), or to no node for generated content and inserted characters.";
+  doc "One entry of a paragraph's inline structure, at text index at: Open and Close bracket the inline box of an element or generated box; Atomic is an atomic inline, the child context drawn at the U+FFFC at at; Node maps the text from at to end to the text node node (its NodeId index), or to no node for generated content and inserted characters; Anchor is where a floated or out-of-flow child context, whose own flow entry lays it out, occurs inside the paragraph's content, taking no text and no width: the line it falls on gives an out-of-flow child its static position and a float the line its max-content width joins.";
   Open(at: u32, style: StyleRef);
   Close(at: u32, style: StyleRef);
   Atomic(at: u32, context: u32);
   Node(at: u32, end: u32, node: u32);
+  Anchor(at: u32, context: u32);
 }
 
 enum Piece {
-  doc "The source of a paragraph's text before white-space processing, in tree order: the bytes start to end of the document's text, a text node's data (node its NodeId index) or an attribute value read by generated content (node no_index); the bytes start to end of the style stage's generated text; one inserted scalar value (U+FFFC for an atomic inline, U+2028 for br, or a generated character); the start and end of an inline box; and an atomic inline, the child context drawn at its U+FFFC. Each carries the style whose white-space and text-transform govern it.";
+  doc "The source of a paragraph's text before white-space processing, in tree order: the bytes start to end of the document's text, a text node's data (node its NodeId index) or an attribute value read by generated content (node no_index); the bytes start to end of the style stage's generated text; one inserted scalar value (U+FFFC for an atomic inline, U+2028 for br, or a generated character); the start and end of an inline box; an atomic inline, the child context drawn at its U+FFFC; and the place of a floated or out-of-flow child context that occurs after the paragraph's first piece, which adds no text (Mark's Anchor). Each carries the style whose white-space and text-transform govern it.";
   Bytes(start: u32, end: u32, style: StyleRef, node: u32);
   Generated(start: u32, end: u32, style: StyleRef);
   Scalar(value: u32, style: StyleRef);
   Begin(style: StyleRef);
   End(style: StyleRef);
   Object(context: u32, style: StyleRef);
+  Anchor(context: u32, style: StyleRef);
 }
 
 struct Line {
-  doc "One line box of a paragraph: the text from start to end (end excluded, trailing collapsible spaces not counted in width), its offset x and width of content inside the line box, its top and height relative to the paragraph's first line top, its baseline from the line box's top, and the least top it may take, which the floats beside the lines before it leave it.";
+  doc "One line box of a paragraph: the text from start to end (end excluded, trailing collapsible spaces not counted in width), its offset x and width of content inside the line box, its full_width including hanging spaces as the line breaker measured it, each item's width rounded up to a layout unit before summing with preserved tabs advanced from their actual positions, its top and height relative to the paragraph's first line top, its baseline from the line box's top, and the least top it may take, which the floats beside the lines before it leave it. Keeping full_width avoids repeating the line's width chain when fragment placement decides whether preserved hanging spaces overflow.";
   start: u32;
   end: u32;
   x: i32;
   width: i32;
+  full_width: i32;
   room: i32;
   top: i32;
   height: i32;
@@ -405,6 +408,13 @@ struct Atomic {
   y: i32;
   normal_x: i32;
   normal_y: i32;
+}
+
+struct AnchorPlace {
+  doc "Where a paragraph's line layout puts the static position of an out-of-flow child context anchored in it (Mark's Anchor): the child context's index and the offset x/y of the margin-box origin it would take in flow, the place on its line where the anchor falls and the line's top, from the paragraph's normal origin.";
+  context: u32;
+  x: i32;
+  y: i32;
 }
 
 struct Exclusion {
@@ -496,7 +506,7 @@ struct Fragment {
 }
 
 struct Paragraph {
-  doc "An inline formatting context's content inside a flow context, its anonymous block: its owned pieces in inline source order, recorded by the walk, become text, runs, run_styles and marks in the preparation loop, which also shapes the text; layout fills lines, its fragments relative to its origin, and its height. The pre-pass gives it width and left, the content-box offset its lines break at, and records its flow entry (flow_at) and the block it sits in (block, no_index for none); x and top store its normal origin relative to block as exact i64 differences, dx/dy its separate effective relative displacement; normal_x/normal_top and resolved_x/resolved_top are the compatibility walker's context-coordinate scratch. empty_fragment marks a paragraph that generated a context-level empty-inline rectangle, preventing retirement without fragment ownership publication. A lineless paragraph has no placed origin: untouched readers preserve its resolved scratch position; a freshly stacked paragraph with no lines resets its unplaced origins to zero, matching a fresh full build. The stacking pass also gives it beside, whether a float placed before it reaches below its top. broken_width and broken_left hold the width and left supplied to its last line break, so a new pre-pass can compare its actual inputs before keeping the lines.";
+  doc "An inline formatting context's content inside a flow context, its anonymous block: its owned pieces in inline source order, recorded by the walk, become text, runs, run_styles and marks in the preparation loop, which also shapes the text; layout fills lines, its fragments relative to its origin, the static positions of the out-of-flow children anchored in it (places), and its height. The pre-pass gives it width and left, the content-box offset its lines break at, and records its flow entry (flow_at) and the block it sits in (block, no_index for none); x and top store its normal origin relative to block as exact i64 differences, dx/dy its separate effective relative displacement; normal_x/normal_top and resolved_x/resolved_top are the compatibility walker's context-coordinate scratch. empty_fragment marks a paragraph that generated a context-level empty-inline rectangle, preventing retirement without fragment ownership publication. A lineless paragraph has no placed origin: untouched readers preserve its resolved scratch position; a freshly stacked paragraph with no lines resets its unplaced origins to zero, matching a fresh full build. The stacking pass also gives it beside, whether a float placed before it reaches below its top. broken_width and broken_left hold the width and left supplied to its last line break, so a new pre-pass can compare its actual inputs before keeping the lines.";
   retired: Bool;
   empty_fragment: Bool;
   empty_fragments: Box<Array<EmptyFragment>>;
@@ -510,6 +520,7 @@ struct Paragraph {
   lines: Box<Slots<Line>>;
   fragments: Box<Slots<Fragment>>;
   atomics: Box<Slots<Atomic>>;
+  places: Box<Slots<AnchorPlace>>;
   width: i32;
   left: i32;
   top: i64;
