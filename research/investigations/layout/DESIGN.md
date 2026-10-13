@@ -344,13 +344,16 @@ case page in the q139 workflow (base run 38368152731 against branch run
 moved from 6664 to 6665 against Chromium's 6669, one pixel closer. No page
 got worse.
 
-The retained-layout fixture runs 19 style and text operations (class toggles
+The retained-layout fixture runs 17 style and text operations (class toggles
 and text insertions and deletions of the edit grammar):
 changing translation, resizing a percentage reference box, changing only
 colour, inserting and deleting text, entering and leaving an unsupported
-list, changing translated floats and nested children, a text edit that
-changes the height of a box translated by a percentage, and an `overflow`
-toggle on the ancestor of a translated box, which turns trapping on and off.
+list, changing translated floats and nested children, and a text edit that
+changes the height of a box translated by a percentage. An `overflow` toggle
+on the ancestor of a translated box is not among them: incremental layout
+refuses any overflow change, translated or not (the edit was refused in
+q139 at b3bd2ad even with the box already a flow root), so trapping is
+checked in full layout only, by the case page's scroll-contained case.
 The edit checker requires every retained dump to equal a full rebuild byte
 for byte, and `incremental-layout/run.sh transforms` gives retained equal to
 full for every edit with both the sequential and the `--par` build, whose
