@@ -1371,8 +1371,73 @@ fn spread_count(paragraph: &Paragraph, start: u64, end: u64) -> count: u64 reads
   return count;
 }
 
+fn hang_extent(sizes: &Measure, start: u64, end: u64) -> px: f32 reads(sizes) {
+  doc "The width in px of the spaces and tabs white-space: pre-wrap keeps at the end of the text from start to end (hanging_tail), by their advances, as a tab not measured from its place on the line.";
+  let first = hanging_tail(sizes: sizes, start: start, end: end);
+  let total = 0.0_f32;
+  for (at in first..end) {
+    if at < sizes^.advances.inner.len {
+      set total = fadd.strict(total, sizes^.advances.inner[at]);
+    }
+  }
+  return total;
+}
+
+fn oof_anchor_at(paragraph: &Paragraph, children: &[Context], styles: &Styles, from: u64, at: u64) -> found: Bool reads(paragraph), reads(children), reads(styles) {
+  doc "Whether an absolutely or fixed positioned child's anchor mark lies at index at, among the marks from index from on; the reference's line breaker does not let such an item trail a line's spaces, as it does floats and inline box edges (IsTrailableItemType).";
+  let marks = paragraph^.marks.inner.len;
+  let seen = False();
+  for (m in from..marks) {
+    let current = paragraph^.marks.inner[m];
+    let here = match current {
+      Open(at: a, ..) => {
+        give cvt::<u32, u64>(a);
+      }
+      Close(at: a, ..) => {
+        give cvt::<u32, u64>(a);
+      }
+      Atomic(at: a, ..) => {
+        give cvt::<u32, u64>(a);
+      }
+      Node(at: a, ..) => {
+        give cvt::<u32, u64>(a);
+      }
+      Anchor(at: a, ..) => {
+        give cvt::<u32, u64>(a);
+      }
+    }
+    if here > at {
+      break;
+    }
+    match current {
+      Anchor(context: child, ..) => {
+        let child_at = cvt::<u32, u64>(child);
+        if here == at {
+          if child_at < children^.len {
+            let anchored_group = box_of(styles: styles, style: children^[child_at].style);
+            let absolute_box = anchored_group.position == position_absolute;
+            let fixed_box = anchored_group.position == position_fixed;
+            if bor(absolute_box, fixed_box) {
+              set seen = True();
+            }
+          }
+        }
+      }
+      Open(..) => {
+      }
+      Close(..) => {
+      }
+      Atomic(..) => {
+      }
+      Node(..) => {
+      }
+    }
+  }
+  return seen;
+}
+
 fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], styles: &Styles, fonts: &FontSet, picks: &FontPicks, basis: i32) -> result: unit reads(sizes), reads(children), reads(styles), reads(fonts), reads(picks), writes(paragraph) {
-  doc "Computes each line's height and baseline (CSS 2.2 10.8) from the strut, the inline boxes on it and its atomic inlines (each vertically aligned), then aligns the subtrees whose vertical-align is top or bottom with the line box, growing it to hold them, moves each box, text and atomic inline by the relative offsets of its inline ancestors and its own, aligns it by text-align, and records the paragraph's fragments (its inline boxes and text nodes), its atomic inlines' positions and the places of the out-of-flow child contexts anchored in it (places: where the anchor falls on its line, after text-align, and the line's top, as the reference gives an out-of-flow box with auto insets its static position in the line; an anchor at the end of a line, with more content following, belongs to the next line when a forced break ends the line or when the line ends in spaces white-space: pre-wrap keeps that overflow it, which hang at a soft wrap, as the reference's line breaker stops a line before an out-of-flow item once the line is trailing; after a soft wrap that leaves collapsible spaces, or preserved spaces that fit, the anchor stays on its line, where they start, as the reference gives the out-of-flow item the break opportunity of the text before it and breaks after it, and one at the paragraph's end past the line's hanging spaces sits where they start), relative to the paragraph's origin, and its height. Each preserved tab advances to its next tab stop from where it falls on its line before justification (advance_from), as next_line measured it, and every run of tabs is a text fragment of its own, and cuts the rectangles of an inline box with no sides around it, as the reference reports a tab as an item of its own (research/investigations/layout/runs/line-fill.txt). Under text-align: justify, a line that a soft wrap ends and whose content leaves free space shares that space equally among its justification opportunities before its trailing spaces (spreads_at, stretch_end), each opportunity's advance growing by one share, and is not shifted; the running total of the shares given so far (spread) rides the line's left-to-right x chain, which placement already follows, and takes them back out where a tab is measured, as tabs are measured before justification; the paragraph's last line, a line a forced break ends and a line with no opportunity align to the start (CSS Text 3, 7.3). The fragment of the spaces that hang at the end of a line keeps their full width, past the line's end, and the spaces white-space: pre-wrap keeps before a forced break or the paragraph's end, when the line with them overflows, form a fragment of their own (a soft wrap's always do, preserved_tail), as the reference reports them (research/investigations/layout/runs/line-fill.txt). Each position keeps the advance it was placed with (widths), its tab stop distance or justification share included, because a text fragment's width is the sum of its scalars' placed advances, those depend on where the line's left-to-right chain puts them, and fragments are cut only after the whole line is placed; the x positions alone do not give it, as the decorations of inline boxes that close or open at a fragment's end lie between them, and recomputing the chain per fragment would repeat the line's sequential work.";
+  doc "Computes each line's height and baseline (CSS 2.2 10.8) from the strut, the inline boxes on it and its atomic inlines (each vertically aligned), then aligns the subtrees whose vertical-align is top or bottom with the line box, growing it to hold them, moves each box, text and atomic inline by the relative offsets of its inline ancestors and its own, aligns it by text-align, and records the paragraph's fragments (its inline boxes and text nodes), its atomic inlines' positions and the places of the out-of-flow child contexts anchored in it (places: where the anchor falls on its line, after text-align, and the line's top, as the reference gives an out-of-flow box with auto insets its static position in the line; an anchor at the end of a line, with more content following, belongs to the next line when a forced break ends the line or when the line ends in spaces white-space: pre-wrap keeps whose full width, hanging past the line's end, overflows it (hung_over), which makes the reference's line trailing so that it stops the line before an out-of-flow item; after a soft wrap that leaves collapsible spaces, or preserved spaces that fit, the anchor stays on its line, where the collapsible spaces start or after the preserved ones, as the reference gives the out-of-flow item the break opportunity of the text before it and breaks after it, and then the preserved spaces are not trailing and stay in their text's fragment (anchor_stays), and one at the paragraph's end past the line's hanging spaces sits where they start), relative to the paragraph's origin, and its height. Each preserved tab advances to its next tab stop from where it falls on its line before justification (advance_from), as next_line measured it, and every run of tabs is a text fragment of its own, and cuts the rectangles of an inline box with no sides around it, as the reference reports a tab as an item of its own (research/investigations/layout/runs/line-fill.txt). Under text-align: justify, a line that a soft wrap ends and whose content leaves free space shares that space equally among its justification opportunities before its trailing spaces (spreads_at, stretch_end), each opportunity's advance growing by one share, and is not shifted; the running total of the shares given so far (spread) rides the line's left-to-right x chain, which placement already follows, and takes them back out where a tab is measured, as tabs are measured before justification; the paragraph's last line, a line a forced break ends and a line with no opportunity align to the start (CSS Text 3, 7.3). The fragment of the spaces that hang at the end of a line keeps their full width, past the line's end, and the spaces white-space: pre-wrap keeps before a forced break or the paragraph's end, when the line with them overflows, form a fragment of their own (a soft wrap's always do, preserved_tail), as the reference reports them (research/investigations/layout/runs/line-fill.txt). Each position keeps the advance it was placed with (widths), its tab stop distance or justification share included, because a text fragment's width is the sum of its scalars' placed advances, those depend on where the line's left-to-right chain puts them, and fragments are cut only after the whole line is placed; the x positions alone do not give it, as the decorations of inline boxes that close or open at a fragment's end lie between them, and recomputing the chain per fragment would repeat the line's sequential work.";
   let lines = paragraph^.lines.inner.len;
   let full = paragraph^.text.inner.len;
   let count = imin(full, scalar_ceiling);
@@ -1510,7 +1575,26 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
       }
     }
     let wrapped = end < count;
-    let soft_start = if wrapped {
+    let unforced = bnot(forced);
+    let soft = band(wrapped, unforced);
+    let kept_last = if end > start {
+      let last = end - 1_u64;
+      give preserved_at(sizes: sizes, at: last);
+    } else {
+      give False();
+    }
+    let hung_px = hang_extent(sizes: sizes, start: start, end: end);
+    let hung_units = units_up(px: hung_px);
+    let hung_width = line.width +sat hung_units;
+    let hung_fit = line.room +sat 1_i32;
+    let hung_over = hung_width > hung_fit;
+    let kept_hang = band(kept_last, hung_over);
+    let kept_soft = band(soft, kept_hang);
+    let leaves_anchor = bor(forced, kept_soft);
+    let anchor_end = oof_anchor_at(paragraph: paragraph, children: children, styles: styles, from: mark, at: end);
+    let anchor_stays = band(anchor_end, bnot(leaves_anchor));
+    let spaces_trail = band(wrapped, bnot(anchor_stays));
+    let soft_start = if spaces_trail {
       give preserved_tail(paragraph: paragraph, start: start, end: visible_end);
     } else {
       give visible_end;
@@ -1544,17 +1628,6 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
     }
     let spare = line.room -sat line.width;
     let roomy = spare > 0_i32;
-    let unforced = bnot(forced);
-    let soft = band(wrapped, unforced);
-    let kept_last = if end > start {
-      let last = end - 1_u64;
-      give preserved_at(sizes: sizes, at: last);
-    } else {
-      give False();
-    }
-    let kept_hang = band(kept_last, overflows);
-    let kept_soft = band(soft, kept_hang);
-    let leaves_anchor = bor(forced, kept_soft);
     let spreading = band(justified, soft);
     let stretch = if spreading {
       give stretch_end(paragraph: paragraph, start: start, end: soft_start);
