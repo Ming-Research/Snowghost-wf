@@ -36,10 +36,7 @@ speed decides only between candidates of equal dependencies.
 
 ## References
 
-- Research record: `research/investigations/<name>/`. Open defects and
-  Whitefoot requirements are items on the shared status board the owner-wide
-  instructions name; the repository keeps no TODO file, and code, documents
-  and checks that point to unfinished work name the board item's key.
+- Research record: `research/investigations/<name>/`.
 - The language: the Whitefoot commit `whitefoot.pin` names, read as
   [whitefoot-kit/downstream.md](whitefoot-kit/downstream.md#reading-the-language)
   describes and cited from that revision, never from Snowghost's code.
@@ -88,6 +85,5 @@ Whitefoot gap filed.
 
 `README.md` introduces and navigates, and its Releases section holds the
 long-term direction and the release goals; this file holds the project's goal
-and rules; `docs/review-checklist.md` the review items; the status board's
-items the open defects and Whitefoot requirements; `research/investigations/`
-questions, experiments and results.
+and rules; `docs/review-checklist.md` the review items;
+`research/investigations/` questions, experiments and results.
