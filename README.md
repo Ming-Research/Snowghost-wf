@@ -160,7 +160,7 @@ Correctness is judged by oracles independent of Snowghost:
 | `renderer/` | The renderer's Whitefoot modules, one directory per package; `modules.wfg` is the module graph |
 | `renderer/oracle/` | Drivers that run a stage and print its output for the oracles |
 | `tests/` | The oracles' scripts and focused case pages |
-| `design/` | The decisions the project is built on, each with its reason and refused alternatives, and the log of the owner's approvals |
+| `design/` | The decisions the project is built on, each with its reason and refused alternatives, and the log of their changes |
 | `design/skill/` | [Design-skill](https://github.com/Ming-Research/Design-skill), as a submodule: the design tree's lint and CI base script |
 | `research/investigations/` | One directory per question: its design, experiments, measurements and rejected alternatives |
 | `docs/` | The review checklist |
