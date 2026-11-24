@@ -9,10 +9,24 @@
 # design-readiness.yml name it in their results. This workflow runs only the
 # tests it is given, each by itself, through whitefoot-kit/ci/run-tests.py,
 # after the compiler and its LLVM, which every test but the design checks and
-# pin-ready needs, and with the compiler's cache main's runs of check.yml
-# saved. A name no test has is said in the log and reported as nothing, which
-# the engine reads as a test that did not run. What became of each test is
-# JUnit XML in the artifact `test-results`.
+# pin-ready needs. A name no test has is said in the log and reported as
+# nothing, which the engine reads as a test that did not run. What became of
+# each test is JUnit XML in the artifact `test-results`.
+#
+# The tests run on the owner's own machine, the self-hosted runner 14900k, as
+# the fast workflow of wf-agents does, because an agent waits for this
+# workflow each time it asks for tests. Each runner of that machine keeps its
+# checkout between runs, and with it build/: the compiler's download and its
+# cache (build/whitefoot-cache), which keeps each module's verdicts, proofs
+# and compiled code, so a run checks and compiles again only what an edit
+# reaches. The checkout leaves them in place (`clean: false`), and the step
+# after it clears the rest of what the last run left. A job there has no
+# root, and needs none: it checks the LLVM the machine keeps
+# (`make toolchain-check`) and installs nothing. Every test runs there.
+#
+# It runs only by hand, never on a pull request: the repository is public,
+# and a trigger by a pull request would run anyone's code on the owner's
+# machine.
 name: fast
 run-name: fast ${{ inputs.call }}
 
@@ -42,12 +56,12 @@ permissions:
 
 jobs:
   tests:
-    name: tests
-    runs-on: ubuntu-24.04
+    name: tests (14900k)
+    runs-on: [self-hosted, 14900k]
     timeout-minutes: 30
     env:
-      TESTS_JUNIT: ${{ github.workspace }}/build/test-results/tests.xml
-      TESTS_SUITE: tests
+      TESTS_JUNIT: ${{ github.workspace }}/build/test-results/tests (14900k).xml
+      TESTS_SUITE: tests (14900k)
       TESTS_STOP: ${{ inputs.test_stop }}
     steps:
       - uses: actions/checkout@v4
@@ -55,6 +69,18 @@ jobs:
           ref: ${{ inputs.commit }}
           submodules: true
           fetch-depth: 0
+          clean: false
+          # No later step pushes, so the token is not left in the checkout,
+          # which the runner keeps.
+          persist-credentials: false
+
+      # What the builds make stays; the results go, since run-tests.py adds
+      # to them.
+      - name: Clear what the last run left
+        run: |
+          git clean -ffdxq -e /build
+          git submodule foreach --quiet --recursive git clean -ffdxq
+          rm -rf build/test-results
 
       # The names given, one a line, and whether they need the compiler.
       - name: Read the names
@@ -89,26 +115,18 @@ jobs:
           echo "DESIGN_REVIEW_BASE=$design_review_base" >> "$GITHUB_ENV"
           git log --oneline -1 "$design_review_base"
 
-      # As check.yml restores it; a run asked for on main reads the caches of
-      # main's runs. This workflow saves none: check.yml's runs keep them.
-      - name: Restore the compiler cache
-        if: steps.names.outputs.compiler == 'true'
-        uses: actions/cache/restore@v4
-        with:
-          path: build/whitefoot-cache
-          key: whitefoot-cache-${{ runner.os }}-${{ hashFiles('whitefoot.pin') }}-${{ inputs.commit }}
-          restore-keys: |
-            whitefoot-cache-${{ runner.os }}-${{ hashFiles('whitefoot.pin') }}-
-
       # whitefootc compiles programs with /usr/bin/clang and links a cached
       # build's fragments with LLD on Linux; both must be the LLVM major the
-      # pinned release was built with, which make toolchain installs after
-      # downloading the compiler (whitefoot-kit/downstream.md).
-      - name: Install the host toolchain
+      # pinned release was built with (whitefoot-kit/downstream.md). The
+      # machine keeps its own, which no job may change, so the job checks it
+      # (make toolchain-check, which downloads the compiler first when build/
+      # lacks it) and installs nothing.
+      - name: Download the pinned compiler and check the machine's LLVM
         if: steps.names.outputs.compiler == 'true'
         run: |
-          make toolchain
+          make toolchain-check
           ld.lld --version
+          /usr/bin/clang --version
 
       - name: Test
         run: whitefoot-kit/ci/run-tests.py --names "$RUNNER_TEMP/names"
