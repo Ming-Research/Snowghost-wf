@@ -17,14 +17,25 @@ DESIGN_TREES := $(filter-out log,$(basename $(notdir $(wildcard $(ROOT)/design/*
 # event with design/skill/review-base.sh.
 DESIGN_REVIEW_BASE ?= origin/main
 
-.PHONY: check renderer design-lint design-ready \
+.PHONY: check gate-tests renderer design-lint design-ready \
 	static-atoms static-atoms-check dom-selftest binary-size-check \
 	oracle-data oracle-line-break oracle-css oracle-css-rules oracle-css-color oracle-css-selectors oracle-html-tokenizer oracle-html-tree \
 	oracle-png oracle-png-speed \
 	oracle-normalization oracle-idna oracle-url oracle-font-face oracle-font-shape oracle-text-properties \
 	oracle-style-dump oracle-style oracle-layout-dump oracle-layout oracle-fonts oracle-text
 
-check: compiler renderer static-atoms-check dom-selftest binary-size-check design-lint
+# The tests, as CI and the engine of wf-agents name them: each a target that
+# CI runs by itself through whitefoot-kit/ci/run-tests.py, which reports it as
+# JUnit XML (whitefoot-kit/downstream.md, "Tests in CI"). GATE_TESTS are the
+# gate's, which check.yml runs and `make gate-tests` prints, one a line;
+# TESTS adds the two checks of design-readiness.yml.
+GATE_TESTS := renderer static-atoms-check dom-selftest binary-size-check design-lint
+TESTS := $(GATE_TESTS) design-ready pin-ready
+
+check: compiler $(GATE_TESTS)
+
+gate-tests:
+	@printf '%s\n' $(GATE_TESTS)
 
 # The renderer builds with the Whitefoot compiler release whitefoot.pin
 # names, which Whitefoot-kit's whitefoot.mk downloads and checks; it defines
@@ -32,6 +43,7 @@ check: compiler renderer static-atoms-check dom-selftest binary-size-check desig
 # Every target that compiles depends on FORCE, and whitefootc's cache keys its
 # records by the compiler's SHA-256, so a moved pin reuses no output.
 include $(ROOT)/whitefoot-kit/whitefoot.mk
+include $(ROOT)/whitefoot-kit/tests.mk
 
 # Every renderer build and check reuses the compiler's cache of module
 # verdicts, function proofs and compiled code (whitefootc --cache), with code

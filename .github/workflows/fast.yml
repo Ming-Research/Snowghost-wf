@@ -1,0 +1,128 @@
+# Snowghost's fast workflow (`ci.fast` of wf-agents.toml): what an agent's
+# `run_tests` waits for while a work is under way. It runs only by hand, which
+# only someone who may write to the repository can ask for. The engine of
+# wf-agents always asks for it on main, so that this file as main holds it
+# runs, with the commit to test, a value only its request knows, which the
+# run's name holds, the tests to run and how long one test may run.
+#
+# A test is a target in TESTS of the Makefile, as check.yml and
+# design-readiness.yml name it in their results. This workflow runs only the
+# tests it is given, each by itself, through whitefoot-kit/ci/run-tests.py,
+# after the compiler and its LLVM, which every test but the design checks and
+# pin-ready needs, and with the compiler's cache main's runs of check.yml
+# saved. A name no test has is said in the log and reported as nothing, which
+# the engine reads as a test that did not run. What became of each test is
+# JUnit XML in the artifact `test-results`.
+name: fast
+run-name: fast ${{ inputs.call }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: The commit to check out and test, pushed to a branch of the repository already
+        required: true
+      call:
+        description: A value only the request that asks for this run knows, which the run's name holds
+        required: true
+      tests:
+        description: The tests to run, each name followed by a line break
+        required: false
+        default: ''
+      test_stop:
+        description: How long one test may run before it is stopped, in whole seconds; empty for no stop but the job's limit
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+# No concurrency group: each run is a request an agent waits for, which
+# another request must not cancel.
+
+jobs:
+  tests:
+    name: tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      TESTS_JUNIT: ${{ github.workspace }}/build/test-results/tests.xml
+      TESTS_SUITE: tests
+      TESTS_STOP: ${{ inputs.test_stop }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit }}
+          submodules: true
+          fetch-depth: 0
+
+      # The names given, one a line, and whether they need the compiler.
+      - name: Read the names
+        id: names
+        env:
+          GIVEN: ${{ inputs.tests }}
+        run: |
+          printf '%s\n' "$GIVEN" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | awk 'NF && !seen[$0]++' \
+            > "$RUNNER_TEMP/names"
+          echo "Named:"
+          cat "$RUNNER_TEMP/names"
+          compiler=false
+          while IFS= read -r name; do
+            case "$name" in
+              design-lint|design-ready|pin-ready) ;;
+              *) compiler=true ;;
+            esac
+          done < "$RUNNER_TEMP/names"
+          echo "compiler=$compiler" >> "$GITHUB_OUTPUT"
+
+      # As design-readiness.yml names it, for the design checks.
+      - name: Name main as a local ref
+        run: |
+          git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
+          git branch -f main origin/main
+
+      # The design checks review the commit as a work branch is reviewed:
+      # against its fork point from main.
+      - name: Select the design review base
+        run: |
+          design_review_base=$(git merge-base refs/remotes/origin/main HEAD)
+          echo "DESIGN_REVIEW_BASE=$design_review_base" >> "$GITHUB_ENV"
+          git log --oneline -1 "$design_review_base"
+
+      # As check.yml restores it; a run asked for on main reads the caches of
+      # main's runs. This workflow saves none: check.yml's runs keep them.
+      - name: Restore the compiler cache
+        if: steps.names.outputs.compiler == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: build/whitefoot-cache
+          key: whitefoot-cache-${{ runner.os }}-${{ hashFiles('whitefoot.pin') }}-${{ inputs.commit }}
+          restore-keys: |
+            whitefoot-cache-${{ runner.os }}-${{ hashFiles('whitefoot.pin') }}-
+
+      # whitefootc compiles programs with /usr/bin/clang and links a cached
+      # build's fragments with LLD on Linux; both must be the LLVM major the
+      # pinned release was built with, which make toolchain installs after
+      # downloading the compiler (whitefoot-kit/downstream.md).
+      - name: Install the host toolchain
+        if: steps.names.outputs.compiler == 'true'
+        run: |
+          make toolchain
+          ld.lld --version
+
+      - name: Test
+        run: whitefoot-kit/ci/run-tests.py --names "$RUNNER_TEMP/names"
+
+      - name: Name the job's end in its results
+        if: ${{ !cancelled() }}
+        env:
+          STATUS: ${{ job.status }}
+        run: whitefoot-kit/ci/run-tests.py --end "$STATUS"
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: test-results
+          path: build/test-results/
+          if-no-files-found: ignore
+          retention-days: 14

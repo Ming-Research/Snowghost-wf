@@ -66,6 +66,12 @@ speed decides only between candidates of equal dependencies.
   `make check WHITEFOOTC=<path>` uses another compiler.
 - The readiness check adds `make pin-ready`: `whitefoot.pin` names no
   experiment release.
+- Each test is a target in `TESTS` of the Makefile: the gate's tests
+  (`make gate-tests`), then `design-ready` and `pin-ready`. CI runs each by
+  itself through `whitefoot-kit/ci/run-tests.py`, which reports it as JUnit
+  XML; `fast.yml` runs, by hand only, just the tests it is given
+  ([downstream.md](whitefoot-kit/downstream.md#tests-in-ci)). A push to a
+  branch the engine of wf-agents makes (`work-…`, `wf-try/…`) runs no check.
 - Review checklist: [docs/review-checklist.md](docs/review-checklist.md).
 
 ## Whitefoot
