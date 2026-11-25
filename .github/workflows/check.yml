@@ -1,24 +1,58 @@
-# Snowghost's gate: every push runs `make check`, which downloads the
-# Whitefoot compiler release that whitefoot.pin names and runs every Snowghost
-# check. The exact revision that merges into main passes this first.
+# Snowghost's gate: every push runs the tests of `make check`, after
+# downloading the Whitefoot compiler release that whitefoot.pin names. The
+# exact revision that merges into main passes this first. A push to a branch
+# the engine of wf-agents makes (`work-…`, `wf-try/…`) runs nothing: the
+# engine asks for the runs it needs by hand.
+#
+# It is also Snowghost's full workflow (`ci.full` of wf-agents.toml): before
+# the engine merges a work, it runs this file as main holds it, by hand, with
+# the commit to test and a value only its request knows, which the run's name
+# holds. Each test (`make gate-tests`) runs by itself through
+# whitefoot-kit/ci/run-tests.py, which writes what became of it as JUnit XML
+# in the artifact `test-results`, which the engine reads.
 name: check
+run-name: ${{ inputs.call && format('check {0}', inputs.call) || '' }}
 
 on:
   push:
+    branches-ignore: ['work-*', 'wf-try/**']
+    tags: ['**']
   workflow_dispatch:
+    inputs:
+      commit:
+        description: The commit to check out and test; empty for the commit the run is asked on
+        required: false
+        default: ''
+      call:
+        description: A value only the request that asks for this run knows, which the run's name holds; empty for a run asked by hand
+        required: false
+        default: ''
+      test_stop:
+        description: How long one test may run before it is stopped, in whole seconds; empty for no stop but the job's limit
+        required: false
+        default: ''
 
+# A newer push to the same branch makes the older run pointless; every run the
+# engine asks for is kept.
 concurrency:
-  group: check-${{ github.ref }}
-  cancel-in-progress: true
+  group: check-${{ inputs.call || github.ref }}
+  cancel-in-progress: ${{ !inputs.call }}
 
 jobs:
   check:
     name: make check
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      TESTS_JUNIT: ${{ github.workspace }}/build/test-results/make check.xml
+      TESTS_SUITE: make check
+      TESTS_STOP: ${{ inputs.test_stop }}
     steps:
       - uses: actions/checkout@v4
         with:
+          # The commit the engine gives; for any other run, empty, which is
+          # the commit of the event.
+          ref: ${{ inputs.commit }}
           submodules: true
           fetch-depth: 0
 
@@ -26,12 +60,19 @@ jobs:
         run: git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
 
       # A work branch is reviewed against its fork point from main; a main
-      # push against its previous tip.
+      # push against its previous tip. A commit the engine gives is reviewed
+      # as a work branch is: the one it checks before a merge merges main into
+      # the work's branch, so its first parent is not main.
       - name: Select the design review base
         env:
           PUSH_BEFORE: ${{ github.event.before }}
+          COMMIT: ${{ inputs.commit }}
         run: |
-          design_review_base=$(sh design/skill/review-base.sh "$GITHUB_EVENT_NAME" "$GITHUB_REF" "$PUSH_BEFORE")
+          if [ -n "$COMMIT" ]; then
+            design_review_base=$(git merge-base refs/remotes/origin/main HEAD)
+          else
+            design_review_base=$(sh design/skill/review-base.sh "$GITHUB_EVENT_NAME" "$GITHUB_REF" "$PUSH_BEFORE")
+          fi
           echo "DESIGN_REVIEW_BASE=$design_review_base" >> "$GITHUB_ENV"
           git log --oneline -1 "$design_review_base"
 
@@ -43,7 +84,7 @@ jobs:
       # only skips work that compiler would otherwise repeat. The compiler
       # itself is not cached: make downloads the pinned release and checks it
       # against the release's SHA256SUMS on every run, as before. The key
-      # names the runner OS, the pin and this commit; restore-keys restores
+      # names the runner OS, the pin and the commit checked; restore-keys restores
       # the newest cache of the same OS and pin. A push restores only caches
       # saved by its own branch or by main, so a cache saved on another
       # branch never reaches main. Every run saves its own entry, under 31 MB
@@ -57,7 +98,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: build/whitefoot-cache
-          key: whitefoot-cache-${{ runner.os }}-${{ hashFiles('whitefoot.pin') }}-${{ github.sha }}
+          key: whitefoot-cache-${{ runner.os }}-${{ hashFiles('whitefoot.pin') }}-${{ inputs.commit || github.sha }}
           restore-keys: |
             whitefoot-cache-${{ runner.os }}-${{ hashFiles('whitefoot.pin') }}-
 
@@ -70,12 +111,28 @@ jobs:
           make toolchain
           ld.lld --version
 
+      # The gate's tests, each by itself and each whatever became of the one
+      # before; `make toolchain` above downloaded the compiler.
       - name: Check
-        run: make check
+        run: whitefoot-kit/ci/run-tests.py $(make -s --no-print-directory gate-tests)
 
       - name: Save the compiler cache
         if: ${{ !cancelled() }}
         uses: actions/cache/save@v4
         with:
           path: build/whitefoot-cache
-          key: whitefoot-cache-${{ runner.os }}-${{ hashFiles('whitefoot.pin') }}-${{ github.sha }}
+          key: whitefoot-cache-${{ runner.os }}-${{ hashFiles('whitefoot.pin') }}-${{ inputs.commit || github.sha }}
+
+      - name: Name the job's end in its results
+        if: ${{ !cancelled() }}
+        env:
+          STATUS: ${{ job.status }}
+        run: whitefoot-kit/ci/run-tests.py --end "$STATUS"
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: test-results
+          path: build/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
