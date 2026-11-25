@@ -3,8 +3,8 @@
 Snowghost-wf, Snowghost for short, is a cross-platform renderer for user
 interfaces built with web technology: a chosen subset of the web platform
 rendered in Whitefoot by a pipeline that is parallel and incremental end to
-end, hosted on each operating system by a shell written in Rust (the
-`processes` decision in `design/`).
+end, hosted on each operating system by a shell written in Rust (decision
+a-renderer-and-a-shell-joined-by-data, in `design/decisions/processes.md`).
 
 ## Goal and first priorities
 
@@ -19,7 +19,8 @@ sites and generated applications need.
 2. Render correctly for the subset Snowghost claims, with every safety check
    Whitefoot requires.
 
-**Parallelism is maximal, not chosen** (the `pipeline` decision): every stage
+**Parallelism is maximal, not chosen** (decision
+stages-keep-only-true-dependencies, in `design/decisions/pipeline.md`): every stage
 keeps only its algorithm's true data dependencies and writes all other work
 in forms Whitefoot proves independent, leaving which work runs in parallel,
 and at what grain, to the compiler and runtime. A sequential step names the
@@ -41,7 +42,8 @@ speed decides only between candidates of equal dependencies.
   [whitefoot-kit/downstream.md](whitefoot-kit/downstream.md#reading-the-language)
   describes and cited from that revision, never from Snowghost's code.
   Snowghost is where current Whitefoot source patterns are tried.
-- Oracles: Chromium is the reference renderer (the `pipeline` decision),
+- Oracles: Chromium is the reference renderer (decision
+  follow-chromium-where-specs-differ, in `design/decisions/scope.md`),
   through `tests/css/style_oracle.mjs` and `tests/layout/layout_oracle.mjs`;
   html5lib's and WPT's parsing, selector and URL cases, the CSS parsing
   tests, the Unicode data files and PngSuite, all through the

@@ -53,14 +53,17 @@ complete when all four goals hold:
 - On the same pages, each block box's position and size is within 1 px of
   Chromium's, and every inline box has the same number of fragments. This
   threshold is deliberately looser than the design's exact match to the
-  layout unit ([`design/vocabulary.md`](design/vocabulary.md)).
+  layout unit (decision lengths-become-layout-units-when-read, in
+  [`design/decisions/layout/units.md`](design/decisions/layout/units.md)).
 - M2 is closed: inserting or removing a block updates only the part of the
   layout it affects, block edits are no slower than Chromium, and other edits
   and full builds are no slower than before M2 (its
   [criterion](research/investigations/structure-edits/DESIGN.md#criterion)).
 - The renderer binary is at most 10 MB, and the gate checks it. Until a shell
   exists the renderer binary stands for the engine, measured as
-  [`design/scope/binary-size.md`](design/scope/binary-size.md) decides.
+  the decisions of
+  [`design/decisions/scope/binary-size.md`](design/decisions/scope/binary-size.md)
+  say.
 
 Candidate goals for later releases, each reopened when its release is
 planned:
@@ -127,23 +130,24 @@ tracked as items on the project's status board, not in this repository.
 ## How it is built
 
 - **Two processes**
-  ([`design/processes.md`](design/processes.md)). The renderer, in
+  ([`design/decisions/processes.md`](design/decisions/processes.md)). The renderer, in
   Whitefoot, owns the document, style, layout, text, paint, script and image
   decoding. The shell, in Rust, owns windows, input, accessibility,
   rasterization, compositing, networking and storage. They exchange data,
   not calls: the renderer sends facts about the page, and the shell decides
   how to draw them.
 - **Every stage keeps only its true dependencies**
-  ([`design/pipeline.md`](design/pipeline.md)). Any other ordering is
+  ([`design/decisions/pipeline.md`](design/decisions/pipeline.md)). Any other ordering is
   written in forms the compiler proves independent, and the compiler and
   runtime decide what runs in parallel and at what grain.
 - **A stage kept across edits learns what changed from marks the edit
   pushes.** It is checked against a full build, because the compiler proves
   which places a function reads but not their versions.
 - **Chromium is the reference.** Where a specification and Chromium differ,
-  the renderer follows Chromium and records the difference.
+  the renderer follows Chromium and records the difference
+  ([`design/decisions/scope.md`](design/decisions/scope.md)).
 - **The subset is chosen feature by feature**
-  ([`design/scope.md`](design/scope.md)), weighing how much sites use a
+  ([`design/decisions/scope.md`](design/decisions/scope.md)), weighing how much sites use a
   feature against what it costs in performance.
 
 Correctness is judged by oracles independent of Snowghost:
@@ -160,8 +164,8 @@ Correctness is judged by oracles independent of Snowghost:
 | `renderer/` | The renderer's Whitefoot modules, one directory per package; `modules.wfg` is the module graph |
 | `renderer/oracle/` | Drivers that run a stage and print its output for the oracles |
 | `tests/` | The oracles' scripts and focused case pages |
-| `design/` | The decisions the project is built on, each with its reason and refused alternatives, and the log of their changes |
-| `design/skill/` | [Design-skill](https://github.com/Ming-Research/Design-skill), as a submodule: the design tree's lint and CI base script |
+| `design/` | The constitution; `decisions/`, the decisions the project is built on, each with the approaches the owner turned down and why; and `log.md`, the record of the older tree's changes |
+| `design/skill/` | [Design-skill](https://github.com/Ming-Research/Design-skill), as a submodule: the older tree's lint and CI base script |
 | `research/investigations/` | One directory per question: its design, experiments, measurements and rejected alternatives |
 | `docs/` | The review checklist |
 | `whitefoot.pin` | The Whitefoot compiler release the renderer builds with, `release = wf-<12 hex digits of its commit>` |
@@ -179,7 +183,8 @@ make check
 names, builds the renderer, checks that the static atoms record matches its
 name list, runs the document arena's self-test, checks that the full-pipeline
 driver `layout_oracle`, built with `--par`, stays within the owner's 10 MB
-(10 000 000-byte) limit and lints the design tree. The driver stands in for
+(10 000 000-byte) limit and runs Design-skill's lint, which finds no tree in
+its older form left to lint. The driver stands in for
 the engine binary until one exists (the board's sg-target-binary-size item).
 The check runs on Linux x86-64 and macOS arm64, and needs Git, Python 3,
 curl, clang at `/usr/bin/clang` and, on Linux, LLD; on Linux both are the

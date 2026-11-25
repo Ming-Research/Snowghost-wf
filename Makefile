@@ -9,9 +9,9 @@ NODE ?= node
 ROOT := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 BUILD := $(ROOT)/build
 
-# The live design trees: every root node file directly under design/ except
-# the log and the constitution, so a tree is linted in the same change that
-# adds it.
+# The live design trees of Design-skill's older form: every root node file
+# directly under design/ except the log and the constitution, so a tree is
+# linted in the same change that adds it. None is left (see design-lint).
 DESIGN_TREES := $(filter-out log constitution,$(basename $(notdir $(wildcard $(ROOT)/design/*.md))))
 
 # The revision a design-tree change is reviewed against. CI selects it per
@@ -98,8 +98,8 @@ $(BUILD)/static_atoms $(BUILD)/dom_selftest: compiler FORCE
 # runs the whole pipeline (HTML parsing, style, text and layout, and edits
 # applied incrementally), built with --par and left unstripped as linked. CI
 # gates the Linux x86-64 build only. The choices of limit, binary, platform
-# and stripping are the design tree's binary-size node
-# (design/scope/binary-size.md); the measurements behind them are in
+# and stripping are the design tree's binary-size decisions
+# (design/decisions/scope/binary-size.md); the measurements behind them are in
 # research/investigations/binary-size/.
 BINARY_SIZE_LIMIT := 10000000
 ENGINE_BINARY := $(BUILD)/layout_oracle_par
@@ -117,12 +117,19 @@ binary-size-check: $(ENGINE_BINARY)
 	test "$$size" -le "$(BINARY_SIZE_LIMIT)" || { \
 		echo "$(notdir $<) is $$size bytes, over the $(BINARY_SIZE_LIMIT)-byte limit" >&2; exit 1; }
 
+# The design tree is now in the engine's form, design/principles/ and
+# design/decisions/, which the engine of wf-agents checks; no root node file of
+# Design-skill's older form is left under design/, so DESIGN_TREES is empty.
+# lint.py needs at least one tree (--trees), so with none both targets say so
+# and pass: design-lint still runs Design-skill's own tests, and design-ready
+# has nothing to hold to the log. A tree added again in the older form is
+# linted as before.
 design-lint:
 	@$(PY) -B -m unittest discover -s $(ROOT)/design/skill -p 'test_lint.py'
-	@$(PY) -B $(ROOT)/design/skill/lint.py --root $(ROOT)/design --trees $(DESIGN_TREES) --base "$(DESIGN_REVIEW_BASE)"
+	@$(if $(DESIGN_TREES),$(PY) -B $(ROOT)/design/skill/lint.py --root $(ROOT)/design --trees $(DESIGN_TREES) --base "$(DESIGN_REVIEW_BASE)",echo "design lint: no tree in the older form under design/; nothing to lint")
 
 design-ready:
-	@$(PY) -B $(ROOT)/design/skill/lint.py --root $(ROOT)/design --trees $(DESIGN_TREES) --base "$(DESIGN_REVIEW_BASE)" --require-approval
+	@$(if $(DESIGN_TREES),$(PY) -B $(ROOT)/design/skill/lint.py --root $(ROOT)/design --trees $(DESIGN_TREES) --base "$(DESIGN_REVIEW_BASE)" --require-approval,echo "design ready: no tree in the older form under design/; nothing to check")
 
 # The agent writer trial's oracles (research/investigations/agent-writer-trial).
 # They need network access, libpng and a C compiler, and stay out of `check`.
